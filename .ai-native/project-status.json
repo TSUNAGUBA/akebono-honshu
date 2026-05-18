@@ -1,5 +1,5 @@
 {
-  "currentPhase": 2,
+  "currentPhase": 3,
   "phases": [
     {
       "phase": 0,
@@ -39,8 +39,37 @@
         ".ai-native/outputs/phase1/_index.md"
       ],
       "trueProblemSummary": "3つの基幹システム（生産管理・販売管理・受発注）がファイル受け渡しでしか連携できておらず、二重・三重入力が生産管理部オペレータの時間を深刻に消耗させている。"
+    },
+    {
+      "phase": 2,
+      "name": "業務と実運用の明確化",
+      "status": "completed",
+      "completedAt": "2026-05-18",
+      "gateDecision": "PASS",
+      "deliverables": [
+        ".ai-native/outputs/phase2/usecases.md",
+        ".ai-native/outputs/phase2/business-flow.md",
+        ".ai-native/outputs/phase2/_index.md"
+      ],
+      "useCases": ["UC-1 新規依頼処理", "UC-2 既存品番再利用", "UC-3 発注書改訂", "UC-4 マスタ管理(18マスタ)"],
+      "confirmedDecisions": {
+        "operational": {
+          "concurrentUsers": "1-2名（シングルユーザ近似）",
+          "platform": "Web ブラウザ",
+          "device": "PC のみ（モバイルは Post-MVP）",
+          "cutoverStrategy": "Phase 3 で再検討"
+        },
+        "design": {
+          "concurrencyControl": "ロックなし（Last-Write-Wins）",
+          "auditLog": "主要トランザクション（品番・発注・マスタ）のみ",
+          "tempSkuCollision": "Phase 5 プロトタイプ検証",
+          "revisionHistory": "Phase 3 で確定",
+          "processResultPermission": "DB カラム保持、UI 非表示"
+        }
+      },
+      "phase0to2GateDecision": "PASS"
     }
   ],
   "lastUpdated": "2026-05-18",
-  "lastGate": "Phase1:PASS"
+  "lastGate": "Phase0-2:PASS"
 }
