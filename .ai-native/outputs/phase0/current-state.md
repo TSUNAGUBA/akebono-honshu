@@ -125,7 +125,7 @@ Phase 1 以降で仮説を提示しながら探る進め方となる。
 | ファイル | 内容 |
 |---------|------|
 | `industry/honshu-product-code-rule.md` | 11桁品番ルール（年式/型式/季節/連番/工場/色/サイズ）の全コード表 |
-| `industry/honshu-master-schema.md` | 17マスタ仕様（AS-IS）+ 欠落要素（工場・甲皮素材・ユーザマスタ） |
+| `industry/honshu-master-schema.md` | 17マスタ仕様（AS-IS）+ MVP 追加マスタ（user のみ、§7 詳細）。工場は supplier 兼用・甲皮素材は material 参照と判明 |
 | `industry/honshu-product-master-screen.md` | 既存「品番台帳入力」画面の構造観察 |
 | `business-flow/product-master-to-purchase-order-flow.md` | MVP 3ステージの AS-IS 業務フロー |
 | `persona/project-sponsor-persona.md` | 依頼者プロファイル + 知見範囲 + 委任境界 |
@@ -161,7 +161,7 @@ Phase 1 以降で仮説を提示しながら探る進め方となる。
 1. 理想の姿は仮説『正しさ最優先・誤入力防止』。Phase 2 プロトタイプで実ユーザ検証
 2. 運用詳細・現場ペインポイントはスポンサー把握外。Phase 1 で生産管理部ヒアリング必須
 3. 海外発注フローは MVP 対象外。Phase 2 以降で拡張
-4. 17マスタ仕様に未記載: 工場マスタ / 甲皮素材マスタ / ユーザマスタ（追加必須）
+4. 17マスタ仕様に未記載のうち、MVP 追加マスタは『ユーザ』1件のみ（工場は supplier 兼用、甲皮素材は material 参照 ―― スポンサー判断）
 5. 管理表帳票が MVP に必要かは要判断
 
 ---
