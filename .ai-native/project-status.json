@@ -1,5 +1,5 @@
 {
-  "currentPhase": 1,
+  "currentPhase": 2,
   "phases": [
     {
       "phase": 0,
@@ -8,6 +8,8 @@
       "completedAt": "2026-05-18",
       "gateDecision": "CONDITIONAL_PASS",
       "deliverables": [
+        ".ai-native/outputs/phase0/current-state.md",
+        ".ai-native/outputs/phase0/_index.md",
         ".ai-native/domain-context/industry/honshu-product-code-rule.md",
         ".ai-native/domain-context/industry/honshu-master-schema.md",
         ".ai-native/domain-context/industry/honshu-product-master-screen.md",
@@ -25,8 +27,20 @@
         "mvpStages": ["商品マスタ登録", "発注書作成（国内のみ）", "発注書出力（Excel）"],
         "outOfScope": ["見積", "受注", "出荷", "在庫", "売上集計", "海外発注フロー", "週次出荷スケジュール"]
       }
+    },
+    {
+      "phase": 1,
+      "name": "真の課題の追求",
+      "status": "completed",
+      "completedAt": "2026-05-18",
+      "gateDecision": "PASS",
+      "deliverables": [
+        ".ai-native/outputs/phase1/true-problem.md",
+        ".ai-native/outputs/phase1/_index.md"
+      ],
+      "trueProblemSummary": "3つの基幹システム（生産管理・販売管理・受発注）がファイル受け渡しでしか連携できておらず、二重・三重入力が生産管理部オペレータの時間を深刻に消耗させている。"
     }
   ],
   "lastUpdated": "2026-05-18",
-  "lastGate": "Phase0:CONDITIONAL_PASS"
+  "lastGate": "Phase1:PASS"
 }
