@@ -113,13 +113,13 @@ Phase 2 ユースケース 4 件を Phase 5 画面遷移 + API + データフロ
 |---|---|---|---|---|
 | 1 | 発注書一覧 → 検索（取引先納入日近い順）| `/orders` (O-03) | テーブルビュー、デフォルト最終更新日降順 | - |
 | 2 | 対象発注書クリック → 詳細 | `/orders/{id}` (O-04) | 状態 Active、出力バッジ「初回出力済 YYYY-MM-DD」、「編集」「Excel 出力」「中止」ボタン表示（Phase 6 簡素化）| - |
-| 3 | 「編集」ボタン → 同画面で編集モード | `PATCH /orders/{id}` | 同一発注書を直接編集（Phase 6 改訂概念廃止）。**ユーザは「どこを変えたか分かりにくい」** | **F-15** 編集時の差分ハイライト表示（旧値 → 新値の比較ビュー）|
+| 3 | 「編集」ボタン → 同画面で編集モード | `PATCH /orders/{id}` | **Phase 6 確定:** MVP では差分ハイライト UI 実装なし。ただし audit_logs.changes JSONB に `{ before, after }` 構造で変更前後を記録し、Post-MVP で変更履歴ビュー追加可能な拡張余地を確保 | **F-15 MVP 据え置き** UI 実装は Post-MVP、データ基盤 (audit_logs.changes 構造) は MVP で確保 |
 | 4 | 数量変更 etc + 任意の編集メモ入力 | `/orders/{id}` | 編集メモは audit_logs に蓄積。**業務的には必須にすべきか** | **F-16** 編集メモ必須化 or 必須選択肢（数量変更 / 納期変更 / 仕入先変更 / その他）|
 | 5 | 「保存」→ 同一発注書を更新 | `PATCH /orders/{id}` | 同画面で表示更新 | - |
 | 6 | Excel 再出力 | `GET /orders/{id}/excel` | `last_exported_at` のみ更新（初回出力済のため `order_no` は不変）、ファイルダウンロード | - |
 
 **UC-3 全体所見:**
-- F-15 (差分表示) は業務的に重要（取引先に「何が変わったか」を説明する材料）
+- F-15 (差分表示) は MVP 据え置き、audit_logs.changes 構造を確定し Post-MVP 拡張余地を確保
 - F-16 (編集メモ必須化) は監査ログの実用性向上
 - Phase 6 状態モデル簡素化により、UC-3 シナリオが「改訂版作成」から「同一発注書の編集 + 再出力」に変更（操作ステップ削減）
 
@@ -151,7 +151,7 @@ Phase 5 設計を USABILITY_STANDARDS 基準で評価。検出した issue は �
 |---|---|---|
 | UC-1 商品マスタ → 発注書連続フロー | ✅ | screen §3.4 Step 4 で `/orders/new?from_family={id}` 自動遷移、業務フローと一致 |
 | 既存品番からの発注 (UC-2) | ✅ | F-14 解消: 色×サイズマトリクスダイアログでリピート発注の柔軟性確保 |
-| 改訂フロー (UC-3) | ⚠️ | F-15: 差分表示なし、既存運用比較不明 |
+| 改訂フロー (UC-3) | ⚠️ MVP 据え置き | F-15: 差分表示 UI は Post-MVP、データ基盤 (audit_logs.changes 構造) は MVP で確保 |
 | マスタ追加 (UC-4) | ✅ | M-02 共通 CRUD で整合 |
 
 ### 3.2 UX-2 画面遷移の自然さ
@@ -220,7 +220,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 | **F-12 Excel テンプレ体裁** | **解消済** | Phase 6 確定: テンプレ 3 種類（国内/海外/海外+管理表）のうち MVP は ① 国内用のみ実装。Phase 5 (api-design.md / screen-design.md / architecture.md) + Phase 3 (functional-requirements.md) 反映済。Phase 7 実装で既存 ① 国内用 Excel サンプル 1 件取込のみ運用タスクとして残存 |
 | F-13 SKU 直接入力 | なし | UI 改修 + 既存検索 API で吸収 |
 | **F-14 部分 SKU 選択** | **解消済** | Phase 6 で「色×サイズマトリクス選択ダイアログ」採用 (A 案)。Phase 5 (screen-design.md §3.6) + Phase 3 (functional-requirements.md O-02) 反映完了。API は既存 `POST /purchase-orders` で `lines[]` 任意指定可のため変更不要 |
-| F-15 改訂差分表示 | なし | UI 改修 + API は `GET /purchase-orders/{id}` に親 ID と diff 取得用エンドポイント `GET /purchase-orders/{id}/diff` 追加で実現可 |
+| F-15 改訂差分表示 | MVP 据え置き | Phase 6 で「MVP は UI 実装せず、データ基盤のみ確保」決定。audit_logs.changes JSONB 構造 `{ before, after }` を data-design.md §6.1 に明示、Post-MVP で UI 追加するだけで実現可 |
 | F-16 改訂理由必須化 | なし | バリデーション追加で吸収 |
 | F-17 マスタ hub 検索 | なし | UI 改修で吸収 |
 | **F-18 FK 名結合表示** | **解消済** | Phase 6 で A 案 (共通テンプレート + FK ネスト返却) 採用。シンプル・可読性・保守性 3 観点で最優。api-design.md §2.3 にネスト返却仕様明示、screen-design.md §3.10 で FK 持ちマスタ (suppliers, materials の 2 件) のみ対応。サーバ側 EF Core Include で N+1 回避。Phase 5 反映完了 |
@@ -251,7 +251,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 | ~~F-14~~ | ~~O-02 部分 SKU 選択 UI~~ | **解消済 (2026-05-19)** Phase 6 で「色×サイズマトリクス選択ダイアログ」採用。screen-design.md §3.6 にダイアログ仕様明示、Phase 3 O-02 業務ルール追加。Phase 5 / Phase 3 反映完了 |
 | ~~F-18~~ | ~~マスタ一覧 FK 名結合表示~~ | **解消済 (2026-05-19)** Phase 6 で A 案 (共通テンプレート + FK ネスト返却) 採用。api-design.md §2.3 にネスト返却仕様、screen-design.md §3.10 に FK 持ちマスタ (suppliers, materials) のみ明示。EF Core Include で N+1 回避 |
 | F-20 | マスタ削除時の影響範囲表示 | api-design.md に `GET /masters/{master}/{id}/usage` 新設（使用中の商品 / 発注書件数を返却）+ screen §3.11 削除ダイアログに表示 |
-| F-15 | 改訂時の差分表示 | api-design.md `GET /purchase-orders/{id}/diff?compare_with={parent_id}` 新設 + screen §3.9 で差分ビュー追加 |
+| ~~F-15~~ | ~~改訂時の差分表示~~ | **MVP 据え置き判断 (2026-05-19)** UI 実装は Post-MVP、データ基盤 (audit_logs.changes 構造 `{ before, after }`) を Phase 5 data-design.md §6.1 に明示で拡張余地確保。Later カテゴリへ移動 |
 | F-16 | 改訂理由必須化 | バリデーション追加 + screen §3.9 で選択肢提示 |
 | F-05 | 仕入単価一括設定 | screen §3.4 Step 3 に「全 SKU に同一単価適用」「色別 / サイズ別適用」ボタン追加 |
 
@@ -265,7 +265,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 | F-21 | F-key ショートカット互換 | フロント実装で `useKeyboard` composable 追加、Reka UI 衝突検証 + 段階的拡張 |
 | F-09 | 連絡文章 6 行制限表示 | 残行数バッジ追加 |
 
-### 5.3 Later（5 件）
+### 5.3 Later（7 件）
 
 | # | issue | 対応方針 |
 |---|---|---|
@@ -275,15 +275,16 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 | F-04 | サイズ展開中の Loading 表示 | screen §5.1 共通方針で Skeleton/Spinner 適用 |
 | F-19 | コード採番方式 | 業務ヒアリング結果で判断 |
 | F-07 | 発注ヘッダのデフォルト値 | **Phase 6 で MVP 据え置き判断**。実運用後に入力負荷が問題化したら ログインユーザコンテキストから発注事業部・発注担当者を初期化 / UserDefaults エンドポイント追加で対応 |
+| F-15 | 編集時の差分ハイライト表示 | **Phase 6 で MVP 据え置き判断**。データ基盤は MVP で確保（audit_logs.changes JSONB に `{ before, after }` 構造、data-design.md §6.1 明示）、Post-MVP で `GET /purchase-orders/{id}/changes` + 変更履歴タブを追加するだけで実現可 |
 | ~~F-11~~ | ~~Excel 出力 = 発注確定の業務概念差分~~ | **解消済 (2026-05-19)** Phase 6 で「Excel 出力 = 発注確定」業務概念を廃止、いつでも何度でも出力可能に変更。Phase 2/3/5 反映完了 |
 
 ### 5.4 優先度付け集計
 
 | 優先度 | 件数 | 内訳 |
 |---|---|---|
-| Now | 3 | F-15, F-16, F-20 (F-05/F-06/F-10/F-11/F-12/F-14/F-18 解消済、F-07 は MVP 据え置きで Later 移動)|
+| Now | 2 | F-16, F-20 (F-05/F-06/F-10/F-11/F-12/F-14/F-18 解消済、F-07/F-15 は MVP 据え置きで Later 移動)|
 | Next | 5 | F-08, F-09, F-13, F-17, F-21 |
-| Later | 6 | F-01, F-02, F-03, F-04, F-07, F-19 (F-11 解消済、F-07 は MVP 据え置きで Now → Later)|
+| Later | 7 | F-01, F-02, F-03, F-04, F-07, F-15, F-19 (F-11 解消済、F-07/F-15 は MVP 据え置きで Now → Later)|
 | **合計** | **21** | |
 
 ---
@@ -318,7 +319,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 4. ~~**UC-1 ステップ 12 (Excel = 発注確定):** 既存運用と概念ズレないか？ F-11~~ **解消済**（業務概念を廃止）
 5. ~~**UC-1 ステップ 13 (Excel 体裁):** 既存帳票ファイルの提供依頼 (F-12)~~ **解消済**（テンプレ 3 種類のうち MVP は ① 国内用のみ実装で確定）
 6. **UC-2 検索:** 11桁 SKU を直接入力する場面はあるか？ F-13
-7. **UC-3 改訂:** 差分表示の業務的価値、改訂理由のパターン F-15, F-16
+7. **UC-3 改訂:** ~~差分表示の業務的価値 (F-15)~~ **MVP 据え置き判断済**、改訂理由のパターン F-16
 8. **UC-4 マスタ管理:** 18 マスタの中で最も触る頻度が高いものは？（F-18 FK 表示は解消済）
 9. **F-key 互換:** F9/F10/F12 の業務的依存度、Web 移行で受容できるか F-21
 

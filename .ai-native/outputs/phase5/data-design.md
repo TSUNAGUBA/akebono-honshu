@@ -504,7 +504,7 @@
 | `entity_type` | `VARCHAR(64) NULL` | 対象エンティティ（products, purchase_orders 等）|
 | `entity_id` | `BIGINT NULL` | 対象 ID |
 | `entity_business_key` | `VARCHAR(64) NULL` | 業務 ID（sku, mgmt_no, order_no 等）|
-| `changes` | `JSONB NULL` | 変更前後の差分（機密フィールドはマスク済）|
+| `changes` | `JSONB NULL` | 変更前後の差分（機密フィールドはマスク済）。**構造（Phase 6 で F-15 拡張余地として確定）:** `{ "before": { "field": value, ... }, "after": { "field": value, ... } }`。例: 発注書数量変更 `{ "before": { "lines[0].quantity": 10 }, "after": { "lines[0].quantity": 15 } }`。Post-MVP で変更履歴ビュー UI を追加する際にこの構造から差分表示を生成 |
 | `result` | `SMALLINT NOT NULL` | 0=Success, 1=Failure, 2=PartialSuccess |
 | `error_code` | `VARCHAR(16) NULL` | Phase 3 §10 エラーコード |
 | `trace_id` | `VARCHAR(64) NULL` | X-Ray TraceId（リクエストとの紐付け）|
