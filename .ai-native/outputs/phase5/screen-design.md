@@ -458,18 +458,20 @@
 
 #### 拡張ポイント（マスタ別）
 
-| マスタ | 拡張カラム / 特殊 UI |
-|---|---|
-| sizes | `item_conversion_code` 入力 |
-| suppliers (M-04) | `official_name`, `item_conversion_code`, `country_id` (Combobox), `supplier_type` (Select), `alert_target` |
-| product_types | `item_conversion_code`, `size_demographic_code` (R/M/J) |
-| product_seasons | `item_conversion_code`, `conversion_order`（カンマ区切り）|
-| product_groups | `planning_fee` (numeric) |
-| colors | `item_conversion_code` (2桁) |
-| materials | `material_classification_id` (Combobox) |
-| delivery_destinations | `customer_name`, `remark_1/2/3` |
-| document_template_purchases | `name`（ラベル）+ `body`（テキストエリア、大）|
-| document_template_confirmations | 同 + `standard_print_flag` (Checkbox) |
+| マスタ | 拡張カラム / 特殊 UI | FK 表示 |
+|---|---|---|
+| sizes | `item_conversion_code` 入力 | なし |
+| suppliers (M-04) | `official_name`, `item_conversion_code`, `country_id` (Combobox), `supplier_type` (Select), `alert_target` | **`country: { id, name }` ネスト返却で国名表示**（Phase 6 確定、F-18 対応）|
+| product_types | `item_conversion_code`, `size_demographic_code` (R/M/J) | なし |
+| product_seasons | `item_conversion_code`, `conversion_order`（カンマ区切り）| なし |
+| product_groups | `planning_fee` (numeric) | なし |
+| colors | `item_conversion_code` (2桁) | なし |
+| materials | `material_classification_id` (Combobox) | **`material_classification: { id, name }` ネスト返却で分類名表示**（Phase 6 確定、F-18 対応）|
+| delivery_destinations | `customer_name`, `remark_1/2/3` | なし |
+| document_template_purchases | `name`（ラベル）+ `body`（テキストエリア、大）| なし |
+| document_template_confirmations | 同 + `standard_print_flag` (Checkbox) | なし |
+
+> **F-18 解消方針:** マスタ間 FK は API レスポンスで `{ id, name }` のネスト構造として返却される（api-design.md §2.3 参照）。マスタ管理 hub の DataTable はネスト構造の `column.name` を直接表示するため、フロント側で別途名前解決ロジック実装不要。FK 持ちマスタは 17 マスタ中 2 マスタ (suppliers, materials) のみ。Combobox の選択肢取得は別途 `GET /masters/countries` / `GET /masters/material-classifications` を呼ぶ（編集モーダル表示時にロード）。
 | document_text_purchases | 同 + `standard_print_flag` |
 
 ### 3.12 `/masters/users` — ユーザマスタ管理（M-03）

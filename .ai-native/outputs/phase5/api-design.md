@@ -277,6 +277,31 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 }
 ```
 
+**Response 200（例: suppliers、FK あり）:**
+```json
+{
+  "data": [
+    {
+      "id": 5,
+      "code": "S001",
+      "name": "○○商事",
+      "country": { "id": 3, "name": "日本" },
+      "delete_flag": false,
+      "updated_at": "2026-05-15T10:00:00Z",
+      "updated_by": { "id": 1, "display_name": "今尾 雅広" }
+    }
+  ],
+  "meta": { "pagination": { ... } }
+}
+```
+
+> **FK 名結合表示方針（Phase 6 確定、F-18 対応）:**
+> - マスタ間 FK は `{ id, name }` の **ネスト構造** でレスポンス返却（例: `country_id` → `country: { id, name }`）
+> - サーバ側で EF Core `Include` 一括取得により N+1 を回避
+> - 17 マスタのうち FK を持つのは `suppliers.country_id` のみ。他 16 マスタは既存のフラットレスポンスのまま
+> - フロント側で別途名前解決 API を呼ぶ必要なし。共通 DataTable コンポーネントは `column.name` を表示するだけで完結
+> - 新規 FK 追加時は本セクションのレスポンス例 + EF Core Include に各 1 行追記で対応
+
 #### POST /api/v1/masters/{master}
 
 **エラー:**
