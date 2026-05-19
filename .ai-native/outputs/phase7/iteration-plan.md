@@ -95,6 +95,28 @@
 
 **ゲート:** ゴール (ログイン + ユーザ一覧表示 + audit_logs 記録) のローカル動作確認完了 + 独立コードレビュアー (Clean Architecture 4 層分離 / EF Core マイグレーション / Nuxt 構成 / 認証トークン取扱) + システム監査官 (ダミー認証から本番 Firebase 切替時の影響範囲 / Secret 管理) 指摘ゼロ
 
+#### Iteration 0 完了記録 (2026-05-19)
+
+**動作確認:** オペレーター環境 (Windows + Visual Studio + 既存ローカル PostgreSQL + pgAdmin4 + Volta) で `pgAdmin4 で akebono-honshu DB 作成 → Visual Studio で Backend デバッグ起動 → pnpm dev` の経路で **ログイン → ユーザ一覧表示まで疎通完了**。
+
+**Iteration 0 で得た知見 (Iteration 1 以降に適用):**
+
+| # | 知見 | Iteration 1 以降の適用方針 |
+|---|---|---|
+| 1 | class library (`Microsoft.NET.Sdk`) で `Microsoft.Extensions.*` を使う場合は `using` を明示する必要あり | コード生成時、`Microsoft.Extensions.Configuration` / `Microsoft.Extensions.DependencyInjection` 等を要する箇所は必ず using 列挙。レビュー時の確認項目に追加 |
+| 2 | 新規 npm パッケージ追加時、バージョン指定を訓練データから推測すると `ERR_PNPM_NO_MATCHING_VERSION` を起こすケースあり (reka-ui 1.x 不存在問題) | 新規パッケージ追加前に WebFetch で npm レジストリの最新版を事前確認、CLAUDE.md「未知の問題は公式ドキュメントで裏取り」原則を新規 dep 追加にも拡張 |
+| 3 | ローカル PostgreSQL を持つ Windows ユーザは docker 経由より既存 PostgreSQL + pgAdmin4 直接利用が早い | RUNBOOK で 2 つの選択肢 (A. 既存 PostgreSQL、B. docker) を併記、デフォルトはユーザ環境に依存 |
+| 4 | `appsettings.json` のローカル編集は次回 git pull で衝突する | Iteration 1 で `appsettings.Development.json` + `dotnet user-secrets` の二段運用に正規化、Connection String の Username/Password は User Secrets に格納 |
+| 5 | corepack 同梱が環境依存 (Volta 経由など)、pnpm インストール経路は複数想定が必要 | RUNBOOK 1.2 で 3 経路 (corepack / Volta / npm global) を併記 |
+| 6 | DB 名・ロール名はリポジトリ名と一致させると認識しやすい | `akebono` → `akebono-honshu` に統一、Iteration 1 以降のテーブル定義はこの DB 内で展開 |
+
+**Iteration 1 着手前に Claude 側で整備するタスク:**
+- `appsettings.Development.json` に Connection String を移し、`appsettings.json` を本番デフォルト値で固定
+- `dotnet user-secrets` で個人認証情報を git 管理外に分離する案内追加
+- パッケージ追加時の WebFetch 確認をデフォルト運用化
+
+
+
 ---
 
 ### Iteration 1: 認証 + マスタ管理基盤 (推奨期間: 2-3 週間)
