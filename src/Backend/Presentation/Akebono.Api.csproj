@@ -9,6 +9,9 @@
     <UserSecretsId>akebono-honshu-iter0-dev-secrets</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Infrastructure\Akebono.Infrastructure.csproj" />
   </ItemGroup>
 </Project>
