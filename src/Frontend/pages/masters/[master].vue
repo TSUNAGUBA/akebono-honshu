@@ -6,6 +6,7 @@ const route = useRoute()
 const slug = computed(() => route.params.master as string)
 const def = computed(() => findMasterBySlug(slug.value))
 
+const { canEditMaster } = useAuth()
 const { list, create, update, softDelete, restore } = useMasters()
 
 const items = ref<MasterItem[]>([])
@@ -144,12 +145,14 @@ const formatCell = (value: unknown): string => {
           <p v-if="def.description" class="mt-1 text-sm text-gray-600">{{ def.description }}</p>
         </div>
         <button
+          v-if="canEditMaster"
           type="button"
           class="rounded-md bg-blue-600 px-4 py-2 text-sm text-white shadow-sm hover:bg-blue-700"
           @click="onNew"
         >
           + 新規追加
         </button>
+        <span v-else class="text-xs text-gray-400">参照のみ (品番台帳管理権限なし)</span>
       </header>
 
       <div class="mb-3 flex items-center gap-4">
@@ -225,30 +228,33 @@ const formatCell = (value: unknown): string => {
                 </span>
               </td>
               <td class="px-4 py-3 text-right">
-                <button
-                  v-if="!i.deleteFlag"
-                  type="button"
-                  class="mr-2 text-sm text-blue-600 hover:underline"
-                  @click="onEdit(i)"
-                >
-                  編集
-                </button>
-                <button
-                  v-if="!i.deleteFlag"
-                  type="button"
-                  class="text-sm text-red-600 hover:underline"
-                  @click="onDelete(i)"
-                >
-                  削除
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="text-sm text-green-700 hover:underline"
-                  @click="onRestore(i)"
-                >
-                  復元
-                </button>
+                <template v-if="canEditMaster">
+                  <button
+                    v-if="!i.deleteFlag"
+                    type="button"
+                    class="mr-2 text-sm text-blue-600 hover:underline"
+                    @click="onEdit(i)"
+                  >
+                    編集
+                  </button>
+                  <button
+                    v-if="!i.deleteFlag"
+                    type="button"
+                    class="text-sm text-red-600 hover:underline"
+                    @click="onDelete(i)"
+                  >
+                    削除
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="text-sm text-green-700 hover:underline"
+                    @click="onRestore(i)"
+                  >
+                    復元
+                  </button>
+                </template>
+                <span v-else class="text-xs text-gray-400">—</span>
               </td>
             </tr>
           </tbody>

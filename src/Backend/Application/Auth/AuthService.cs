@@ -30,7 +30,11 @@ public class AuthService(IAkebonoDbContext db, ITokenService tokenService, IAudi
 
         await audit.LogAsync(user.Id, "Login.Success", entityType: "User", entityId: user.Id, cancellationToken: ct);
 
-        return new LoginResponse(token, user.Id, user.DisplayName);
+        return new LoginResponse(token, user.Id, user.DisplayName,
+            user.ProductLedgerPermission,
+            user.PurchaseOrderCreatePermission,
+            user.PurchaseOrderInfoPermission,
+            user.ProcessRecordPermission);
     }
 
     public async Task<MeResponse?> GetMeAsync(long userId, CancellationToken ct = default)
@@ -41,6 +45,10 @@ public class AuthService(IAkebonoDbContext db, ITokenService tokenService, IAudi
 
         return user is null
             ? null
-            : new MeResponse(user.Id, user.EmployeeNo, user.DisplayName, user.IsActive);
+            : new MeResponse(user.Id, user.EmployeeNo, user.DisplayName, user.IsActive,
+                user.ProductLedgerPermission,
+                user.PurchaseOrderCreatePermission,
+                user.PurchaseOrderInfoPermission,
+                user.ProcessRecordPermission);
     }
 }
