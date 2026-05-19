@@ -296,10 +296,28 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 }
 ```
 
+**Response 200（例: materials、FK あり）:**
+```json
+{
+  "data": [
+    {
+      "id": 12,
+      "code": "M001",
+      "name": "綿 100%",
+      "material_classification": { "id": 2, "name": "天然繊維" },
+      "delete_flag": false,
+      "updated_at": "2026-05-15T10:00:00Z",
+      "updated_by": { "id": 1, "display_name": "今尾 雅広" }
+    }
+  ],
+  "meta": { "pagination": { ... } }
+}
+```
+
 > **FK 名結合表示方針（Phase 6 確定、F-18 対応）:**
 > - マスタ間 FK は `{ id, name }` の **ネスト構造** でレスポンス返却（例: `country_id` → `country: { id, name }`）
 > - サーバ側で EF Core `Include` 一括取得により N+1 を回避
-> - 17 マスタのうち FK を持つのは `suppliers.country_id` のみ。他 16 マスタは既存のフラットレスポンスのまま
+> - **17 マスタのうち FK を持つのは 2 マスタのみ:** `suppliers.country_id` → `country` / `materials.material_classification_id` → `material_classification`。他 15 マスタは既存のフラットレスポンスのまま
 > - フロント側で別途名前解決 API を呼ぶ必要なし。共通 DataTable コンポーネントは `column.name` を表示するだけで完結
 > - 新規 FK 追加時は本セクションのレスポンス例 + EF Core Include に各 1 行追記で対応
 
@@ -768,6 +786,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 - 422 ORDER-001: 必須項目欠落
 - 409 ORDER-002: 指定仕入先に対する unit_price 未設定
 - 422 ORDER-004: due_date が過去
+- 422 ORDER-006: 同一 `product_id` が `lines[]` に重複指定 (Phase 6 で F-14 対応、確定。新規/編集 共通バリデーション、フロント側でマトリクスダイアログ重複追加時にトースト通知し API リクエストには含めない)
 
 #### O-03: 発注書一覧・検索
 
@@ -859,6 +878,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 **追加エラー:**
 - 422 ORDER-005: `edit_reason` 未指定または Enum 外の値
+- 422 ORDER-006: 同一 `product_id` が `lines[]` に重複指定 (POST と共通、F-14 対応)
 
 > **F-16 解消方針（Phase 6 確定）:** 編集理由を選択肢必須化（5 値 Enum）+ 自由メモ任意化。audit_logs.changes JSONB に `edit_reason` / `edit_note` を保存することで、Post-MVP で「数量変更が多い仕入先」「納期変更が多い時期」等の業務分析が可能。F-15 (差分表示) のデータ基盤と一体化、Phase 7 で UI 追加するだけで変更履歴ビュー実現可。
 

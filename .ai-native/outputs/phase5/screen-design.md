@@ -484,6 +484,7 @@
 | delivery_destinations | `customer_name`, `remark_1/2/3` | なし |
 | document_template_purchases | `name`（ラベル）+ `body`（テキストエリア、大）| なし |
 | document_template_confirmations | 同 + `standard_print_flag` (Checkbox) | なし |
+| document_text_purchases | 同 + `standard_print_flag` (Checkbox) | なし |
 
 > **F-18 解消方針:** マスタ間 FK は API レスポンスで `{ id, name }` のネスト構造として返却される（api-design.md §2.3 参照）。マスタ管理 hub の DataTable はネスト構造の `column.name` を直接表示するため、フロント側で別途名前解決ロジック実装不要。FK 持ちマスタは 17 マスタ中 2 マスタ (suppliers, materials) のみ。Combobox の選択肢取得は別途 `GET /masters/countries` / `GET /masters/material-classifications` を呼ぶ（編集モーダル表示時にロード）。
 
@@ -502,7 +503,8 @@
 | モバイル | フルスクリーンモーダル切替 (CLAUDE.md 原則 8 レスポンシブ対応) |
 
 > **業務効果:** 削除前に影響範囲を可視化することで、マスタ管理者の誤削除リスクを低減。件数ゼロなら即削除可、件数ありなら慎重判断という直感的な業務フローに整合。usage API は共通テンプレートで実装し、各マスタの参照テーブル定義は `IMasterUsage` インターフェースで集約。
-| document_text_purchases | 同 + `standard_print_flag` |
+>
+> **Race condition の取扱い (F-20 補足):** `GET usage` 呼出から `DELETE` 確定までの間に他ユーザが参照件数を変更する可能性あり。表示する件数は **画面表示時点の snapshot** として扱う (削除実行時の再 COUNT は行わない)。論理削除のため「件数 0 と表示後に新規参照が追加されたまま削除実行」のケースでも既存参照データへの影響はなく、業務的整合性は論理削除の特性で担保される (`delete_flag=true` 後も既存発注書からは引き続き参照可、新規選択のみ不可)。
 
 ### 3.12 `/masters/users` — ユーザマスタ管理（M-03）
 
