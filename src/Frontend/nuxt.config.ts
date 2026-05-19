@@ -2,11 +2,8 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
   devtools: { enabled: true },
-  // SSR を無効化 (全 SPA / CSR 化)。
-  // 理由: 認証情報を localStorage で管理しているため SSR 時に user が null
-  //   になり、hydration mismatch でレイアウト破壊が発生する。Iteration 4 で
-  //   Firebase Auth に移行する際にどのみち全 CSR 化する想定のため、前倒し対応。
-  ssr: false,
+  // ssr: false は Nuxt 3.21+ で Vite Node IPC エラーを引き起こすため使用しない。
+  // 代わりに app.vue 全体を <ClientOnly> でラップすることで実質的に CSR 化する。
   modules: ['@nuxtjs/tailwindcss'],
   css: ['~/assets/css/main.css'],
   typescript: {
