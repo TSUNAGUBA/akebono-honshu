@@ -1,6 +1,9 @@
 using Akebono.Application.Auth;
 using Akebono.Application.Common;
+using Akebono.Application.Masters;
 using Akebono.Application.Users;
+using Akebono.Domain.Common;
+using Akebono.Domain.Entities;
 using Akebono.Infrastructure.Audit;
 using Akebono.Infrastructure.Auth;
 using Akebono.Infrastructure.Persistence;
@@ -25,6 +28,28 @@ public static class DependencyInjection
         services.AddScoped<IAuditLogger, AuditLogger>();
         services.AddScoped<AuthService>();
         services.AddScoped<UserQueryService>();
+
+        // 17 マスタ共通テンプレート (拡張カラムなし or 単純なマスタ用)
+        // 拡張カラムは Endpoint 側で Entity に直接 set/get する設計 (1.D で実装)
+        services.AddScoped<MasterService<Brand>>();
+        services.AddScoped<MasterService<Function>>();
+        services.AddScoped<MasterService<Country>>();
+        services.AddScoped<MasterService<Department>>();
+        services.AddScoped<MasterService<MaterialClassification>>();
+        services.AddScoped<MasterService<Warehouse>>();
+        services.AddScoped<MasterService<Size>>();
+        services.AddScoped<MasterService<ProductType>>();
+        services.AddScoped<MasterService<ProductSeason>>();
+        services.AddScoped<MasterService<ProductGroup>>();
+        services.AddScoped<MasterService<Color>>();
+        services.AddScoped<MasterService<Material>>();
+        services.AddScoped<MasterService<DeliveryDestination>>();
+        services.AddScoped<MasterService<DocumentTemplatePurchase>>();
+        services.AddScoped<MasterService<DocumentTemplateConfirmation>>();
+        services.AddScoped<MasterService<DocumentTextPurchase>>();
+
+        // M-04 仕入先 (F-22 official_name 帳票準備のため個別 Service)
+        services.AddScoped<SupplierService>();
 
         return services;
     }

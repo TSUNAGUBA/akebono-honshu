@@ -1,6 +1,8 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Akebono.Infrastructure.Persistence;
 
@@ -10,24 +12,55 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<User> Users => Set<User>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
+    public DbSet<Size> Sizes => Set<Size>();
+    public DbSet<Brand> Brands => Set<Brand>();
+    public DbSet<Function> Functions => Set<Function>();
+    public DbSet<Country> Countries => Set<Country>();
+    public DbSet<Supplier> Suppliers => Set<Supplier>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<ProductType> ProductTypes => Set<ProductType>();
+    public DbSet<ProductSeason> ProductSeasons => Set<ProductSeason>();
+    public DbSet<ProductGroup> ProductGroups => Set<ProductGroup>();
+    public DbSet<Color> Colors => Set<Color>();
+    public DbSet<Material> Materials => Set<Material>();
+    public DbSet<MaterialClassification> MaterialClassifications => Set<MaterialClassification>();
+    public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+    public DbSet<DeliveryDestination> DeliveryDestinations => Set<DeliveryDestination>();
+    public DbSet<DocumentTemplatePurchase> DocumentTemplatePurchases => Set<DocumentTemplatePurchase>();
+    public DbSet<DocumentTemplateConfirmation> DocumentTemplateConfirmations => Set<DocumentTemplateConfirmation>();
+    public DbSet<DocumentTextPurchase> DocumentTextPurchases => Set<DocumentTextPurchase>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // users (Phase 5 §3.18 全カラム反映)
         modelBuilder.Entity<User>(b =>
         {
             b.ToTable("users");
             b.HasKey(x => x.Id);
             b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.FirebaseUid).HasColumnName("firebase_uid").HasMaxLength(128);
             b.Property(x => x.EmployeeNo).HasColumnName("employee_no").IsRequired().HasMaxLength(16);
             b.Property(x => x.LoginId).HasColumnName("login_id").IsRequired().HasMaxLength(64);
             b.Property(x => x.DisplayName).HasColumnName("display_name").IsRequired().HasMaxLength(255);
+            b.Property(x => x.Email).HasColumnName("email").HasMaxLength(255);
+            b.Property(x => x.IsPlanningStaff).HasColumnName("is_planning_staff");
+            b.Property(x => x.IsSalesStaff).HasColumnName("is_sales_staff");
+            b.Property(x => x.ProductLedgerPermission).HasColumnName("product_ledger_permission");
+            b.Property(x => x.PurchaseOrderCreatePermission).HasColumnName("purchase_order_create_permission");
+            b.Property(x => x.PurchaseOrderInfoPermission).HasColumnName("purchase_order_info_permission");
+            b.Property(x => x.ProcessRecordPermission).HasColumnName("process_record_permission");
             b.Property(x => x.IsActive).HasColumnName("is_active");
             b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
             b.HasIndex(x => x.EmployeeNo).IsUnique();
             b.HasIndex(x => x.LoginId).IsUnique();
         });
 
+        // audit_logs (Iteration 0 で定義済、変更なし)
         modelBuilder.Entity<AuditLog>(b =>
         {
             b.ToTable("audit_logs");
@@ -40,6 +73,96 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.EntityId).HasColumnName("entity_id");
             b.Property(x => x.Result).HasColumnName("result");
             b.Property(x => x.Note).HasColumnName("note").HasMaxLength(512);
+        });
+
+        // 17 マスタ共通設定
+        ConfigureMaster<Size>(modelBuilder, "sizes", b =>
+        {
+            b.Property(x => x.ItemConversionCode).HasColumnName("item_conversion_code").IsRequired().HasMaxLength(4);
+        });
+        ConfigureMaster<Brand>(modelBuilder, "brands");
+        ConfigureMaster<Function>(modelBuilder, "functions");
+        ConfigureMaster<Country>(modelBuilder, "countries");
+        ConfigureMaster<Supplier>(modelBuilder, "suppliers", b =>
+        {
+            b.Property(x => x.OfficialName).HasColumnName("official_name").HasMaxLength(255);
+            b.Property(x => x.ItemConversionCode).HasColumnName("item_conversion_code").IsRequired().HasMaxLength(1).IsFixedLength();
+            b.Property(x => x.CountryId).HasColumnName("country_id");
+            b.Property(x => x.SupplierType).HasColumnName("supplier_type");
+            b.Property(x => x.AlertTarget).HasColumnName("alert_target");
+            b.HasOne(x => x.Country).WithMany().HasForeignKey(x => x.CountryId);
+        });
+        ConfigureMaster<Department>(modelBuilder, "departments");
+        ConfigureMaster<ProductType>(modelBuilder, "product_types", b =>
+        {
+            b.Property(x => x.ItemConversionCode).HasColumnName("item_conversion_code").IsRequired().HasMaxLength(1).IsFixedLength();
+            b.Property(x => x.SizeDemographicCode).HasColumnName("size_demographic_code").IsRequired().HasMaxLength(1).IsFixedLength();
+        });
+        ConfigureMaster<ProductSeason>(modelBuilder, "product_seasons", b =>
+        {
+            b.Property(x => x.ItemConversionCode).HasColumnName("item_conversion_code").IsRequired().HasMaxLength(1).IsFixedLength();
+            b.Property(x => x.ConversionOrder).HasColumnName("conversion_order").HasMaxLength(64);
+        });
+        ConfigureMaster<ProductGroup>(modelBuilder, "product_groups", b =>
+        {
+            b.Property(x => x.PlanningFee).HasColumnName("planning_fee").HasColumnType("numeric(12,2)");
+        });
+        ConfigureMaster<Color>(modelBuilder, "colors", b =>
+        {
+            b.Property(x => x.ItemConversionCode).HasColumnName("item_conversion_code").IsRequired().HasMaxLength(2).IsFixedLength();
+        });
+        ConfigureMaster<Material>(modelBuilder, "materials", b =>
+        {
+            b.Property(x => x.MaterialClassificationId).HasColumnName("material_classification_id");
+            b.HasOne(x => x.MaterialClassification).WithMany().HasForeignKey(x => x.MaterialClassificationId);
+        });
+        ConfigureMaster<MaterialClassification>(modelBuilder, "material_classifications");
+        ConfigureMaster<Warehouse>(modelBuilder, "warehouses");
+        ConfigureMaster<DeliveryDestination>(modelBuilder, "delivery_destinations", b =>
+        {
+            b.Property(x => x.CustomerName).HasColumnName("customer_name").HasMaxLength(255);
+            b.Property(x => x.Remark1).HasColumnName("remark_1").HasMaxLength(255);
+            b.Property(x => x.Remark2).HasColumnName("remark_2").HasMaxLength(255);
+            b.Property(x => x.Remark3).HasColumnName("remark_3").HasMaxLength(255);
+        });
+        ConfigureMaster<DocumentTemplatePurchase>(modelBuilder, "document_template_purchases", b =>
+        {
+            b.Property(x => x.Body).HasColumnName("body").IsRequired();
+        });
+        ConfigureMaster<DocumentTemplateConfirmation>(modelBuilder, "document_template_confirmations", b =>
+        {
+            b.Property(x => x.Body).HasColumnName("body").IsRequired();
+            b.Property(x => x.StandardPrintFlag).HasColumnName("standard_print_flag");
+        });
+        ConfigureMaster<DocumentTextPurchase>(modelBuilder, "document_text_purchases", b =>
+        {
+            b.Property(x => x.Body).HasColumnName("body").IsRequired();
+            b.Property(x => x.StandardPrintFlag).HasColumnName("standard_print_flag");
+        });
+    }
+
+    /// <summary>マスタ共通基底カラム (id / code / name / delete_flag / 監査列 / legacy_id) の Fluent 設定。</summary>
+    private static void ConfigureMaster<T>(
+        ModelBuilder modelBuilder,
+        string tableName,
+        Action<EntityTypeBuilder<T>>? extension = null)
+        where T : MasterEntityBase
+    {
+        modelBuilder.Entity<T>(b =>
+        {
+            b.ToTable(tableName);
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.Code).HasColumnName("code").IsRequired().HasMaxLength(3).IsFixedLength();
+            b.Property(x => x.Name).HasColumnName("name").IsRequired().HasMaxLength(255);
+            b.Property(x => x.DeleteFlag).HasColumnName("delete_flag");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
+            b.HasIndex(x => x.Code).IsUnique();
+            extension?.Invoke(b);
         });
     }
 }
