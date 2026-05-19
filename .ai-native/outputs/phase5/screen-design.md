@@ -316,7 +316,7 @@
 | 入力 | UI |
 |---|---|
 | 発注先（仕入先/工場）| `Combobox` ← suppliers |
-| 納品先 | `Combobox` ← delivery_destinations、選択で `customer_name` が表示プレビューされる |
+| 納品先 | `Combobox` ← delivery_destinations、選択で `customer_category` + `customer_name` + `customer_code` の 3 要素が表示プレビューされる (Phase 6 サンプル受領後 F-22 対応、例: 「DEPARTURES しまむら 336」)|
 | 発注事業部 | `Combobox` ← departments |
 | 納入倉庫 | `Combobox` ← warehouses |
 | 取引先納入日 | `<input type="date">` |
@@ -481,7 +481,7 @@
 | product_groups | `planning_fee` (numeric) | なし |
 | colors | `item_conversion_code` (2桁) | なし |
 | materials | `material_classification_id` (Combobox) | **`material_classification: { id, name }` ネスト返却で分類名表示**（Phase 6 確定、F-18 対応）|
-| delivery_destinations | `customer_name`, `remark_1/2/3` | なし |
+| delivery_destinations | `customer_category` (英字大文字), `customer_name`, `customer_code` (3 桁数値が多い), `remark_1/2/3` (Phase 6 サンプル受領後 F-22 で 3 要素分離)| なし |
 | document_template_purchases | `name`（ラベル）+ `body`（テキストエリア、大）| なし |
 | document_template_confirmations | 同 + `standard_print_flag` (Checkbox) | なし |
 | document_text_purchases | 同 + `standard_print_flag` (Checkbox) | なし |

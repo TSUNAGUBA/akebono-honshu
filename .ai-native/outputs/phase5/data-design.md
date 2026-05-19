@@ -217,7 +217,9 @@
 
 | カラム | 型 | 補足 |
 |---|---|---|
-| `customer_name` | `VARCHAR(255) NULL` | **新規追加。**取引先名（しまむら / KEYUCA / AEON 等）。Phase 3 機能要件 O-03 で「取引先」列が必要。本 MVP では納品先と紐付く取引先を本フィールドで保持（独立 customer マスタを追加すると 18マスタを超過する Phase 2/4 整合性に影響するため）|
+| `customer_category` | `VARCHAR(64) NULL` | **新規追加 (Phase 6 サンプル受領後 2026-05-19、F-22 対応)。**取引先カテゴリ (英字大文字表記、例: `DEPARTURES` / `OEM` 等)。発注書 Excel 帳票の取引先表示「DEPARTURES 御中 336」の第 1 要素 |
+| `customer_name` | `VARCHAR(255) NULL` | **新規追加。**取引先名（しまむら / KEYUCA / AEON 等）。Phase 3 機能要件 O-03 で「取引先」列が必要。発注書 Excel 帳票の取引先表示「DEPARTURES 御中 336」の第 2 要素 (御中の前)。本 MVP では納品先と紐付く取引先を本フィールドで保持（独立 customer マスタを追加すると 18マスタを超過する Phase 2/4 整合性に影響するため）|
+| `customer_code` | `VARCHAR(32) NULL` | **新規追加 (Phase 6 サンプル受領後 2026-05-19、F-22 対応)。**取引先コード (3 桁数値表記が多い、例: `336` / `404` / `437`)。発注書 Excel 帳票の取引先表示「DEPARTURES 御中 336」の第 3 要素 |
 | `remark_1` | `VARCHAR(255) NULL` | 物流発送先住所（郵便番号・住所）|
 | `remark_2` | `VARCHAR(255) NULL` | 電話番号 |
 | `remark_3` | `VARCHAR(255) NULL` | FAX 番号 |
@@ -401,7 +403,9 @@
 | `cancel_reason` | `VARCHAR(255) NULL` | |
 | `supplier_id` | `BIGINT NOT NULL REFERENCES suppliers(id)` | 発注先（仕入先/工場）|
 | `delivery_destination_id` | `BIGINT NOT NULL REFERENCES delivery_destinations(id)` | 納品先 |
+| `customer_category_snapshot` | `VARCHAR(64) NULL` | 取引先カテゴリスナップショット (`delivery_destinations.customer_category` から初回 Excel 出力時にコピー、Phase 6 サンプル受領後追加 F-22)|
 | `customer_name_snapshot` | `VARCHAR(255) NULL` | 取引先名スナップショット（delivery_destinations.customer_name から初回 Excel 出力時にコピー、後の取引先名変更で発注書の表示が変わらないように）|
+| `customer_code_snapshot` | `VARCHAR(32) NULL` | 取引先コードスナップショット (`delivery_destinations.customer_code` から初回 Excel 出力時にコピー、Phase 6 サンプル受領後追加 F-22)|
 | `department_id` | `BIGINT NOT NULL REFERENCES departments(id)` | 発注事業部 |
 | `warehouse_id` | `BIGINT NOT NULL REFERENCES warehouses(id)` | 納入倉庫 |
 | `due_date` | `DATE NOT NULL` | 取引先納入日 |
@@ -560,7 +564,7 @@
 |---|---|
 | 商品マスタ登録（P-01〜P-03）| product_family + products（バルク INSERT） + product_supplier_prices + audit_logs を 1 トランザクション |
 | 発注書作成（O-01/O-02）| purchase_orders + purchase_order_lines（バルク INSERT） + audit_logs |
-| Excel 出力（O-06）| 初回時: purchase_orders 更新（`order_no` 採番、`first_exported_at`, `last_exported_at` SET、`customer_name_snapshot` 凍結） + purchase_order_export_logs INSERT + audit_logs。2回目以降: `last_exported_at` のみ更新 + purchase_order_export_logs INSERT + audit_logs |
+| Excel 出力（O-06）| 初回時: purchase_orders 更新（`order_no` 採番、`first_exported_at`, `last_exported_at` SET、`customer_category_snapshot` / `customer_name_snapshot` / `customer_code_snapshot` の 3 要素を一括凍結） + purchase_order_export_logs INSERT + audit_logs。2回目以降: `last_exported_at` のみ更新 + purchase_order_export_logs INSERT + audit_logs |
 | 発注編集（O-04）| 同一 purchase_orders レコードを直接更新（status=Active 時のみ可、Cancelled は不可）+ 明細差し替え + audit_logs。改訂概念は廃止 |
 | 権限変更（§Arch §4.5）| RDS users UPDATE + audit_logs。Firebase Custom Claims 更新は **トランザクション外**（失敗時は Reconciler で復旧）|
 

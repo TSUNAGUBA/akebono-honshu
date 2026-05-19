@@ -922,7 +922,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 2. **初回出力時のみ** (`first_exported_at IS NULL`):
    - `order_no` 採番（`S` + 4桁連番、PostgreSQL sequence で生成）
    - `first_exported_at=NOW()`, `last_exported_at=NOW()`
-   - `customer_name_snapshot` を `delivery_destinations.customer_name` から複写凍結
+   - `customer_category_snapshot` / `customer_name_snapshot` / `customer_code_snapshot` の 3 要素を `delivery_destinations` から一括複写凍結 (Phase 6 サンプル受領後 F-22 対応)
    - 上記を 1 UPDATE で実行
 3. **2 回目以降** (`first_exported_at IS NOT NULL`): `last_exported_at=NOW()` のみ UPDATE
 4. `purchase_order_export_logs` INSERT（`is_first_export = first_exported_at == NOW()`）
@@ -934,6 +934,12 @@ S3 アップロード完了後、メタデータを DB に登録。
 > - MVP: ① 国内用 1 種類のみ実装。Application 層のリソースとしてバンドル
 > - Post-MVP: ② 海外用、③ 海外用＋管理表 を追加（発注書の業務区分 = 国内/海外 から自動選択する分岐ロジックを Phase 7 以降で導入）
 > - テンプレ更新は Application のリリースに同梱。DB マスタ管理ではない（`document_template_purchases` テーブルは「連絡文章」テンプレ用で別概念）
+>
+> **発注印スタンプ方針 (Phase 6 サンプル受領後 2026-05-19 確定、F-22):**
+> - 既存帳票には「発注 YYYY.MM.DD 商品管理課」の印影スタンプ画像が押下されているが、MVP では **印影画像を Excel に埋め込まず、印刷後に物理的に手押し** する運用とする (既存業務の継続)。
+> - ClosedXML 流し込み時にスタンプ画像挿入処理は不要、Excel テンプレートにも印影画像は埋め込まない (スタンプ枠の空白セルのみ確保)。
+> - 帳票末尾の注意書き「発注印のない発注書は無効です」は Excel テンプレートに固定文として埋め込み、ユーザは印刷物に手押しを徹底する。
+> - Post-MVP で電子押印 (印影画像の動的埋込) を検討する余地は残す。
 
 **冪等性:** 初回出力時の `order_no` 採番は `Idempotency-Key` ヘッダで二重採番防止（推奨）。
 

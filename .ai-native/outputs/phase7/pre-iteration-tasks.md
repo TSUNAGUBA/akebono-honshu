@@ -100,12 +100,83 @@ Phase 6 で確定した発注書 Excel 出力機能 (O-06、MVP は ① 国内�
 ### 完了基準
 
 **MVP 着手可レベル (Step A):**
-- [x] サンプル発注書 ① 国内用 画像 1 枚を Claude Code 側で受領 (オペレーター提供待ち、2026-05-19 時点で提供可能との確認あり)
+- [x] サンプル発注書 ① 国内用 画像 1 枚を Claude Code 側で受領 (**2026-05-19 完了**)
+- [x] ② 海外用 / ③ 海外用+管理表 の画像も受領済 (Post-MVP 計画参考)
 
 **MVP 完全再現レベル (Step B):**
 - [ ] .xlsx ファイル取得 (Phase 7 Iteration 1 中盤までに)
 - [ ] テンプレート構造 (フォント / 列幅 / 印刷範囲) 反映完了
 - [ ] 業務担当者の検収 (画面 + 印刷両方で既存と同等確認)
+
+---
+
+## T-2 補足: 受領画像 3 枚から把握したテンプレート構造 (2026-05-19 記録)
+
+> **画像は機密情報含むためリポジトリ非保存方針 (オペレーター確認 2026-05-19)。** 以下に Phase 7 実装担当者向けのテキストサマリを記録。実装着手時は別途社内ファイル共有で画像を参照のこと。
+
+### ① 国内用テンプレート (MVP 対象)
+
+**サンプル発注書例:** 発注番号 3921、しまむらセンター宛、2026/05/12、明細 14 行、合計 5,164 個 / 4,105,632 円
+
+**ヘッダ部:**
+- タイトル「発注書」(中央配置、大きめフォント)、英字「DEPARTURES SHEET」併記
+- 取引先表示: `<customer_category>` `御中` `<customer_code>` の 3 要素横並び (例: 「DEPARTURES 御中 336」)
+- 右上: 発注番号 (`order_no`、大きく強調)、発注日、処理番号 (`mgmt_no` 26-NNNNN 形式)
+- ページ番号: `1/1` (右上)
+
+**明細列 (13 列):**
+| 列 | 内容 | データソース |
+|---|---|---|
+| # | 行番号 | 自動連番 |
+| メーカー品番 | (例: CX-2741) | `products` の外部品番 |
+| ホンシュ品番 | (例: EZ3027A) | `purchase_order_lines.sku_snapshot` |
+| 色 | コード (例: 30/40/80) | products.color_id ベース |
+| サイズ | コード (例: 00) | products.size_id ベース |
+| 色 | 名 (例: ブルー/ブラウン/グレー) | colors.name |
+| サイズ | 名 (例: 空 or サイズ名) | sizes.name |
+| 商品名 | (例: マーイロンセンターラグ) | `purchase_order_lines.product_name_snapshot` |
+| 入数 | 数値 | products から取得 |
+| 箱数 | 数値 | 計算値 |
+| 発注数 | 数値、列ヘッダに倉庫コード「007」表示 | `purchase_order_lines.quantity` + `warehouse_id` |
+| 単価 | 数値、千区切り | `purchase_order_lines.unit_price_snapshot` |
+| 発注金額 | 数値、千区切り | 計算値 (数量 × 単価) |
+| 備考 | フリーテキスト | `purchase_order_lines.note` |
+
+**フッタ部:**
+- 納品先: `delivery_destinations.name` (例: しまむらセンター)
+- 納品日 + 合計発注数 + 合計発注金額
+- 会社ロゴ画像 + 株式会社ホンシュ住所 + Tel + Fax (テンプレートに固定埋込)
+- 第2事業部 + 担当者 2 名 (発注事業部 = `department.name` + 発注担当者 = `orderer_user.name` + 発注管理者 = `manager_user.name`、副担当 1-6 は帳票には表示しない方針)
+- **発注印スタンプ枠 (空白セル、MVP は手押し運用 F-22)**
+- 注意書き 4 行 (固定文): 「分納、遅納、訂正等は、商品管理部宛 FAX...」「納品書には発注番号を記載してください...」等
+- 末尾: 「発注印のない発注書は無効です」(固定文)
+
+**用紙:** A4 横向き 1 ページ (推測、Phase 7 実装で実機確認)
+
+### ② 海外用テンプレート (Post-MVP)
+
+**サンプル例:** order NO. S3875、安徽拓馳鞋業有限公司宛、2026/04/30、明細 30 行 (2/3 ページ)
+
+**特徴:**
+- タイトル「ORDER SHEET」(英字)
+- 明細列に `bland` (有/無)、`assort box`、`Q'yt of box`、`Q'yt of in box`、**複数倉庫の `depart` 列** が追加
+- 物流情報: Factory Shipping / Shipping / Departure / Delivery / Port of entry
+- フッタに「Order Stamp」枠 + 「責任者 / 管理部 / 担当者」の 3 押印欄
+- 「連絡欄」フリーテキスト (注意事項記入)
+- 複数ページ印刷想定 (2/3 等のページ番号)
+
+**Post-MVP 設計論点:** 海外発注では複数倉庫への分配出荷あり (depart 007 + depart 717 等)。現在の Phase 5 設計 (`purchase_order_lines.warehouse_id` 1 つ) では不足、Post-MVP で `purchase_order_line_warehouses` 紐付テーブル等の拡張要。
+
+### ③ 海外用+管理表テンプレート (Post-MVP)
+
+**サンプル例:** order NO. S3743+A、2 枚構成
+
+- 1 枚目: ORDER SHEET (② と同じレイアウト) + 売上発注分の管理欄
+- 2 枚目: **ORDER DETAIL** — 出荷スケジュール表
+  - 明細列に shipping date 別 (4/10、4/17、4/24、5/1、5/8 ...) の数量列が並ぶ
+  - 1 発注書を複数日に分割出荷する業務に対応
+
+**Post-MVP 設計論点:** 分割出荷スケジュール (`purchase_order_line_shipments` のような子テーブル) が必要。MVP の `purchase_order_lines.quantity` 1 つでは表現不可。
 
 ---
 
