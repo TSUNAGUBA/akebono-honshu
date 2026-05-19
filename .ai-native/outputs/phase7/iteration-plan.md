@@ -74,21 +74,26 @@
 
 ## 3. Iteration 別スコープ詳細
 
-### Iteration 0: 基盤構築 (推奨期間: 1-2 週間)
+### Iteration 0: ローカル開発環境 (推奨期間: 1-2 週間)
 
-> **目的:** Iteration 1 以降の機能実装を効率化する開発・運用基盤を整備
+> **目的 (オペレーター 2026-05-19 確定):** **ローカル PC のみで動作確認できる最小スタック** を整備。AWS インフラ・Firebase 本番接続は Iteration 4 Hardening 前で切替実施。
+>
+> **ゴール:** `docker-compose up` + `dotnet run` + `pnpm dev` でローカルにログイン → ダッシュボード → ユーザ一覧表示まで疎通
 
 | 領域 | タスク | 完了基準 |
 |---|---|---|
-| **インフラ** | AWS App Runner / RDS PostgreSQL 16 Multi-AZ / S3 / Firebase Auth プロジェクト初期化 | `terraform plan` クリーン、各リソース起動確認 |
-| **バックエンド** | .NET 8 Minimal API スケルトン (Clean Architecture 4 層) + EF Core 8 + AuditLogInterceptor 雛形 + Firebase Admin SDK 統合 | `dotnet build` 成功、Firebase ID Token 検証エンドポイント疎通 |
-| **フロントエンド** | Nuxt 4 SSR スケルトン + Reka UI + Tailwind CSS + Firebase Web SDK | `pnpm dev` 起動、ログイン画面雛形表示 |
-| **DB マイグレーション** | EF Core マイグレーション雛形、最低限の users / audit_logs テーブル定義 | `dotnet ef migrations add Init` 成功、RDS 適用確認 |
-| **CI/CD** | GitHub Actions (lint / test / build / Docker image push / App Runner deploy) | main ブランチ push で自動デプロイ確認 |
-| **ローカル開発** | docker-compose (PostgreSQL + LocalStack + Firebase Emulator) | `docker-compose up` で全サービス起動、E2E スモークテスト通過 |
-| **Phase 7 事前タスク** | F-21 不要化により T-1 はスキップ、T-2 .xlsx 取得 (Iteration 1 開始 1 週間前まで、画像は受領済) | オペレーターから .xlsx 受領完了 |
+| **リポジトリ構造** | `src/Backend/` (.NET 8) + `src/Frontend/` (Nuxt 4) + `docker-compose.yml` + ルート README | 開発手順 README 完成、コマンド 3 本でローカル起動可 |
+| **ローカル DB** | docker-compose で PostgreSQL 16 起動 (本番と同じバージョン)、ボリュームマウントで永続化 | `docker-compose up postgres` で起動、psql 接続可 |
+| **バックエンド** | .NET 8 Minimal API スケルトン (Clean Architecture 4 層: Domain / Application / Infrastructure / Presentation) + EF Core 8 + **ダミー認証** | `dotnet run` で `http://localhost:5000` 起動、ヘルスチェック OK |
+| **ダミー認証** | `POST /api/v1/auth/login` で固定 ID/PW を受け、JWT 風トークン (固定 user_id 含む) を返却。Iteration 4 Hardening で Firebase Admin SDK 接続に置換 | フロントから 200 OK + トークン受信 |
+| **DB マイグレーション** | EF Core マイグレーション雛形、**最低限** users + audit_logs の 2 テーブルのみ。Seed データで 1 ユーザ (`owner` / 全権限) 投入 | `dotnet ef database update` 成功、psql で users 1 件確認 |
+| **フロントエンド** | Nuxt 4 SSR スケルトン + Reka UI + Tailwind CSS。Firebase Web SDK は **未統合** (ダミー認証用に独自 fetch コンポーザブル) | `pnpm dev` で `http://localhost:3000` 起動 |
+| **画面実装 (最小 2 画面)** | (a) ログイン画面 (ID/PW 入力 → POST /auth/login → トークン保存)、(b) ダッシュボード兼ユーザ一覧 (`GET /users` で users テーブルを表示) | フロントでログイン成功後、ユーザ一覧テーブル 1 件表示 |
+| **audit_logs 動作確認** | ログイン成功 + ユーザ一覧表示時に audit_logs INSERT、psql で件数増加確認 | psql で `SELECT * FROM audit_logs;` で 2 件以上 |
+| **README** | 開発手順 (前提ツール / clone から起動まで / トラブルシュート) | 新メンバーが 30 分以内で起動できる |
+| **Iteration 0 で除外する項目 (Iteration 後半 or Hardening へ)** | AWS インフラ (App Runner / RDS / S3) / Firebase Emulator or 本番接続 / LocalStack S3 / CI/CD パイプライン / Terraform | – |
 
-**ゲート:** 全領域完了 + 独立コードレビュアー (基盤コードのセキュリティ・スケーラビリティ・保守性) 指摘ゼロ + システム監査官 (IAM 最小権限 / Secret 管理 / コスト見積) 指摘ゼロ
+**ゲート:** ゴール (ログイン + ユーザ一覧表示 + audit_logs 記録) のローカル動作確認完了 + 独立コードレビュアー (Clean Architecture 4 層分離 / EF Core マイグレーション / Nuxt 構成 / 認証トークン取扱) + システム監査官 (ダミー認証から本番 Firebase 切替時の影響範囲 / Secret 管理) 指摘ゼロ
 
 ---
 
@@ -156,19 +161,22 @@
 
 ---
 
-### Iteration 4: Hardening (推奨期間: 1-2 週間)
+### Iteration 4: Hardening + 本番化 (推奨期間: 2-3 週間)
 
-> **目的:** 統合検証 + 性能調整 + UAT 準備、Phase 7 ゲート (品質ゲート + 安全ゲート + オペレーター承認) 通過
+> **目的:** 統合検証 + 性能調整 + **ダミー認証 → Firebase 本番接続切替** + **AWS インフラ構築 (App Runner / RDS / S3) + CI/CD パイプライン** + UAT 準備、Phase 7 ゲート通過
 
 | 領域 | 内容 |
 |---|---|
-| 統合テスト | UC-1〜UC-4 通しシナリオ (Phase 2 §2 各 UC) を E2E 自動化 |
-| 性能調整 | Phase 3 NFR §1.1 各画面・処理の応答時間検証と最適化 (発注書 Excel 出力 5 秒以内、1 万件商品一覧 100ms 等) |
-| セキュリティ最終確認 | audit_logs 改竄防止 (DB ロール権限 + S3 Object Lock)、KMS 暗号化、IAM 最小権限の再確認 |
-| レスポンシブ最終確認 | CLAUDE.md 原則 8: 全画面でモバイル/タブレット/PC の表示確認 |
-| Excel テンプレート最終再現 | T-2 Step B (.xlsx 取得後の完全再現) 完了、業務担当者の印刷検収 |
-| UAT 準備 | UAT シナリオ作成、オペレーター + 業務担当者向けマニュアル |
-| Post-Phase6 実フィードバック反映 | Phase 6 §6.2 アジェンダで Post-Phase6 並行実施結果を本 Iteration で吸収 |
+| **本番認証切替** | ダミー認証 (Iteration 0 で実装) を Firebase Auth + Custom Claims に置換。Iteration 1 の C-01/C-02 設計通り完成 |
+| **AWS インフラ構築** | App Runner / RDS PostgreSQL 16 Multi-AZ / S3 / KMS / IAM をオペレーターと初期化、Terraform でコード化 |
+| **CI/CD パイプライン** | GitHub Actions (lint / test / build / Docker image push / App Runner deploy)、main 自動デプロイ |
+| **統合テスト** | UC-1〜UC-4 通しシナリオを E2E 自動化 |
+| **性能調整** | Phase 3 NFR §1.1 各画面・処理の応答時間検証と最適化 (発注書 Excel 出力 5 秒以内、1 万件商品一覧 100ms 等) |
+| **セキュリティ最終確認** | audit_logs 改竄防止 (DB ロール権限 + S3 Object Lock)、KMS 暗号化、IAM 最小権限の再確認 |
+| **レスポンシブ最終確認** | CLAUDE.md 原則 8: 全画面でモバイル/タブレット/PC の表示確認 |
+| **Excel テンプレート最終再現** | T-2 Step B (.xlsx 取得後の完全再現) 完了、業務担当者の印刷検収 |
+| **UAT 準備** | UAT シナリオ作成、オペレーター + 業務担当者向けマニュアル |
+| **Post-Phase6 実フィードバック反映** | Phase 6 §6.2 アジェンダで Post-Phase6 並行実施結果を本 Iteration で吸収 |
 
 **ゲート:** 方法論 §Phase 7 完了ゲート 3 件 (機能完成 / コードレビュアー 7 視点 / システム監査官リリース OK) + オペレーターサインオフ
 
@@ -192,12 +200,12 @@ CLAUDE.md 原則 9 / 方法論 SP-8 に従い、**各 Iteration 完了時に独�
 
 | Iteration | 期間 | 機能数 | 内容 |
 |---|---|---|---|
-| Iteration 0 | 1-2 週間 | – | 基盤 (インフラ / スタック / CI/CD / docker-compose) |
-| Iteration 1 | 2-3 週間 | 8 機能 | C-01〜C-03 + M-01〜M-05 |
-| Iteration 2 | 2-3 週間 | 6 機能 | P-01〜P-06 |
-| Iteration 3 | 3 週間 | 7 機能 | O-01〜O-07 (Excel 出力含む) |
-| Iteration 4 | 1-2 週間 | – | Hardening + UAT 準備 |
-| **合計** | **約 9-13 週間 (約 2-3 ヶ月)** | **21 機能** | MVP リリース |
+| Iteration 0 | 1-2 週間 | – | **ローカル開発環境のみ** (docker-compose / .NET 8 + Nuxt 4 スケルトン / ダミー認証 / ログイン + ユーザ一覧 1 画面表示) |
+| Iteration 1 | 2-3 週間 | 8 機能 | C-01〜C-03 + M-01〜M-05 (ローカルダミー認証で動作) |
+| Iteration 2 | 2-3 週間 | 6 機能 | P-01〜P-06 (ローカルダミー認証で動作) |
+| Iteration 3 | 3 週間 | 7 機能 | O-01〜O-07 (Excel 出力含む、ローカルダミー認証で動作) |
+| Iteration 4 | 2-3 週間 | – | Hardening + **AWS インフラ構築 + Firebase 本番認証切替** + CI/CD + UAT 準備 |
+| **合計** | **約 10-14 週間 (約 2.5-3.5 ヶ月)** | **21 機能** | MVP リリース |
 
 ---
 
