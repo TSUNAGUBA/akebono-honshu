@@ -11,9 +11,10 @@
 
 ## Phase 状態
 
-- **現在ステータス:** ドラフト完了、オペレーターレビュー待ち (Phase5-Arch / Phase5-Data / Phase5-Api / Phase5-Screen)
+- **現在ステータス:** COMPLETED (全レビュー観点 36件すべてクローズ、Phase 5 確定)
 - **進行方針:** 順次進行 (architecture → data → api → screen) + ドキュメント上のトレース検証 (Phase5 着手時にオペレーター合意)
-- **ゲート判定 (事前自己評価):** 7条件すべて PASS
+- **ゲート判定:** 7条件すべて PASS (オペレーターレビュー反映済)
+- **次フェーズ:** Phase 6 (プロトタイプベースのフィードバック)
   - サイトマップ作成 ✅ (screen §1)
   - 画面ごとの機能定義 ✅ (screen §3, 27画面)
   - I/F 設計 6 視点チェック ✅ (4成果物の各 §で実施)
@@ -29,7 +30,8 @@
 | Phase5-Arch (Arch-1〜Arch-6) | 全6件「進めてください」で確定 | 0 |
 | Phase5-Data (D-1〜D-10) | 全10件「すべて推奨案で OK」で確定 | 0 |
 | Phase5-Api (API-1〜API-10) | 全10件「すべて推奨案で OK」で確定 | 0 |
-| Phase5-Screen (S-1〜S-10) | レビュー待ち | 10 |
+| Phase5-Screen (S-1〜S-10) | 全10件「すべて推奨案で OK」で確定 | 0 |
+| **合計** | **36 / 36 件クローズ** | **0** |
 
 ## 確定事項サマリ
 
@@ -52,6 +54,18 @@
 - 文書テンプレートは name (ラベル) + body (本文) に分離
 - enum は SMALLINT + Application 層解釈
 - EF Core Migration は per-PR 1 Migration + script レビュー
+
+### 画面設計 (S-1〜S-10 確定)
+- 発注中止後の再開不可 (最終アクション)
+- /products/new Step 4 → /orders/new 自動遷移 (戻るボタン併設)
+- カード/テーブル切替は Pinia セッション中保持 (localStorage は Phase 6 で判断)
+- 仕入単価マスク開示は X-Include-Amount ヘッダ + price:read 権限保有時のみトグル
+- ホームのダッシュボードは MVP 最小 (リスト + Draft + 通知)、グラフは Post-MVP
+- 監査ログ閲覧 UI は Post-MVP
+- Excel 出力時の発注確定警告を明示
+- サブナビは権限なし機能を非表示
+- モバイル時 /products/new は Stepper 縦配置 (Phase 6 で実用性検証)
+- ローディング表現は Skeleton
 
 ### API 設計 (API-1〜API-10 確定)
 - URL バージョニング /api/v1/
