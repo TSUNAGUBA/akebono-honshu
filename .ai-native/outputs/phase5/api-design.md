@@ -251,6 +251,7 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 | `PATCH` | `/api/v1/masters/{master}/{id}` | 更新 | `master:write` |
 | `DELETE` | `/api/v1/masters/{master}/{id}` | 論理削除（delete_flag=true）| `master:write` |
 | `POST` | `/api/v1/masters/{master}/{id}/restore` | 論理削除取消 | `master:write` |
+| `GET` | `/api/v1/masters/{master}/{id}/usage` | **削除前の参照件数取得（Phase 6 で F-20 対応、確定）**| `master:read` |
 
 #### GET /api/v1/masters/{master}
 
@@ -309,6 +310,36 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 - 422 MASTER-002: FK 不整合（例: 存在しない `country_id` を suppliers に指定）
 
 > **実装方針:** `MasterEntity` を IMaster インターフェースで抽象化、`MasterController<TEntity, TDto>` ジェネリックで共通実装。各マスタ固有の拡張カラム（suppliers.country_id 等）は `IValidator<TDto>` で検証。
+
+#### GET /api/v1/masters/{master}/{id}/usage
+
+> **Phase 6 で F-20 対応として新設、確定。** 削除前にマスタ管理者へ参照件数を表示し、誤削除リスクを低減する。
+
+**処理:**
+1. 各マスタの参照テーブル定義 (`IMasterUsage` インターフェース) から COUNT 集計
+2. 件数を集約して返却（参照ゼロのマスタも対象、その場合 `usage: {}`）
+
+**Response 200（例: suppliers）:**
+```json
+{
+  "usage": {
+    "products": 15,
+    "product_supplier_prices": 42,
+    "purchase_orders": 30
+  }
+}
+```
+
+**Response 200（参照ゼロ時）:**
+```json
+{
+  "usage": {}
+}
+```
+
+> **実装方針:** マスタごとの参照テーブル定義は `IMasterUsage<TEntity>` インターフェースで集約。例: `SupplierUsage` は `[Products, ProductSupplierPrices, PurchaseOrders]` を宣言、EF Core で COUNT クエリを並列実行。新規 FK 追加時は該当 `IMasterUsage` 実装に 1 行追加で対応。
+
+> **F-20 解消方針:** 共通テンプレートで 17 マスタ全てを 1 エンドポイント定義でカバー。レスポンス形式は参照テーブル名 → 件数のシンプルなマップ構造、フロント側で「商品 15 件 / 発注書 30 件」等に整形表示。件数ゼロ時は「使用中の業務データはありません」と緑色バッジで安全削除を促す。
 
 ---
 

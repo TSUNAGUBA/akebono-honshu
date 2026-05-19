@@ -133,11 +133,11 @@ Phase 2 ユースケース 4 件を Phase 5 画面遷移 + API + データフロ
 | 2 | 仕入先マスタ → `/masters/suppliers` | screen §3.11 | **Phase 6 確定:** API レスポンスで `country: { id, name }` ネスト返却、フロント側で別途 API 呼出不要 | **F-18 解消** api-design.md §2.3 にネスト返却仕様明示、screen §3.10 で FK 持ちマスタ (suppliers, materials) のみ対応 |
 | 3 | 「+ 新規」→ 編集モーダル | M-02 共通 | コード自動採番 vs 手動入力（既存運用は手動の3桁ゼロパディング）| **F-19** コード採番方式（既存運用ヒアリング必要）|
 | 4 | 入力 → 「保存」→ MASTER-001 (code 重複) | バリデーション | エラーは form 下にインライン表示（screen §5.2）| - |
-| 5 | 仕入先削除 → 削除済発注書が参照中の場合 | screen §3.11 | 論理削除のみだが、**削除後にその仕入先を新規発注で選択できなくなる**（一覧から消える）警告は必要 | **F-20** マスタ削除時の影響範囲表示（使用中の商品 / 発注書件数を事前表示）|
+| 5 | 仕入先削除 → 削除済発注書が参照中の場合 | screen §3.11 | **Phase 6 確定:** 削除ダイアログ表示前に `GET /masters/{master}/{id}/usage` 呼出、件数ゼロなら緑色バッジで安全削除可、件数ありなら警告色 + 注記表示 | **F-20 解消** A 案 (usage API 新設) 採用、共通テンプレート 1 エンドポイントで 17 マスタ全対応、Phase 5 (api-design.md / screen-design.md) + Phase 3 (M-02) 反映完了 |
 
 **UC-4 全体所見:**
 - F-18 解消済: FK 持ちマスタは 17 中 2 件 (suppliers, materials) のみで影響範囲限定的、共通テンプレートを維持しつつネスト返却で対応
-- F-20 (削除影響範囲) はマスタ管理者の判断材料として必須
+- F-20 (削除影響範囲) は Phase 6 で A 案 (usage API 新設) 採用済、マスタ管理者の誤削除リスク低減
 
 ---
 
@@ -188,7 +188,7 @@ Phase 5 設計を USABILITY_STANDARDS 基準で評価。検出した issue は �
 |---|---|---|
 | 9 ロール（担当者 × 9）の選択肢 | ⚠️ MVP 据え置き | F-07: 毎回 12 項目 Combobox 選択で MVP リリース、実運用後に必要なら Post-MVP で改善 |
 | 11桁品番の入力支援 | ⚠️ | F-13: SKU 直接入力モードなし、業務知識ある人の動線不足 |
-| マスタ削除の影響範囲 | ❌ | F-20: 削除後の発注書参照状況が見えない |
+| マスタ削除の影響範囲 | ✅ | F-20 解消: `GET /masters/{master}/{id}/usage` で参照件数事前取得、削除ダイアログに表示 |
 | 連絡文章 6 行制限 | ⚠️ | F-09: 制限事前表示なし |
 | 改訂理由の任意入力 | ✅ | F-16 解消: 変更理由を 5 値 Enum 必須化、audit_logs.changes に edit_reason / edit_note 保存 |
 
@@ -225,7 +225,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 | F-17 マスタ hub 検索 | なし | UI 改修で吸収 |
 | **F-18 FK 名結合表示** | **解消済** | Phase 6 で A 案 (共通テンプレート + FK ネスト返却) 採用。シンプル・可読性・保守性 3 観点で最優。api-design.md §2.3 にネスト返却仕様明示、screen-design.md §3.10 で FK 持ちマスタ (suppliers, materials の 2 件) のみ対応。サーバ側 EF Core Include で N+1 回避。Phase 5 反映完了 |
 | F-19 コード採番方式 | なし | 業務ヒアリングで方針決定後、UI 改修 |
-| F-20 マスタ削除影響範囲 | なし | API `GET /masters/{master}/{id}/usage` 新設で実現可 |
+| F-20 マスタ削除影響範囲 | 解消済 | Phase 6 で A 案 (usage API 新設) 採用、共通テンプレート 1 エンドポイントで 17 マスタ全対応 |
 | F-21 F-key 互換 | なし | フロント側ショートカット実装で吸収可、ただし Reka UI との衝突要検証 |
 
 **矛盾あり 5 件は全て Phase 6 で解消（F-06 / F-10 / F-11 / F-12 / F-14 / F-18）。Phase 5 全件反映完了、Phase 7 実装フェーズへ進行可能。**
@@ -250,7 +250,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 | ~~F-12~~ | ~~Excel テンプレート体裁~~ | **解消済 (2026-05-19)** Phase 6 でテンプレ 3 種類確定、MVP は ① 国内用のみ実装。Phase 5/3 反映完了。Phase 7 実装で ① 国内用 Excel サンプル 1 件取込のみ運用タスクとして残存 |
 | ~~F-14~~ | ~~O-02 部分 SKU 選択 UI~~ | **解消済 (2026-05-19)** Phase 6 で「色×サイズマトリクス選択ダイアログ」採用。screen-design.md §3.6 にダイアログ仕様明示、Phase 3 O-02 業務ルール追加。Phase 5 / Phase 3 反映完了 |
 | ~~F-18~~ | ~~マスタ一覧 FK 名結合表示~~ | **解消済 (2026-05-19)** Phase 6 で A 案 (共通テンプレート + FK ネスト返却) 採用。api-design.md §2.3 にネスト返却仕様、screen-design.md §3.10 に FK 持ちマスタ (suppliers, materials) のみ明示。EF Core Include で N+1 回避 |
-| F-20 | マスタ削除時の影響範囲表示 | api-design.md に `GET /masters/{master}/{id}/usage` 新設（使用中の商品 / 発注書件数を返却）+ screen §3.11 削除ダイアログに表示 |
+| ~~F-20~~ | ~~マスタ削除時の影響範囲表示~~ | **解消済 (2026-05-19)** Phase 6 で A 案 (usage API 新設) 採用。Phase 5 (api-design.md §2.3: `GET /masters/{master}/{id}/usage` 共通テンプレート定義 + `IMasterUsage` 実装方針 / screen-design.md §3.11: 削除確認ダイアログ仕様明示) + Phase 3 (functional-requirements.md M-02: 業務ルール更新) 反映完了 |
 | ~~F-15~~ | ~~改訂時の差分表示~~ | **MVP 据え置き判断 (2026-05-19)** UI 実装は Post-MVP、データ基盤 (audit_logs.changes 構造 `{ before, after }`) を Phase 5 data-design.md §6.1 に明示で拡張余地確保。Later カテゴリへ移動 |
 | ~~F-16~~ | ~~改訂理由必須化~~ | **解消済 (2026-05-19)** Phase 6 で A 案 (選択肢必須化) 採用。Phase 5 (api-design.md §2.5 PATCH O-04: edit_reason 5 値 Enum 必須 + edit_note 任意 + ORDER-005 エラーコード追加 / screen-design.md §3.8: 編集保存ダイアログ追加) + Phase 3 (functional-requirements.md O-04: 業務ルール更新) 反映完了 |
 | F-05 | 仕入単価一括設定 | screen §3.4 Step 3 に「全 SKU に同一単価適用」「色別 / サイズ別適用」ボタン追加 |
@@ -282,7 +282,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 
 | 優先度 | 件数 | 内訳 |
 |---|---|---|
-| Now | 1 | F-20 (F-05/F-06/F-10/F-11/F-12/F-14/F-16/F-18 解消済、F-07/F-15 は MVP 据え置きで Later 移動)|
+| Now | 0 | 全件解消 (F-05/F-06/F-10/F-11/F-12/F-14/F-16/F-18/F-20)、F-07/F-15 は MVP 据え置きで Later 移動|
 | Next | 5 | F-08, F-09, F-13, F-17, F-21 |
 | Later | 7 | F-01, F-02, F-03, F-04, F-07, F-15, F-19 (F-11 解消済、F-07/F-15 は MVP 据え置きで Now → Later)|
 | **合計** | **21** | |

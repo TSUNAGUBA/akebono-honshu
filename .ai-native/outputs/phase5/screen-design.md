@@ -465,7 +465,7 @@
 | レイアウト | 上部: タイトル + 検索 + 「+ 新規」+ 「論理削除済を表示」トグル / 下部: DataTable |
 | 編集 | 行クリック → 編集モーダル（Reka UI Dialog）|
 | 新規 | ヘッダ「+ 新規」→ 同じモーダル（空フォーム）|
-| 削除 | 行末アクション → ConfirmDialog → `DELETE /masters/{master}/{id}` |
+| 削除 | 行末アクション → **使用件数取得 (`GET /masters/{master}/{id}/usage`) → ConfirmDialog で使用件数を表示** → 確定で `DELETE /masters/{master}/{id}` (Phase 6 確定、F-20 対応) |
 | 復元 | 論理削除済を表示中のみ「復元」アクション → `POST /masters/{master}/{id}/restore` |
 | バリデーション | コード重複 → MASTER-001、FK 不整合 → MASTER-002 |
 | ソート | デフォルト `code` 昇順 |
@@ -486,6 +486,22 @@
 | document_template_confirmations | 同 + `standard_print_flag` (Checkbox) | なし |
 
 > **F-18 解消方針:** マスタ間 FK は API レスポンスで `{ id, name }` のネスト構造として返却される（api-design.md §2.3 参照）。マスタ管理 hub の DataTable はネスト構造の `column.name` を直接表示するため、フロント側で別途名前解決ロジック実装不要。FK 持ちマスタは 17 マスタ中 2 マスタ (suppliers, materials) のみ。Combobox の選択肢取得は別途 `GET /masters/countries` / `GET /masters/material-classifications` を呼ぶ（編集モーダル表示時にロード）。
+
+#### 削除確認ダイアログ（Phase 6 確定、F-20 対応）
+
+> 削除アクション押下時に事前 API 呼出で参照件数を取得し、ダイアログに表示してマスタ管理者の判断を支援。
+
+| 要素 | 内容 |
+|---|---|
+| トリガ | 行末「削除」アクション → `GET /masters/{master}/{id}/usage` 呼出 |
+| 件数表示 | レスポンス `{ usage: { products: 15, purchase_orders: 30 } }` を整形して「現在 商品 15 件 / 発注書 30 件 で使用中です」と表示 |
+| 件数ゼロ時 | 「使用中の業務データはありません。安全に削除できます」と緑色バッジで表示、削除ボタンを通常色 |
+| 件数あり時 | 警告色 (黄/橙) で件数表示、削除ボタンに「論理削除なので既存データは参照可能ですが、今後この項目は新規選択できなくなります」と注記 |
+| 確定 | 「削除」ボタン → `DELETE /masters/{master}/{id}` (論理削除) |
+| キャンセル | ダイアログ閉じる |
+| モバイル | フルスクリーンモーダル切替 (CLAUDE.md 原則 8 レスポンシブ対応) |
+
+> **業務効果:** 削除前に影響範囲を可視化することで、マスタ管理者の誤削除リスクを低減。件数ゼロなら即削除可、件数ありなら慎重判断という直感的な業務フローに整合。usage API は共通テンプレートで実装し、各マスタの参照テーブル定義は `IMasterUsage` インターフェースで集約。
 | document_text_purchases | 同 + `standard_print_flag` |
 
 ### 3.12 `/masters/users` — ユーザマスタ管理（M-03）
