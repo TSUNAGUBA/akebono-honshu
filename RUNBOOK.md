@@ -36,7 +36,7 @@ docker compose up -d postgres
 docker compose ps
 
 # 初期データ確認 (任意)
-docker compose exec postgres psql -U akebono -d akebono -c "SELECT id, login_id, display_name FROM users;"
+docker compose exec postgres psql -U akebono-honshu -d akebono-honshu -c "SELECT id, login_id, display_name FROM users;"
 ```
 
 期待結果: `owner / planner / sales` の 3 ユーザが表示される。
@@ -90,7 +90,7 @@ pnpm dev
 4. 「ログアウト」ボタン → `/login` に戻る
 5. 監査ログ確認:
    ```bash
-   docker compose exec postgres psql -U akebono -d akebono \
+   docker compose exec postgres psql -U akebono-honshu -d akebono-honshu \
      -c "SELECT id, occurred_at, action, actor_user_id, note FROM audit_logs ORDER BY id DESC LIMIT 10;"
    ```
    期待結果: `Login.Success`, `User.List` 等が記録されている。
