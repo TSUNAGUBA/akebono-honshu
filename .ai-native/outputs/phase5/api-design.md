@@ -372,16 +372,18 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 
 P-01 入力中の動的プレビュー用。読み取り専用、軽量。
 
-#### P-03: マルチ仕入先単価
+#### P-03: マルチ仕入先単価（アイテム単位）
+
+> **Phase 6 修正:** 仕入単価は **アイテム (product_family) 単位** で管理（旧設計の SKU 単位から変更）。同一企画内では色違い・サイズ違いでも仕入単価は同じ。
 
 | メソッド | パス | 用途 |
 |---|---|---|
-| `GET` | `/api/v1/products/{productId}/supplier-prices` | 一覧（履歴含む）|
-| `POST` | `/api/v1/products/{productId}/supplier-prices` | 新規（既存 effective_to を自動更新）|
-| `PATCH` | `/api/v1/products/{productId}/supplier-prices/{priceId}` | 更新（誤入力修正、監査記録）|
-| `DELETE` | `/api/v1/products/{productId}/supplier-prices/{priceId}` | 論理削除 |
+| `GET` | `/api/v1/products/families/{familyId}/supplier-prices` | 一覧（履歴含む）|
+| `POST` | `/api/v1/products/families/{familyId}/supplier-prices` | 新規（既存 effective_to を自動更新）|
+| `PATCH` | `/api/v1/products/families/{familyId}/supplier-prices/{priceId}` | 更新（誤入力修正、監査記録）|
+| `DELETE` | `/api/v1/products/families/{familyId}/supplier-prices/{priceId}` | 論理削除 |
 
-##### POST /api/v1/products/{productId}/supplier-prices
+##### POST /api/v1/products/families/{familyId}/supplier-prices
 
 **認可:** `product:write` AND `price:write`（機密度 中-高 NFR §6.2）
 
@@ -399,15 +401,17 @@ P-01 入力中の動的プレビュー用。読み取り専用、軽量。
 
 **処理:**
 1. トランザクション開始
-2. 同一 `(product_id, supplier_id)` の現在有効レコード（`effective_to IS NULL`）の `effective_to` を `new.effective_from - 1day` で UPDATE
+2. 同一 `(product_family_id, supplier_id)` の現在有効レコード（`effective_to IS NULL`）の `effective_to` を `new.effective_from - 1day` で UPDATE
 3. 新レコード INSERT
-4. audit_logs INSERT（**unit_price は "***" にマスク**、operator/product/supplier のみ記録）
+4. audit_logs INSERT（**unit_price は "***" にマスク**、operator/product_family/supplier のみ記録）
 5. コミット
 
 **エラー:**
-- 409 PRICE-001: `(product_id, supplier_id, effective_from)` 重複
+- 409 PRICE-001: `(product_family_id, supplier_id, effective_from)` 重複
 - 422 PRICE-002: unit_price <= 0
 - 422 PRICE-003: effective_to <= effective_from
+
+> **発注時の引当てロジック:** 発注作成（§2.5）で各明細行の `unit_price_snapshot` を埋める際、`products.product_family_id` 経由で `product_supplier_prices` を引き、現在有効レコードの単価を採用。色違い・サイズ違いの SKU はすべて同一の単価が引当てられる。
 
 #### P-04: 商品マスタ一覧・検索
 

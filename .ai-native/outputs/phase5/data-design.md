@@ -355,12 +355,12 @@
 
 ### 4.4 `product_supplier_prices` — マルチ仕入先単価
 
-1 SKU に対して複数 (仕入先, 単価, 有効開始日) を保持（P-03 / BR-04）。
+**アイテム（product_family）単位** で複数 (仕入先, 単価, 有効開始日) を保持（P-03 / BR-04）。同一企画内では色違い・サイズ違いでも仕入単価は同じ（業務ルール、Phase 6 で確定）。
 
 | カラム | 型 | 補足 |
 |---|---|---|
 | `id` | `BIGSERIAL PRIMARY KEY` | |
-| `product_id` | `BIGINT NOT NULL REFERENCES products(id)` | SKU 単位 |
+| `product_family_id` | `BIGINT NOT NULL REFERENCES product_families(id)` | **アイテム単位**（旧設計の SKU 単位 `product_id` から修正、Phase 6 オペレーター確認で確定）|
 | `supplier_id` | `BIGINT NOT NULL REFERENCES suppliers(id)` | |
 | `unit_price` | `NUMERIC(12,2) NOT NULL` | 仕入単価（機密度 中-高、Phase 4 §5 アクセス制御）|
 | `currency_code` | `CHAR(3) NOT NULL DEFAULT 'JPY'` | ISO 4217（JPY, USD, CNY 等）|
@@ -371,15 +371,16 @@
 | `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除 |
 | 共通監査 4 列 | | |
 
-**UNIQUE 制約:** `(product_id, supplier_id, effective_from) WHERE is_deleted = FALSE`（同一日付の重複防止、PRICE-001）。
+**UNIQUE 制約:** `(product_family_id, supplier_id, effective_from) WHERE is_deleted = FALSE`（同一企画・同一仕入先・同一開始日の重複防止、PRICE-001）。
 
-**インデックス:** `idx_psp_product_current (product_id, effective_from DESC) WHERE effective_to IS NULL AND is_deleted = FALSE`（現在有効単価の高速取得）。
+**インデックス:** `idx_psp_family_current (product_family_id, effective_from DESC) WHERE effective_to IS NULL AND is_deleted = FALSE`（現在有効単価の高速取得）。
 
 **CHECK 制約:** `unit_price > 0`, `effective_to IS NULL OR effective_to > effective_from`。
 
 > **設計判断（BR-04 履歴管理）:**
-> - 1 SKU × 1 仕入先で複数履歴を保持。現在有効＝`effective_to IS NULL`。新単価設定時は旧レコードの `effective_to` を新単価の `effective_from - 1day` で UPDATE + 新レコード INSERT（トランザクション境界）。
+> - **アイテム単位** で 1 企画 × 1 仕入先で複数履歴を保持。現在有効＝`effective_to IS NULL`。新単価設定時は旧レコードの `effective_to` を新単価の `effective_from - 1day` で UPDATE + 新レコード INSERT（トランザクション境界）。
 > - 機密度「中-高」(NFR §6.2): KMS 保存時暗号化 + アクセス制御 + 監査ログ。**監査ログには金額本体ではなくマスク値（"***"）のみ記録**（architecture.md §4.2）。
+> - **発注時の引当てロジック:** `purchase_order_lines.unit_price_snapshot` は SKU の `product_id` → 親 `product_family_id` 経由で `product_supplier_prices` から仕入単価を引当てる。色違い・サイズ違いの SKU はすべて同一の単価が引当てられる。
 
 ---
 
@@ -572,7 +573,7 @@
 
 | データ | 機密度 | 配置 | 暗号化 | 監査 |
 |---|---|---|---|---|
-| 仕入単価（`product_supplier_prices.unit_price`, `purchase_order_lines.unit_price_snapshot`）| 中-高 | RDS | RDS Storage Encryption (KMS) + TLS | `Price.View` / `PriceSet` / `Excel.Export` を audit_logs に記録（金額本体はマスク）|
+| 仕入単価（`product_supplier_prices.unit_price` (アイテム単位), `purchase_order_lines.unit_price_snapshot`）| 中-高 | RDS | RDS Storage Encryption (KMS) + TLS | `Price.View` / `PriceSet` / `Excel.Export` を audit_logs に記録（金額本体はマスク）|
 | 商品マスタ・発注書 | 中 | RDS | 同上 | C/U/D を記録 |
 | 取引先・仕入先 | 中 | RDS | 同上 | マスタ変更を記録 |
 | ユーザ業務情報 | 軽微 | RDS | 同上 | 権限変更を記録 |
@@ -589,7 +590,7 @@
 |---|---|---|
 | product_families | 約 2,000 件 | 年 400 企画 × 5 年 |
 | products (SKU) | 約 2 万件 | 1 企画あたり平均 10 SKU（色 5 × サイズ 2）|
-| product_supplier_prices | 約 6 万件 | 1 SKU あたり平均 3 履歴 |
+| product_supplier_prices | 約 6,000 件 | 1 アイテムあたり平均 1.5 仕入先 × 2 履歴（アイテム単位確定により旧見積 6 万件から 1/10 に減）|
 | product_images | 約 1 万件 | 1 企画あたり平均 5 枚 |
 | purchase_orders | 約 5,000 件 | 年 1,000 件 × 5 年 |
 | purchase_order_lines | 約 25 万件 | 1 発注あたり平均 50 明細 |
