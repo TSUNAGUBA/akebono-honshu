@@ -32,17 +32,19 @@ const onLogout = async () => {
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <span v-if="user" class="text-sm text-gray-600">
-          ログイン中: <strong class="text-gray-900">{{ user.displayName }}</strong>
-        </span>
-        <button
-          v-if="user"
-          type="button"
-          class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
-          @click="onLogout"
-        >
-          ログアウト
-        </button>
+        <ClientOnly>
+          <span v-if="user" class="text-sm text-gray-600">
+            ログイン中: <strong class="text-gray-900">{{ user.displayName }}</strong>
+          </span>
+          <button
+            v-if="user"
+            type="button"
+            class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
+            @click="onLogout"
+          >
+            ログアウト
+          </button>
+        </ClientOnly>
       </div>
     </div>
   </nav>
