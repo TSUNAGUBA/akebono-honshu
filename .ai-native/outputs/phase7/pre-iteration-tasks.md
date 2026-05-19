@@ -120,7 +120,7 @@ Phase 6 で確定した発注書 Excel 出力機能 (O-06、MVP は ① 国内�
 
 **ヘッダ部:**
 - タイトル「発注書」(中央配置、大きめフォント)、英字「DEPARTURES SHEET」併記
-- 取引先表示: `<customer_category>` `御中` `<customer_code>` の 3 要素横並び (例: 「DEPARTURES 御中 336」)
+- 宛名表示: `<supplier.official_name>` `御中` `<supplier.code>` の 3 要素横並び (例: 「DEPARTURES 御中 336」)。**仕入先 (suppliers マスタ)** から取得、御中は固定文字 (F-22 訂正: 3 回目反復レビューで取引先 3 要素誤解釈を撤回し suppliers.official_name/code に確定 2026-05-19)
 - 右上: 発注番号 (`order_no`、大きく強調)、発注日、処理番号 (`mgmt_no` 26-NNNNN 形式)
 - ページ番号: `1/1` (右上)
 
@@ -161,7 +161,7 @@ Phase 6 で確定した発注書 Excel 出力機能 (O-06、MVP は ① 国内�
 - タイトル「ORDER SHEET」(英字)
 - 明細列に `bland` (有/無)、`assort box`、`Q'yt of box`、`Q'yt of in box`、**複数倉庫の `depart` 列** が追加
 - 物流情報: Factory Shipping / Shipping / Departure / Delivery / Port of entry
-- フッタに「Order Stamp」枠 + 「責任者 / 管理部 / 担当者」の 3 押印欄
+- フッタに「Order Stamp」枠 + 「責任者 / 管理部 / 担当者」の **3 押印欄** (MVP 国内用は 1 押印枠のみ、Post-MVP 海外用は 3 押印枠で増加。電子押印化を Post-MVP で検討する際は枠数も論点となる)
 - 「連絡欄」フリーテキスト (注意事項記入)
 - 複数ページ印刷想定 (2/3 等のページ番号)
 

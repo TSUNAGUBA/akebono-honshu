@@ -160,7 +160,7 @@
 
 | カラム | 型 | 補足 |
 |---|---|---|
-| `official_name` | `VARCHAR(255) NULL` | 法的書面用正式名 |
+| `official_name` | `VARCHAR(255) NULL` | 法的書面用正式名。**発注書 Excel 帳票の宛名印字に使用** (英字スペル可、例: `DEPARTURES`)。帳票表記は「`<official_name>` 御中 `<code>`」の 3 要素構造で出力 (F-22 対応、2026-05-19 確定) |
 | `item_conversion_code` | `CHAR(1) NOT NULL` | 11桁品番 7桁目（工場コード） |
 | `country_id` | `BIGINT NOT NULL REFERENCES countries(id)` | FK |
 | `supplier_type` | `SMALLINT NOT NULL` | 0=国内, 1=海外 |
@@ -217,9 +217,7 @@
 
 | カラム | 型 | 補足 |
 |---|---|---|
-| `customer_category` | `VARCHAR(64) NULL` | **新規追加 (Phase 6 サンプル受領後 2026-05-19、F-22 対応)。**取引先カテゴリ (英字大文字表記、例: `DEPARTURES` / `OEM` 等)。発注書 Excel 帳票の取引先表示「DEPARTURES 御中 336」の第 1 要素 |
-| `customer_name` | `VARCHAR(255) NULL` | **新規追加。**取引先名（しまむら / KEYUCA / AEON 等）。Phase 3 機能要件 O-03 で「取引先」列が必要。発注書 Excel 帳票の取引先表示「DEPARTURES 御中 336」の第 2 要素 (御中の前)。本 MVP では納品先と紐付く取引先を本フィールドで保持（独立 customer マスタを追加すると 18マスタを超過する Phase 2/4 整合性に影響するため）|
-| `customer_code` | `VARCHAR(32) NULL` | **新規追加 (Phase 6 サンプル受領後 2026-05-19、F-22 対応)。**取引先コード (3 桁数値表記が多い、例: `336` / `404` / `437`)。発注書 Excel 帳票の取引先表示「DEPARTURES 御中 336」の第 3 要素 |
+| `customer_name` | `VARCHAR(255) NULL` | **新規追加。**取引先名（しまむら / KEYUCA / AEON 等）。Phase 3 機能要件 O-03 で「取引先」列が必要。用途は画面表示・検索・集計の内部識別用 (発注書 Excel 帳票の宛名は仕入先 = `suppliers.official_name` + 御中 + `suppliers.code`、F-22 で確認済 2026-05-19)。本 MVP では納品先と紐付く取引先を本フィールドで保持（独立 customer マスタを追加すると 18マスタを超過する Phase 2/4 整合性に影響するため）|
 | `remark_1` | `VARCHAR(255) NULL` | 物流発送先住所（郵便番号・住所）|
 | `remark_2` | `VARCHAR(255) NULL` | 電話番号 |
 | `remark_3` | `VARCHAR(255) NULL` | FAX 番号 |
@@ -402,10 +400,10 @@
 | `cancelled_by_user_id` | `BIGINT NULL REFERENCES users(id)` | |
 | `cancel_reason` | `VARCHAR(255) NULL` | |
 | `supplier_id` | `BIGINT NOT NULL REFERENCES suppliers(id)` | 発注先（仕入先/工場）|
+| `supplier_official_name_snapshot` | `VARCHAR(255) NULL` | **仕入先 official_name スナップショット (F-22 対応 2026-05-19)**。`suppliers.official_name` から初回 Excel 出力時にコピー凍結。発注書帳票の宛名「`<supplier_official_name>` 御中 `<supplier_code>`」第 1 要素として印字、マスタ変更による過去発注書帳票表示変化を防ぐ |
+| `supplier_code_snapshot` | `VARCHAR(3) NULL` | **仕入先 code スナップショット (F-22 対応 2026-05-19)**。`suppliers.code` から初回 Excel 出力時にコピー凍結。発注書帳票の宛名「`<supplier_official_name>` 御中 `<supplier_code>`」第 2 要素として印字 |
 | `delivery_destination_id` | `BIGINT NOT NULL REFERENCES delivery_destinations(id)` | 納品先 |
-| `customer_category_snapshot` | `VARCHAR(64) NULL` | 取引先カテゴリスナップショット (`delivery_destinations.customer_category` から初回 Excel 出力時にコピー、Phase 6 サンプル受領後追加 F-22)|
-| `customer_name_snapshot` | `VARCHAR(255) NULL` | 取引先名スナップショット（delivery_destinations.customer_name から初回 Excel 出力時にコピー、後の取引先名変更で発注書の表示が変わらないように）|
-| `customer_code_snapshot` | `VARCHAR(32) NULL` | 取引先コードスナップショット (`delivery_destinations.customer_code` から初回 Excel 出力時にコピー、Phase 6 サンプル受領後追加 F-22)|
+| `customer_name_snapshot` | `VARCHAR(255) NULL` | 取引先名スナップショット（delivery_destinations.customer_name から初回 Excel 出力時にコピー、後の取引先名変更で発注書一覧・検索表示が変わらないように）。**用途は画面表示・検索・集計の内部識別用**、Excel 帳票には印字されない (帳票の宛名は仕入先側 = supplier_official_name + 御中 + supplier_code、F-22) |
 | `department_id` | `BIGINT NOT NULL REFERENCES departments(id)` | 発注事業部 |
 | `warehouse_id` | `BIGINT NOT NULL REFERENCES warehouses(id)` | 納入倉庫 |
 | `due_date` | `DATE NOT NULL` | 取引先納入日 |
@@ -436,7 +434,7 @@
 
 > **設計判断（Phase 6 簡素化）:**
 > - 6 名の副担当者を縦持ち（既存スキーマ準拠）。横持ち（別テーブル化）も検討したが、UI/帳票で固定 6 スロットの運用が確定（O-01 「user × 9」要件）のため縦持ちが自然。
-> - `customer_name_snapshot` で初回出力時の取引先名を凍結（マスタ変更による過去発注書の表示変化を防ぐ）。
+> - 帳票印字対象の `supplier_official_name_snapshot` / `supplier_code_snapshot` (発注書宛名)、内部識別用の `customer_name_snapshot` の 3 件を初回出力時に凍結（マスタ変更による過去発注書の表示・検索結果変化を防ぐ、F-22 対応 2026-05-19）。
 > - **状態モデルを Active / Cancelled の 2 値に簡素化**（F-10/F-11 対応）:
 >   - 旧設計の Draft / Submitted / Revised の区別を廃止
 >   - 「Excel 出力 = 発注確定」業務概念を廃止、**Excel 出力はいつでも何度でも可能**
@@ -564,7 +562,7 @@
 |---|---|
 | 商品マスタ登録（P-01〜P-03）| product_family + products（バルク INSERT） + product_supplier_prices + audit_logs を 1 トランザクション |
 | 発注書作成（O-01/O-02）| purchase_orders + purchase_order_lines（バルク INSERT） + audit_logs |
-| Excel 出力（O-06）| 初回時: purchase_orders 更新（`order_no` 採番、`first_exported_at`, `last_exported_at` SET、`customer_category_snapshot` / `customer_name_snapshot` / `customer_code_snapshot` の 3 要素を一括凍結） + purchase_order_export_logs INSERT + audit_logs。2回目以降: `last_exported_at` のみ更新 + purchase_order_export_logs INSERT + audit_logs |
+| Excel 出力（O-06）| 初回時: purchase_orders 更新（`order_no` 採番、`first_exported_at`, `last_exported_at` SET、`supplier_official_name_snapshot` / `supplier_code_snapshot` / `customer_name_snapshot` の 3 件を一括凍結、F-22 対応） + purchase_order_export_logs INSERT + audit_logs。2回目以降: `last_exported_at` のみ更新 + purchase_order_export_logs INSERT + audit_logs |
 | 発注編集（O-04）| 同一 purchase_orders レコードを直接更新（status=Active 時のみ可、Cancelled は不可）+ 明細差し替え + audit_logs。改訂概念は廃止 |
 | 権限変更（§Arch §4.5）| RDS users UPDATE + audit_logs。Firebase Custom Claims 更新は **トランザクション外**（失敗時は Reconciler で復旧）|
 
@@ -625,12 +623,12 @@
 | products | ✅ | ✅ | ✅ | 同上 |
 | product_images | ✅ | ✅ | ✅ | S3 メタのみ |
 | product_supplier_prices | ✅ | ✅ | ✅ | 履歴は `effective_from/to` で時間軸正規化 |
-| purchase_orders | ✅ | ✅ | ⚠️ | **意図的非正規化:** `customer_name_snapshot`（業務帳票の凍結要件）、6 名の副担当者を縦持ち（既存運用準拠）。DP-1 例外として明示記録 |
+| purchase_orders | ✅ | ✅ | ⚠️ | **意図的非正規化:** `supplier_official_name_snapshot` / `supplier_code_snapshot` / `customer_name_snapshot` (業務帳票の凍結要件、F-22)、6 名の副担当者を縦持ち（既存運用準拠）。DP-1 例外として明示記録 |
 | purchase_order_lines | ✅ | ✅ | ⚠️ | **意図的非正規化:** sku/product_name/unit_price/currency のスナップショット（業務帳票要件）。`subtotal` は計算列で DB 保証 |
 | audit_logs | ✅ | ✅ | ✅ | INSERT 専用 |
 
 > **非正規化の根拠記録（DP-1 例外）:**
-> - `customer_name_snapshot`, `sku_snapshot`, `product_name_snapshot`, `unit_price_snapshot`, `currency_code_snapshot`: 業務帳票（発注書 Excel）は発注時点の値を保持する必要があり、後のマスタ変更で帳票表示が変わると業務的に不整合（既に取引相手に送付済の文書との不一致）。read コスト + write コスト + 業務整合性のバランスで非正規化を採用。
+> - `supplier_official_name_snapshot`, `supplier_code_snapshot`, `customer_name_snapshot`, `sku_snapshot`, `product_name_snapshot`, `unit_price_snapshot`, `currency_code_snapshot`: 業務帳票（発注書 Excel）は発注時点の値を保持する必要があり、後のマスタ変更で帳票表示が変わると業務的に不整合（既に仕入先へ送付済の文書との不一致）。read コスト + write コスト + 業務整合性のバランスで非正規化を採用 (F-22 で supplier 2 件を追加 2026-05-19)。
 
 ---
 

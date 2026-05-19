@@ -316,7 +316,8 @@
 | 入力 | UI |
 |---|---|
 | 発注先（仕入先/工場）| `Combobox` ← suppliers |
-| 納品先 | `Combobox` ← delivery_destinations、選択で `customer_category` + `customer_name` + `customer_code` の 3 要素が表示プレビューされる (Phase 6 サンプル受領後 F-22 対応、例: 「DEPARTURES しまむら 336」)|
+| 仕入先 | `Combobox` ← suppliers、選択で `official_name` (英字、例「DEPARTURES」) + `code` (3 桁、例「336」) を「official_name 御中 code」形式でプレビュー (Phase 6 サンプル受領後 F-22 確定 2026-05-19、発注書帳票の宛名と一致) |
+| 納品先 | `Combobox` ← delivery_destinations、選択で `customer_name` (取引先名、例「しまむら」) + `name` (納品先名、例「しまむらセンター」) を表示。**customer_name は内部識別用、帳票には印字されない** |
 | 発注事業部 | `Combobox` ← departments |
 | 納入倉庫 | `Combobox` ← warehouses |
 | 取引先納入日 | `<input type="date">` |
@@ -481,7 +482,7 @@
 | product_groups | `planning_fee` (numeric) | なし |
 | colors | `item_conversion_code` (2桁) | なし |
 | materials | `material_classification_id` (Combobox) | **`material_classification: { id, name }` ネスト返却で分類名表示**（Phase 6 確定、F-18 対応）|
-| delivery_destinations | `customer_category` (英字大文字), `customer_name`, `customer_code` (3 桁数値が多い), `remark_1/2/3` (Phase 6 サンプル受領後 F-22 で 3 要素分離)| なし |
+| delivery_destinations | `customer_name` (取引先名、内部識別用), `remark_1/2/3` (F-22 確定 2026-05-19: 帳票宛名は仕入先側で対応、customer_name は内部識別用に維持)| なし |
 | document_template_purchases | `name`（ラベル）+ `body`（テキストエリア、大）| なし |
 | document_template_confirmations | 同 + `standard_print_flag` (Checkbox) | なし |
 | document_text_purchases | 同 + `standard_print_flag` (Checkbox) | なし |

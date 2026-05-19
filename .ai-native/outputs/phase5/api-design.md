@@ -776,7 +776,7 @@ S3 アップロード完了後、メタデータを DB に登録。
    - `mgmt_no` 採番（年度-連番、例: `26-00411`）
    - `purchase_orders` INSERT (status=0/Active, first_exported_at=NULL)
    - 各 line について `product_supplier_prices` （`product_family_id` 経由）から現在有効単価を引当て → `purchase_order_lines` バルク INSERT
-   - `customer_name_snapshot` は初回 Excel 出力時に凍結（本作成時は NULL のまま）
+   - `supplier_official_name_snapshot` / `supplier_code_snapshot` / `customer_name_snapshot` は初回 Excel 出力時に凍結（本作成時は NULL のまま、F-22 対応 2026-05-19）
    - audit_logs INSERT
 3. コミット
 
@@ -799,7 +799,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 **認可:** `purchase_order:read`
 
 **クエリ:**
-- `?q=<text>` フリーワード (mgmt_no, order_no, customer_name_snapshot, supplier.name)
+- `?q=<text>` フリーワード (mgmt_no, order_no, supplier_official_name_snapshot, supplier_code_snapshot, customer_name_snapshot, supplier.name) — 仕入先帳票 snapshot 2 件と取引先内部識別の 1 件いずれにもマッチ (F-22 対応)
 - `?filter[date_from]=2026-01-01&filter[date_to]=2026-12-31`
 - `?filter[status]=Active,Cancelled`（Phase 6 簡素化、2 値）
 - `?filter[export_state]=unexported,exported`（未出力 / 初回出力済の業務絞り込み、`first_exported_at IS NULL` / `IS NOT NULL` に対応）
@@ -821,6 +821,8 @@ S3 アップロード完了後、メタデータを DB に登録。
       "last_exported_at": "2026-05-20T09:15:00Z",
       "export_state": "exported",
       "supplier": { "id": 14, "name": "藤東工業" },
+      "supplier_official_name_snapshot": "DEPARTURES",
+      "supplier_code_snapshot": "336",
       "delivery_destination": { "id": 5, "name": "しまむらセンター" },
       "customer_name_snapshot": "しまむら",
       "due_date": "2026-08-15",
@@ -904,7 +906,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 #### O-06: 発注書 Excel 出力
 
-> **Phase 6 簡素化:** Excel 出力 = 発注確定 という業務概念を廃止。**いつでも何度でも出力可能**。初回出力時のみ `order_no` 採番 + `first_exported_at` SET + `customer_name_snapshot` 凍結。2 回目以降は `last_exported_at` の更新と出力履歴追記のみ。
+> **Phase 6 簡素化:** Excel 出力 = 発注確定 という業務概念を廃止。**いつでも何度でも出力可能**。初回出力時のみ `order_no` 採番 + `first_exported_at` SET + 3 件 snapshot (`supplier_official_name_snapshot` / `supplier_code_snapshot` / `customer_name_snapshot`) を一括凍結 (F-22 対応 2026-05-19)。2 回目以降は `last_exported_at` の更新と出力履歴追記のみ。
 
 | メソッド | パス | 用途 |
 |---|---|---|
@@ -922,7 +924,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 2. **初回出力時のみ** (`first_exported_at IS NULL`):
    - `order_no` 採番（`S` + 4桁連番、PostgreSQL sequence で生成）
    - `first_exported_at=NOW()`, `last_exported_at=NOW()`
-   - `customer_category_snapshot` / `customer_name_snapshot` / `customer_code_snapshot` の 3 要素を `delivery_destinations` から一括複写凍結 (Phase 6 サンプル受領後 F-22 対応)
+   - `supplier_official_name_snapshot` / `supplier_code_snapshot` を `suppliers` から、`customer_name_snapshot` を `delivery_destinations` から一括複写凍結 (Phase 6 サンプル受領後 F-22 対応 2026-05-19)
    - 上記を 1 UPDATE で実行
 3. **2 回目以降** (`first_exported_at IS NOT NULL`): `last_exported_at=NOW()` のみ UPDATE
 4. `purchase_order_export_logs` INSERT（`is_first_export = first_exported_at == NOW()`）
@@ -934,6 +936,12 @@ S3 アップロード完了後、メタデータを DB に登録。
 > - MVP: ① 国内用 1 種類のみ実装。Application 層のリソースとしてバンドル
 > - Post-MVP: ② 海外用、③ 海外用＋管理表 を追加（発注書の業務区分 = 国内/海外 から自動選択する分岐ロジックを Phase 7 以降で導入）
 > - テンプレ更新は Application のリリースに同梱。DB マスタ管理ではない（`document_template_purchases` テーブルは「連絡文章」テンプレ用で別概念）
+>
+> **帳票宛名印字方針 (Phase 6 サンプル受領後 2026-05-19 確定、F-22):**
+> - 帳票の宛名 (発注先) は **仕入先 (suppliers) の情報** を「`<supplier_official_name>` 御中 `<supplier_code>`」(例: 「DEPARTURES 御中 336」) の構造で印字。
+> - 「御中」は Excel テンプレートに固定文として埋め込み、`supplier_official_name_snapshot` (初回出力時に suppliers.official_name から凍結) と `supplier_code_snapshot` (suppliers.code から凍結) を流し込む。
+> - 取引先名 (`customer_name_snapshot`、例「しまむら」) は帳票には印字しない (画面表示・検索・集計の内部識別用)。
+> - 納品先 (`delivery_destination.name`、例「しまむらセンター」) は帳票の「納品先」欄に別途印字。
 >
 > **発注印スタンプ方針 (Phase 6 サンプル受領後 2026-05-19 確定、F-22):**
 > - 既存帳票には「発注 YYYY.MM.DD 商品管理課」の印影スタンプ画像が押下されているが、MVP では **印影画像を Excel に埋め込まず、印刷後に物理的に手押し** する運用とする (既存業務の継続)。
