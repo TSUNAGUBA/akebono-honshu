@@ -45,8 +45,8 @@
 
 ### データ設計 (D-1〜D-10 確定)
 - 取引先 = delivery_destinations.customer_name で対応 (独立マスタ追加せず)
-- purchase_order_revisions 新設
-- is_cancelled と status=Cancelled 二重保持
+- ~~purchase_order_revisions 新設~~ → **Phase 6 で廃止**（状態モデル簡素化により改訂概念廃止）。代わりに purchase_order_export_logs 新設
+- ~~is_cancelled と status=Cancelled 二重保持~~ → **Phase 6 で解消**（status を Active/Cancelled の 2 値に統一、is_cancelled 削除）
 - users.is_deleted と is_active 二重保持 (意味が異なる)
 - 商品画像 S3 物理削除は 90日後 Lifecycle
 - 仕入単価 pgcrypto 採否は Phase 5 後半で再評価
@@ -60,9 +60,9 @@
 - /products/new Step 4 → /orders/new 自動遷移 (戻るボタン併設)
 - カード/テーブル切替は Pinia セッション中保持 (localStorage は Phase 6 で判断)
 - 仕入単価マスク開示は X-Include-Amount ヘッダ + price:read 権限保有時のみトグル
-- ホームのダッシュボードは MVP 最小 (リスト + Draft + 通知)、グラフは Post-MVP
+- ホームのダッシュボードは MVP 最小 (リスト + 未出力発注 + 通知)、グラフは Post-MVP（Phase 6 で「Draft」を「未出力」に変更）
 - 監査ログ閲覧 UI は Post-MVP
-- Excel 出力時の発注確定警告を明示
+- ~~Excel 出力時の発注確定警告を明示~~ → **Phase 6 で解消**（発注確定概念廃止、初回出力時のみ業務通知ダイアログに変更）
 - サブナビは権限なし機能を非表示
 - モバイル時 /products/new は Stepper 縦配置 (Phase 6 で実用性検証)
 - ローディング表現は Skeleton

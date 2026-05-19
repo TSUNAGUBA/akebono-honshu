@@ -97,8 +97,10 @@
                              ┌──────────────────────────────────────┐
                              │ purchase_orders (発注書ヘッダ)         │
                              │ - mgmt_no (作成管理番号)               │
-                             │ - order_no (S始まり、出力時採番)        │
-                             │ - status (Draft/Submitted/Cancelled)   │
+                             │ - order_no (S始まり、初回出力時採番)    │
+                             │ - status (Active/Cancelled、2 値)      │
+                             │ - first_exported_at (初回出力バッジ用) │
+                             │ - last_exported_at                    │
                              └───────┬──────────────────────────────┘
                                      │ 1:N
                                      ▼
@@ -108,8 +110,8 @@
                              └──────────────────────────────────────┘
 
                              ┌──────────────────────────────────────┐
-                             │ purchase_order_revisions (枝番改訂)   │
-                             │ - parent_order_id, revision_no        │
+                             │ purchase_order_export_logs (出力履歴) │
+                             │ - exported_at, exported_by, is_first  │
                              └──────────────────────────────────────┘
 
                              ┌──────────────────────────────────────┐
@@ -391,18 +393,15 @@
 | カラム | 型 | 補足 |
 |---|---|---|
 | `id` | `BIGSERIAL PRIMARY KEY` | |
-| `mgmt_no` | `VARCHAR(16) NOT NULL UNIQUE` | 作成管理番号（例: `26-00411`、編集中の一時 ID、BR-03）|
-| `order_no` | `VARCHAR(16) NULL UNIQUE` | 発注番号（例: `S3858`、初回 Excel 出力時採番、BR-03）|
-| `revision_no` | `SMALLINT NOT NULL DEFAULT 0` | 改訂枝番（0=オリジナル、1〜=改訂、BR-05）|
-| `parent_order_id` | `BIGINT NULL REFERENCES purchase_orders(id)` | 改訂元（revision_no > 0 の場合）|
-| `status` | `SMALLINT NOT NULL DEFAULT 0` | 0=Draft, 1=Submitted（出力済、発注番号確定）, 2=Revised, 3=Cancelled |
-| `is_cancelled` | `BOOLEAN NOT NULL DEFAULT FALSE` | 中止フラグ（BR-06、O-05、status=3 と等価だが既存スキーマ慣習に合わせ別保持）|
+| `mgmt_no` | `VARCHAR(16) NOT NULL UNIQUE` | 作成管理番号（例: `26-00411`、発注作成時に採番、BR-03）|
+| `order_no` | `VARCHAR(16) NULL UNIQUE` | 発注番号（例: `S3858`、初回 Excel 出力時に採番、BR-03）|
+| `status` | `SMALLINT NOT NULL DEFAULT 0` | **0=Active（編集・出力可）, 1=Cancelled（参照のみ）** — Phase 6 で 4 値から 2 値に簡素化（F-10/F-11 対応）|
 | `cancelled_at` | `TIMESTAMPTZ NULL` | |
 | `cancelled_by_user_id` | `BIGINT NULL REFERENCES users(id)` | |
 | `cancel_reason` | `VARCHAR(255) NULL` | |
 | `supplier_id` | `BIGINT NOT NULL REFERENCES suppliers(id)` | 発注先（仕入先/工場）|
 | `delivery_destination_id` | `BIGINT NOT NULL REFERENCES delivery_destinations(id)` | 納品先 |
-| `customer_name_snapshot` | `VARCHAR(255) NULL` | 取引先名スナップショット（delivery_destinations.customer_name から発注確定時にコピー、後の取引先名変更で発注書の表示が変わらないように）|
+| `customer_name_snapshot` | `VARCHAR(255) NULL` | 取引先名スナップショット（delivery_destinations.customer_name から初回 Excel 出力時にコピー、後の取引先名変更で発注書の表示が変わらないように）|
 | `department_id` | `BIGINT NOT NULL REFERENCES departments(id)` | 発注事業部 |
 | `warehouse_id` | `BIGINT NOT NULL REFERENCES warehouses(id)` | 納入倉庫 |
 | `due_date` | `DATE NOT NULL` | 取引先納入日 |
@@ -415,23 +414,31 @@
 | `sub_orderer_6_user_id` | `BIGINT NULL REFERENCES users(id)` | 副6 |
 | `manager_user_id` | `BIGINT NOT NULL REFERENCES users(id)` | 発注管理者 |
 | `communication_text` | `TEXT NULL` | 連絡文章（O-07 で複写/編集、最大6行は Application 層で検証）|
-| `submitted_at` | `TIMESTAMPTZ NULL` | 発注確定日時（出力時）|
+| `first_exported_at` | `TIMESTAMPTZ NULL` | **初回 Excel 出力日時**（仕入先送付の業務目印、Phase 6 で追加）。NULL = 未出力、NOT NULL = 初回出力済（バッジ表示用）|
+| `last_exported_at` | `TIMESTAMPTZ NULL` | **最終 Excel 出力日時**（再出力時に毎回更新）|
 | 共通監査 4 列 + `legacy_id` | | |
 
 **インデックス:**
 - `idx_po_mgmt (mgmt_no)`, `idx_po_order_no (order_no) WHERE order_no IS NOT NULL`
-- `idx_po_status (status, is_cancelled, due_date)`（一覧検索）
+- `idx_po_status (status, due_date)`（一覧検索、status は 2 値）
 - `idx_po_supplier (supplier_id)`, `idx_po_dest (delivery_destination_id)`
 - `idx_po_dates (created_at DESC)`（O-03 デフォルトソート）
+- `idx_po_unexported (first_exported_at) WHERE first_exported_at IS NULL AND status = 0`（未出力フィルタ用）
 
 **CHECK 制約:**
-- `revision_no = 0 OR parent_order_id IS NOT NULL`（改訂なら親必須）
-- `status IN (0,1,2,3)`
+- `status IN (0, 1)`
+- `last_exported_at IS NULL OR first_exported_at IS NOT NULL`（last_exported は first_exported を前提）
+- `(status = 1) = (cancelled_at IS NOT NULL)`（Cancelled なら cancelled_at 必須、逆も真）
 
-> **設計判断:**
+> **設計判断（Phase 6 簡素化）:**
 > - 6 名の副担当者を縦持ち（既存スキーマ準拠）。横持ち（別テーブル化）も検討したが、UI/帳票で固定 6 スロットの運用が確定（O-01 「user × 9」要件）のため縦持ちが自然。
-> - `customer_name_snapshot` で発注時の取引先名を凍結（マスタ変更による過去発注書の表示変化を防ぐ）。
-> - `is_cancelled` と `status=3` の二重表現は冗長だが、既存スキーマ慣習を保持する代償として許容（クエリ簡略化のため）。Phase 5 後半で運用検証次第で `is_cancelled` 廃止も検討可。
+> - `customer_name_snapshot` で初回出力時の取引先名を凍結（マスタ変更による過去発注書の表示変化を防ぐ）。
+> - **状態モデルを Active / Cancelled の 2 値に簡素化**（F-10/F-11 対応）:
+>   - 旧設計の Draft / Submitted / Revised の区別を廃止
+>   - 「Excel 出力 = 発注確定」業務概念を廃止、**Excel 出力はいつでも何度でも可能**
+>   - 改訂概念を廃止、編集は常に同一発注書に対して行う（revision_no, parent_order_id 廃止）
+> - **初回出力バッジ**: `first_exported_at` で「仕入先への送付実績」を業務可視化。UI 上は「未出力」「初回出力済 (YYYY-MM-DD)」バッジで表示
+> - **下位互換性（CLAUDE.md 原則 7）:** MVP リリース前のため既存データなし。Phase 7 実装時に PostgreSQL マイグレーションで対応。旧設計の `revision_no=0, parent_order_id=NULL, is_cancelled=false, status=Draft/Submitted/Revised` → `status=0(Active), first_exported_at=submitted_at (Submitted 以降のみ)` に変換可能
 
 ### 5.2 `purchase_order_lines` — 発注明細
 
@@ -460,21 +467,24 @@
 > - `subtotal` は計算列で DB 側保証（Application 層の計算ズレ防止）。
 > - 単価機密度（中-高）への配慮: 監査ログには `unit_price_snapshot` 本体を残さない（マスク表示）。
 
-### 5.3 `purchase_order_revisions` — 改訂履歴（軽量メタ）
+### 5.3 `purchase_order_export_logs` — Excel 出力履歴（監査用、非 UI 露出）
 
-`purchase_orders` の `revision_no` / `parent_order_id` で改訂チェーンを表現するが、改訂ごとの差分理由を残すため軽量メタテーブルを追加。
+> **Phase 6 追加:** 状態モデル簡素化（F-10/F-11 対応）に伴い、Excel 出力履歴を業務ログとして保持。UI には露出せず、監査・問い合わせ対応用。
 
 | カラム | 型 | 補足 |
 |---|---|---|
 | `id` | `BIGSERIAL PRIMARY KEY` | |
-| `purchase_order_id` | `BIGINT NOT NULL REFERENCES purchase_orders(id)` | この改訂の対象 |
-| `parent_order_id` | `BIGINT NULL REFERENCES purchase_orders(id)` | 改訂元 |
-| `revision_no` | `SMALLINT NOT NULL` | 枝番 |
-| `revised_reason` | `VARCHAR(255) NULL` | 改訂理由（任意入力）|
-| `revised_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | |
-| `revised_by_user_id` | `BIGINT NOT NULL REFERENCES users(id)` | |
+| `purchase_order_id` | `BIGINT NOT NULL REFERENCES purchase_orders(id)` | 対象発注書 |
+| `exported_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | 出力日時 |
+| `exported_by_user_id` | `BIGINT NOT NULL REFERENCES users(id)` | 出力操作者 |
+| `is_first_export` | `BOOLEAN NOT NULL` | この出力が初回かどうか（`purchase_orders.first_exported_at` 採番のトリガとなったかの可視化）|
+| `excel_template_version` | `VARCHAR(16) NOT NULL` | テンプレートバージョン（テンプレ変更時の追跡用）|
 
-> **設計判断:** purchase_orders に冗長になるが、改訂チェーンの可視化（一覧クエリ）と改訂理由の集約に有用。最小設計を優先するなら purchase_orders だけで成立するため、Phase 5 後半で削除/維持を再判断（§13 D-2）。
+**インデックス:** `idx_poel_order_at (purchase_order_id, exported_at DESC)`。
+
+> **設計判断:**
+> - 旧設計の `purchase_order_revisions` テーブルは改訂概念廃止により削除。代わりに本テーブルで「いつ・誰が・何回目に Excel 出力したか」を蓄積（仕入先トラブル時の出力履歴照会、テンプレ変更影響調査に利用）。
+> - `audit_logs` (Excel.Export action) と一部冗長だが、`purchase_orders` 中心の高速取得用に専用テーブル化。`audit_logs` は横断検索用 SoT、本テーブルは発注書詳細画面の履歴タブ用キャッシュ位置付け（必要なら Phase 5 後半で再判断）。
 
 ---
 
@@ -550,8 +560,8 @@
 |---|---|
 | 商品マスタ登録（P-01〜P-03）| product_family + products（バルク INSERT） + product_supplier_prices + audit_logs を 1 トランザクション |
 | 発注書作成（O-01/O-02）| purchase_orders + purchase_order_lines（バルク INSERT） + audit_logs |
-| 発注確定（O-06 初回出力時）| purchase_orders 更新（order_no 採番、submitted_at, status=1） + audit_logs |
-| 発注改訂（O-04）| 新規 purchase_orders（revision_no++, parent_order_id 設定） + 新明細 + audit_logs |
+| Excel 出力（O-06）| 初回時: purchase_orders 更新（`order_no` 採番、`first_exported_at`, `last_exported_at` SET、`customer_name_snapshot` 凍結） + purchase_order_export_logs INSERT + audit_logs。2回目以降: `last_exported_at` のみ更新 + purchase_order_export_logs INSERT + audit_logs |
+| 発注編集（O-04）| 同一 purchase_orders レコードを直接更新（status=Active 時のみ可、Cancelled は不可）+ 明細差し替え + audit_logs。改訂概念は廃止 |
 | 権限変更（§Arch §4.5）| RDS users UPDATE + audit_logs。Firebase Custom Claims 更新は **トランザクション外**（失敗時は Reconciler で復旧）|
 
 ---
@@ -638,8 +648,8 @@
 | # | 論点 | 推奨案 |
 |---|---|---|
 | **D-1** | 「取引先（customer）」の扱い: 独立マスタ追加 vs delivery_destinations.customer_name で対応 | **delivery_destinations.customer_name で対応**（推奨）。Phase 2/4 で 18マスタ確定済のため独立マスタ追加は影響大。複数の納品先が同じ取引先を持つケース（しまむら → 複数センター）は customer_name の重複を許容、業務的に問題なし |
-| D-2 | `purchase_order_revisions` テーブル新設の要否 | **新設**（推奨）。改訂理由の蓄積で運用改善に活きる。最小設計を優先するなら廃止可だが、保守コスト低 |
-| D-3 | `is_cancelled` と `status=Cancelled` の二重表現 | **両保持で MVP 進行、Phase 5 後半で再判断**（既存スキーマ慣習保持優先）|
+| ~~D-2~~ | ~~`purchase_order_revisions` テーブル新設の要否~~ | **解消 (Phase 6)** 状態モデル簡素化（F-10/F-11）で改訂概念自体を廃止。`purchase_order_export_logs` を新設して出力履歴に置換 |
+| ~~D-3~~ | ~~`is_cancelled` と `status=Cancelled` の二重表現~~ | **解消 (Phase 6)** 状態モデル簡素化で `is_cancelled` 削除、`status` (Active/Cancelled) 単独に統一 |
 | D-4 | `users.is_deleted` と `is_active` の二重保持 | **両保持**。意味が異なる（恒久削除 vs 一時無効化）|
 | D-5 | 商品画像の S3 物理削除タイミング（90日後 Lifecycle）| 推奨案で確定（運用ガイドに記載）|
 | D-6 | 仕入単価 pgcrypto 採否（Phase 4 #5 再評価）| 本ドラフトでは A 案維持。Phase 5 後半で再評価 |

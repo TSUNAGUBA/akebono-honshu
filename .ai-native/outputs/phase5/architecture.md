@@ -269,19 +269,19 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
                  ├─ 各 line.quantity > 0
                  └─ 在庫チェック (Phase 2 では未定 → Phase 3 で「在庫管理は MVP 対象外」確定)
 [5] Infrastructure: トランザクション開始
-                    ├─ orders INSERT (status=Draft)
+                    ├─ orders INSERT (status=Active, first_exported_at=NULL)
                     ├─ order_lines バルク INSERT
                     └─ audit_logs INSERT (action=OrderCreated, order_id)
                     トランザクションコミット
 [6] Frontend: 201 Created + Order ID 受信、詳細画面へ遷移
-[7] User: 「発注確定」ボタンクリック
-[8] Frontend: POST /api/v1/orders/{orderId}/confirm
-[9] App Runner: status=Draft → Submitted に更新 + audit_logs
-[10] Frontend: ステータス表示更新
+[7] User: 「Excel 出力」ボタンクリック（Phase 6 簡素化、発注確定操作は廃止）
+[8] Frontend: GET /api/v1/orders/{orderId}/excel
+[9] App Runner: 初回時のみ order_no 採番 + first_exported_at SET、毎回 last_exported_at 更新 + export_logs INSERT + audit_logs
+[10] Frontend: 出力バッジ更新（未出力 → 初回出力済 YYYY-MM-DD）
 ```
 
 **SoT チェック:** 発注=RDS、トランザクション境界で order + lines + audit を一体化。
-**冪等性:** confirm を 2 回呼んでも status=Submitted は冪等（ORDER-003 エラーで弾く）。
+**冪等性:** Excel 出力を 2 回呼んでも初回採番（first_exported_at）は冪等。Idempotency-Key で初回採番の二重実行を防止。
 
 ### 4.4 シナリオ D: 発注書 Excel 出力（O-06, UC-OUT-01）
 

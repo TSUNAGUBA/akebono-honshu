@@ -119,7 +119,7 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 |---|---|---|
 | GET / HEAD | 冪等 | |
 | PUT / DELETE | 冪等 | |
-| POST | 非冪等 | 二重発行リスクのある操作（発注確定等）は `Idempotency-Key` ヘッダで担保（クライアントが UUID 生成して同じキーで再送可）|
+| POST | 非冪等 | 二重発行リスクのある操作（バルク商品登録、発注作成、発注書 Excel 初回出力等）は `Idempotency-Key` ヘッダで担保（クライアントが UUID 生成して同じキーで再送可）|
 
 ### 1.7 監査対象
 
@@ -663,9 +663,11 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 #### O-01 / O-02: 発注書作成
 
+> **Phase 6 簡素化:** 状態モデルを Active / Cancelled の 2 値に簡素化（F-10/F-11 対応）。「Draft」概念は廃止し、作成直後から `status=Active`。Excel 出力はいつでも何度でも可能、`first_exported_at` で「仕入先送付済バッジ」を表示。
+
 | メソッド | パス | 用途 |
 |---|---|---|
-| `POST` | `/api/v1/purchase-orders` | 発注書 (Draft) 新規作成（O-01/O-02 共通）|
+| `POST` | `/api/v1/purchase-orders` | 発注書新規作成（O-01/O-02 共通、`status=Active` で作成）|
 
 ##### POST /api/v1/purchase-orders
 
@@ -698,9 +700,9 @@ S3 アップロード完了後、メタデータを DB に登録。
 1. バリデーション（必須 + FK 整合 + supplier に対する unit_price 存在チェック）
 2. トランザクション内で:
    - `mgmt_no` 採番（年度-連番、例: `26-00411`）
-   - `purchase_orders` INSERT (status=Draft, revision_no=0)
-   - 各 line について `product_supplier_prices` から現在有効単価を引当て → `purchase_order_lines` バルク INSERT
-   - `delivery_destinations.customer_name` を `customer_name_snapshot` に複写
+   - `purchase_orders` INSERT (status=0/Active, first_exported_at=NULL)
+   - 各 line について `product_supplier_prices` （`product_family_id` 経由）から現在有効単価を引当て → `purchase_order_lines` バルク INSERT
+   - `customer_name_snapshot` は初回 Excel 出力時に凍結（本作成時は NULL のまま）
    - audit_logs INSERT
 3. コミット
 
@@ -724,8 +726,8 @@ S3 アップロード完了後、メタデータを DB に登録。
 **クエリ:**
 - `?q=<text>` フリーワード (mgmt_no, order_no, customer_name_snapshot, supplier.name)
 - `?filter[date_from]=2026-01-01&filter[date_to]=2026-12-31`
-- `?filter[status]=Draft,Submitted`
-- `?filter[is_cancelled]=false`
+- `?filter[status]=Active,Cancelled`（Phase 6 簡素化、2 値）
+- `?filter[export_state]=unexported,exported`（未出力 / 初回出力済の業務絞り込み、`first_exported_at IS NULL` / `IS NOT NULL` に対応）
 - `?filter[supplier_id]=14`
 - `?filter[delivery_destination_id]=5`
 - `?sort=-created_at`
@@ -739,9 +741,10 @@ S3 アップロード完了後、メタデータを DB に登録。
       "id": 1,
       "mgmt_no": "26-00411",
       "order_no": "S3858",
-      "revision_no": 0,
-      "status": "Submitted",
-      "is_cancelled": false,
+      "status": "Active",
+      "first_exported_at": "2026-05-19T10:30:00Z",
+      "last_exported_at": "2026-05-20T09:15:00Z",
+      "export_state": "exported",
       "supplier": { "id": 14, "name": "藤東工業" },
       "delivery_destination": { "id": 5, "name": "しまむらセンター" },
       "customer_name_snapshot": "しまむら",
@@ -759,39 +762,33 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 > **設計判断:** `total_amount` は機密度（中-高）配慮で **デフォルトマスク**。`?include_amount=true` を指定 + 認可 `price:read` 保有時のみ実値返却（audit_logs に `Price.View` 記録）。
 
-#### O-04: 発注書修正・改訂
+#### O-04: 発注書編集
+
+> **Phase 6 簡素化:** 「修正 / 改訂」の区別を廃止、`status=Active` の発注書はいつでも編集可能。改訂用エンドポイント `/revisions` は削除。
 
 | メソッド | パス | 用途 |
 |---|---|---|
-| `GET` | `/api/v1/purchase-orders/{id}` | 詳細（明細 + 改訂チェーン含む）|
-| `PATCH` | `/api/v1/purchase-orders/{id}` | 修正（Draft のみ可、軽微編集）|
-| `POST` | `/api/v1/purchase-orders/{id}/revisions` | 改訂（Submitted 後の正式改訂、新 ID + revision_no++ で枝番採番）|
+| `GET` | `/api/v1/purchase-orders/{id}` | 詳細（明細 + Excel 出力履歴含む）|
+| `PATCH` | `/api/v1/purchase-orders/{id}` | 編集（`status=Active` のみ可。Cancelled は 409）|
 
-##### POST /api/v1/purchase-orders/{id}/revisions
+##### PATCH /api/v1/purchase-orders/{id}
 
-**Request:**
-```json
-{
-  "revised_reason": "数量変更：50→80",
-  "lines": [...],
-  "communication_text": "..."
-}
-```
+**Request:** POST 時と同一スキーマ（部分更新、提供フィールドのみ更新）
 
 **処理:**
-1. 親発注書取得、`status IN (Submitted, Revised)` を確認（Cancelled なら 409 ORDER-003）
-2. 新 `purchase_orders` レコード作成（`parent_order_id = parent.id`, `revision_no = parent.revision_no + 1`, `status = Draft`）
-3. `purchase_order_revisions` INSERT
-4. 新明細 INSERT
-5. audit_logs INSERT
+1. 発注書取得、`status=Active` を確認（Cancelled なら 409 ORDER-003）
+2. ヘッダ + 明細を更新
+3. audit_logs INSERT（編集前後の差分を記録、ただし unit_price はマスク）
 
-**Response 201:** 新発注書 ID
+**Response 200:** 更新後の発注書
+
+> **設計判断:** 編集履歴は `audit_logs` で `Order.Update` action として全件保持される。改訂理由など業務メモを残したい場合は、編集時のフリーテキスト欄をリクエストに含めて `audit_logs.changes` に保存する運用で対応可能（必要なら Phase 7 で UI 追加）。
 
 #### O-05: 発注中止
 
 | メソッド | パス | 用途 |
 |---|---|---|
-| `POST` | `/api/v1/purchase-orders/{id}/cancel` | 中止フラグ ON |
+| `POST` | `/api/v1/purchase-orders/{id}/cancel` | 中止 |
 
 ##### POST /api/v1/purchase-orders/{id}/cancel
 
@@ -803,29 +800,39 @@ S3 アップロード完了後、メタデータを DB に登録。
 ```
 
 **処理:**
-1. `is_cancelled=true`, `status=Cancelled`, `cancelled_at=NOW()`, `cancelled_by_user_id=current`, `cancel_reason=...` を UPDATE
+1. `status=1/Cancelled`, `cancelled_at=NOW()`, `cancelled_by_user_id=current`, `cancel_reason=...` を UPDATE
 2. audit_logs INSERT
-3. 既に Cancelled の場合 409 ORDER-005（冪等性配慮で 200 にすべきか Phase 5 で判断）
+3. 既に Cancelled の場合 200 で現状を返す（冪等性、Phase 6 で確定）
 
 #### O-06: 発注書 Excel 出力
 
+> **Phase 6 簡素化:** Excel 出力 = 発注確定 という業務概念を廃止。**いつでも何度でも出力可能**。初回出力時のみ `order_no` 採番 + `first_exported_at` SET + `customer_name_snapshot` 凍結。2 回目以降は `last_exported_at` の更新と出力履歴追記のみ。
+
 | メソッド | パス | 用途 |
 |---|---|---|
-| `GET` | `/api/v1/purchase-orders/{id}/excel` | Excel ファイルダウンロード + 初回時に発注番号採番 |
+| `GET` | `/api/v1/purchase-orders/{id}/excel` | Excel ダウンロード（初回時に order_no 採番、出力履歴追記）|
 
 ##### GET /api/v1/purchase-orders/{id}/excel
 
-**認可:** `purchase_order:read`
+**認可:** `purchase_order:read` AND `price:read`（金額を含むため）
 
 **Headers:**
 - `Accept: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 
 **処理:**
-1. 発注書 + 明細 + 関連マスタを一括取得（N+1 回避）
-2. `order_no` 未採番なら採番（`S` + 4桁連番）+ `status=Submitted`, `submitted_at=NOW()` UPDATE（冪等性: Idempotency-Key 推奨）
-3. ClosedXML テンプレートに流し込み
-4. MemoryStream で Response Body
-5. audit_logs INSERT (`Excel.Export`)
+1. 発注書 + 明細 + 関連マスタを一括取得（N+1 回避）。`status=1/Cancelled` でも参照のみは可（業務的に過去の発注書を Excel で取り出す要件あり）
+2. **初回出力時のみ** (`first_exported_at IS NULL`):
+   - `order_no` 採番（`S` + 4桁連番、PostgreSQL sequence で生成）
+   - `first_exported_at=NOW()`, `last_exported_at=NOW()`
+   - `customer_name_snapshot` を `delivery_destinations.customer_name` から複写凍結
+   - 上記を 1 UPDATE で実行
+3. **2 回目以降** (`first_exported_at IS NOT NULL`): `last_exported_at=NOW()` のみ UPDATE
+4. `purchase_order_export_logs` INSERT（`is_first_export = first_exported_at == NOW()`）
+5. ClosedXML テンプレートに流し込み
+6. MemoryStream で Response Body
+7. audit_logs INSERT (`Excel.Export`)
+
+**冪等性:** 初回出力時の `order_no` 採番は `Idempotency-Key` ヘッダで二重採番防止（推奨）。
 
 **Response 200:**
 - `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
@@ -956,7 +963,7 @@ paths:
 | 1 API = 1 責務 | 各エンドポイントが単一の責務（作成・取得・更新・削除・特殊操作）。例外: `GET /products/families/{id}` は family + products + images + prices を返すが、これは「企画詳細」という単一概念に集約された取得（複数 API 呼び分けは画面側の負担増、N+1 リスク） |
 | クライアントに集約・加工責務を押し付けない | 商品一覧（P-04）の price_range は **DB 側 SQL 集計**で返却（フロント側計算不要）。発注一覧（O-03）の line_count も同様 |
 | 別リソースを混在させない | `GET /products` は商品のみ、`GET /purchase-orders` は発注のみ。詳細では関連を含むが「子リソース」として明示 |
-| API 定義で使い方がわかる単位 | 動詞ベースの専用エンドポイント（`/expand`, `/cancel`, `/confirm`, `/revisions`）で意図を明示 |
+| API 定義で使い方がわかる単位 | 動詞ベースの専用エンドポイント（`/complete`, `/expand`, `/cancel`, `/excel`）で意図を明示 |
 
 ---
 
@@ -964,10 +971,10 @@ paths:
 
 | シナリオ | API 呼出 | 検証結果 |
 |---|---|---|
-| A. 商品マスタ登録 | `POST /products/families` → `POST /products/families/{id}/expand` → `POST /products/{id}/supplier-prices`（複数）| ✅ 全 I/F が定義済、トランザクション境界がエンドポイント単位で完結 |
-| B. 仕入先 × 商品 × 仕入単価設定 | `POST /products/{productId}/supplier-prices` | ✅ 認可は AND 評価（product:write + price:write）、監査ログマスク仕様明示 |
-| C. 発注書作成 | `POST /purchase-orders` → `POST /purchase-orders/{id}/confirm` (= GET /excel 兼用) | ✅ 単価引当ロジック・Customer 名スナップショット仕様明示 |
-| D. 発注書 Excel 出力 | `GET /purchase-orders/{id}/excel` | ✅ 初回採番ロジック、Idempotency-Key 推奨で冪等性担保 |
+| A. 商品マスタ登録 | `POST /products/families/complete`（バルク登録単一 API、Phase 6 F-06 対応）| ✅ family + 全 SKU + supplier_prices を 1 トランザクションで完結、Idempotency-Key で冪等性担保 |
+| B. 仕入先 × アイテム × 仕入単価設定 | `POST /products/families/{familyId}/supplier-prices`（Phase 6 でアイテム単位に修正）| ✅ 認可は AND 評価（product:write + price:write）、監査ログマスク仕様明示 |
+| C. 発注書作成 | `POST /purchase-orders`（status=Active で作成、改訂概念なし、Phase 6 簡素化）| ✅ 単価引当ロジック（family 経由）・customer_name 凍結タイミング（初回 Excel 出力時）明示 |
+| D. 発注書 Excel 出力 | `GET /purchase-orders/{id}/excel`（何度でも可能、初回時のみ order_no 採番、Phase 6 簡素化）| ✅ 初回採番ロジック、Idempotency-Key で初回時の二重採番防止 |
 | E. 権限変更（Firebase 同期）| `PATCH /users/{id}/permissions` | ✅ RDS 先行 → Firebase Custom Claims 後追い、失敗時の Reconciler 設計明示 |
 
 **追加で網羅すべきデータフロー検証:**
@@ -977,8 +984,8 @@ paths:
 | F. ログイン → セッション確立 | Firebase SDK `signInWithEmailAndPassword` → `POST /auth/sync` → `GET /auth/me` |
 | G. マスタ追加（M-02）| `POST /masters/{master}`（共通テンプレート） |
 | H. 画像アップロード（P-06）| `POST /products/families/{id}/images/upload-url` → S3 Pre-signed PUT → `POST /products/families/{id}/images` |
-| I. 発注書改訂（O-04）| `POST /purchase-orders/{id}/revisions` |
-| J. 中止 → 取消不可検証 | `POST /purchase-orders/{id}/cancel` → 再度 cancel で 409、改訂試行で 409 |
+| I. 発注書編集（O-04）| `PATCH /purchase-orders/{id}`（status=Active のみ可、改訂概念は Phase 6 で廃止）|
+| J. 中止 → 中止後参照検証 | `POST /purchase-orders/{id}/cancel` → 再度 cancel で 200（冪等）、編集試行（PATCH）で 409 ORDER-003。**Excel 出力は中止後も可能**（業務的に過去発注書の取出要件あり）|
 
 → **全 21 機能 × 主要パスで API I/F 矛盾なし。**
 

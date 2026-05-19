@@ -34,7 +34,7 @@
 ├─ /orders/                                 発注書（O-03 一覧、デフォルト = テーブルビュー）
 │   ├─ /orders/new                          発注書新規 (O-01: 新規企画から / O-02: 既存品番から)
 │   ├─ /orders/{orderId}                    発注書詳細・修正 (O-04)
-│   ├─ /orders/{orderId}/revisions/new      改訂 (O-04 枝番採番)
+│   ├─ (改訂エンドポイント廃止: O-04 編集に統合、Phase 6 簡素化)
 │   └─ /orders/{orderId}/excel              Excel 出力 (O-06、ダウンロード)
 │
 ├─ /masters/                                マスタ管理 (M-01 一覧 hub)
@@ -93,7 +93,7 @@
 | O-01 | 発注書作成（新規企画から）| `/orders/new?from_family={id}` |
 | O-02 | 発注書作成（既存品番から）| `/orders/new`（既定モード） |
 | O-03 | 発注書一覧・検索 | `/orders` |
-| O-04 | 発注書修正・改訂 | `/orders/{id}` + `/orders/{id}/revisions/new` |
+| O-04 | 発注書編集 | `/orders/{id}` （Phase 6 簡素化、改訂画面廃止）|
 | O-05 | 発注中止 | `/orders/{id}` 内アクション |
 | O-06 | 発注書 Excel 出力 | `/orders/{id}` 内アクション + `/orders/{id}/excel` ダウンロード |
 | O-07 | 連絡文章選択 | `/orders/{id}` 内モーダル |
@@ -181,8 +181,8 @@
 | 観点 | 内容 |
 |---|---|
 | 機能 ID | （横串）|
-| レイアウト | カード 4 つ（最近の発注 / 進行中 Draft / 自分の担当 / 通知）|
-| API | `GET /purchase-orders?sort=-updated_at&per_page=5`、`GET /purchase-orders?filter[status]=Draft&filter[orderer_user_id]=me`、他 |
+| レイアウト | カード 4 つ（最近の発注 / 未出力の発注（仕入先未送付）/ 自分の担当 / 通知）|
+| API | `GET /purchase-orders?sort=-updated_at&per_page=5`、`GET /purchase-orders?filter[export_state]=unexported&filter[orderer_user_id]=me`、他 |
 | 権限 | 全権限ユーザに表示。権限なし機能はカード非表示 |
 | MVP 簡易化 | カウントとリスト最初の 5 件のみ。グラフ・KPI は Post-MVP |
 
@@ -345,71 +345,72 @@
 
 | アクション | API |
 |---|---|
-| 「下書き保存」| `POST /purchase-orders`（status=Draft、Idempotency-Key で 2重送信防止）|
+| 「登録」| `POST /purchase-orders`（status=Active で作成、Idempotency-Key で 2重送信防止）|
 | 「キャンセル」| ConfirmDialog → `/orders` へ戻る |
 | エラー | ORDER-001（必須欠落）/ ORDER-002（unit_price 未設定）/ ORDER-004（過去日付）|
 
-### 3.8 `/orders/{orderId}` — 発注書詳細・修正（O-04 + O-05 + O-06 + O-07）
+### 3.8 `/orders/{orderId}` — 発注書詳細・編集（O-04 + O-05 + O-06 + O-07）
+
+> **Phase 6 簡素化:** 状態モデル簡素化（F-10）に伴い、状態別ボタン出し分けを廃止。**ボタン 3 つ固定 + 出力状態バッジ** で運用。改訂作成画面（旧 §3.9）も廃止し、編集はすべて本画面で完結。
 
 | 観点 | 内容 |
 |---|---|
 | 機能 ID | O-04 + O-05 + O-06 + O-07 |
 | 認可 | `purchase_order:read` / `purchase_order:write` |
 | API | `GET /api/v1/purchase-orders/{id}` で全データ取得 |
-| レイアウト | 上部: ステータスバッジ + 発注番号 + 主要メタ、下部: タブ（明細 / 履歴・改訂 / 連絡文章）|
-| アクション領域 | 状態に応じてボタンを出し分け |
+| レイアウト | 上部: 状態バッジ（Active/Cancelled）+ 出力バッジ（未出力/初回出力済(date)）+ 発注番号 + 主要メタ、下部: タブ（明細 / 出力履歴 / 連絡文章）|
+| アクション領域 | **常時 [編集] [Excel 出力] [中止] の 3 ボタン固定**。Cancelled 時のみ [編集] [中止] が disabled、[Excel 出力] は常に有効（過去発注書の取出要件）|
 
-#### 状態別アクション
+#### 状態バッジと出力バッジ
 
-| 状態 | ボタン |
-|---|---|
-| Draft | 「修正」（PATCH /orders/{id}） / 「Excel 出力＝発注確定」（GET /orders/{id}/excel、Idempotency-Key） / 「中止」（POST /orders/{id}/cancel）|
-| Submitted | 「改訂」（→ /orders/{id}/revisions/new）/ 「Excel 再出力」/ 「中止」 |
-| Revised | 「Excel 再出力」/ 「中止」 |
-| Cancelled | アクションなし（参照のみ）。「ステータス: 中止済」+ 理由表示 |
+| バッジ | 表示条件 | 表示文言 |
+|---|---|---|
+| 状態 | `status=0/Active` | 「有効」（緑）|
+| 状態 | `status=1/Cancelled` | 「中止済」（赤）+ 理由ツールチップ |
+| 出力 | `first_exported_at IS NULL` | 「**未出力**」（オレンジ、強調）|
+| 出力 | `first_exported_at IS NOT NULL` | 「**初回出力済** YYYY-MM-DD」（グレー）+ ツールチップで last_exported_at 表示 |
 
 #### タブ「明細」
 
 | 表示 | 内容 |
 |---|---|
 | 列 | 行番号 / 品番（snapshot）/ 商品名（snapshot）/ 仕入先（snapshot）/ 単価（snapshot、マスク or 開示）/ 数量 / 小計 / 通貨 |
-| 編集 | Draft 時のみ、行追加 / 削除 / 数量変更 |
+| 編集 | `status=Active` 時のみ、行追加 / 削除 / 数量変更 |
 | サムネ | 行頭に商品代表画像（S3 Pre-signed）|
 
-#### タブ「履歴・改訂」
+#### タブ「出力履歴」
+
+> Phase 6 で旧「履歴・改訂」を「出力履歴」に改名。改訂チェーン表示を廃止、Excel 出力履歴のみ表示。
 
 | 表示 | 内容 |
 |---|---|
-| 改訂チェーン | 親 → 改訂版 1 → 改訂版 2 ... を縦並び、各版へリンク |
-| 表示元 | `purchase_order_revisions` + audit_logs |
+| 出力履歴 | 出力日時 / 操作者 / 初回フラグ / テンプレートバージョン |
+| 編集履歴 | audit_logs から `Order.Update` を時系列表示（差分は changes フィールドから取得）|
+| 表示元 | `purchase_order_export_logs` + audit_logs |
 
 #### タブ「連絡文章」（O-07）
 
 | 表示 | テキストエリア + 「テンプレートから選択」「標準印字取込」ボタン |
-| 編集 | Draft 時のみ、`PATCH /orders/{id}` で `communication_text` 更新 |
+| 編集 | `status=Active` 時、`PATCH /orders/{id}` で `communication_text` 更新 |
 
 #### 中止アクション（O-05）
 
 | UI | ConfirmDialog「本当に中止しますか？」+ 理由入力（任意）+ 「中止する」ボタン |
 | API | `POST /purchase-orders/{id}/cancel` |
-| 副作用 | 状態が Cancelled に遷移、再開不可（業務ルール、§13 確認事項 S-1）|
+| 副作用 | 状態が Cancelled に遷移、編集不可（業務ルール）。Excel 出力は引き続き可能 |
 
 #### Excel 出力アクション（O-06）
 
-| UI | 「Excel 出力（発注確定）」ボタン → 確認ダイアログ |
-| 警告 | 初回出力時は「この操作で発注番号が確定し、以降は改訂のみ可能になります」と明示 |
+> **Phase 6 簡素化:** 「Excel 出力 = 発注確定」業務概念を廃止。**いつでも何度でも出力可能**。
+
+| UI | 「Excel 出力」ボタン → 確認ダイアログ |
+| 確認ダイアログ | 初回出力時のみ「**初回出力**: 発注番号 `S____` を採番し、仕入先送付の業務目印を記録します」と明示。2 回目以降は「再出力」とのみ表示 |
 | API | `GET /api/v1/purchase-orders/{id}/excel` + `Idempotency-Key` ヘッダ |
-| 完了 | ブラウザ標準ダウンロードダイアログ → 一覧の order_no と status が更新 |
+| 完了 | ブラウザ標準ダウンロードダイアログ → 一覧の order_no と出力バッジが更新 |
 
-### 3.9 `/orders/{orderId}/revisions/new` — 発注書改訂作成（O-04）
+### 3.9 (廃止) 発注書改訂作成画面
 
-| 観点 | 内容 |
-|---|---|
-| 認可 | `purchase_order:write` |
-| 構成 | `/orders/new` と同レイアウト、ただし初期値は親発注書から複写 |
-| 入力 | revised_reason（改訂理由、任意）+ 通常の明細・連絡文章編集 |
-| API | `POST /purchase-orders/{id}/revisions` |
-| 完了 | 新発注書 ID で `/orders/{newId}` へ遷移、ステータス Draft（再度 Excel 出力で枝番採番 `Snnnn-01`） |
+> **Phase 6 廃止:** 状態モデル簡素化に伴い、改訂概念を廃止。編集はすべて `/orders/{orderId}` 詳細画面で完結する（PATCH エンドポイント）。
 
 ### 3.10 `/masters` — マスタ管理 hub
 
@@ -553,7 +554,7 @@
 | A. 商品マスタ登録 | `/products` → `/products/new` (Step 1〜4) → `/orders/new?from_family={id}` | ✅ ウィザード遷移 + URL パラメータでデータ連動 |
 | B. 仕入単価設定 | `/products/families/{id}` → 「仕入単価」タブ → 行追加モーダル | ✅ 権限 `price:write` チェック + マスク表示 |
 | C. 発注書作成 | `/orders/new` → ヘッダ + 明細 + 連絡文章 → 「下書き保存」→ `/orders/{id}` | ✅ Idempotency-Key 適用 |
-| D. Excel 出力 | `/orders/{id}` → 「Excel 出力（発注確定）」→ 確認ダイアログ → ダウンロード | ✅ 初回採番警告 UI + 状態遷移可視化 |
+| D. Excel 出力 | `/orders/{id}` → 「Excel 出力」→ 確認ダイアログ → ダウンロード | ✅ 初回採番ダイアログ + 出力バッジで業務可視化（Phase 6 簡素化、発注確定概念廃止）|
 | E. 権限変更 | `/masters/users` → 編集モーダル → 権限選択 → 保存 | ✅ Firebase 同期失敗時の USR-003 警告表示 |
 
 ---
@@ -595,9 +596,9 @@
 | S-2 | `/products/new` の Step 4 完了後の自動遷移先（`/orders/new?from_family={id}`）| 採用（UC-1 直結）。ただし「発注書を作らずに戻る」ボタンも提供 |
 | S-3 | カード/テーブル切替のセッション保持範囲 | Pinia `ui` store でセッション中保持。永続化（localStorage）は Phase 6 で要否判断 |
 | S-4 | 仕入単価マスク → 開示トグル時の挙動 | `?include_amount=true` を URL に付加せず、ヘッダ X-Include-Amount で送信（履歴に残らない）。`price:read` 権限保有時のみトグル表示 |
-| S-5 | ホーム画面のダッシュボード簡易版（カード 4 つ）| MVP は最小実装（最近の発注リスト + 自分の Draft + 通知のみ）。グラフは Post-MVP |
+| S-5 | ホーム画面のダッシュボード簡易版（カード 4 つ）| MVP は最小実装（最近の発注リスト + 自分の未出力発注 + 通知のみ）。グラフは Post-MVP |
 | S-6 | 監査ログ閲覧画面（C-03）の MVP 提供 | Post-MVP。MVP は audit_logs 記録のみで閲覧 UI なし |
-| S-7 | Excel 出力時の「発注確定」警告表現 | 「この操作で発注番号が確定し、以降は改訂のみ可能になります」と明示（推奨）。誤操作防止 |
+| ~~S-7~~ | ~~Excel 出力時の「発注確定」警告表現~~ | **Phase 6 で解消** Excel 出力 = 発注確定 概念を廃止。初回出力時のみ「発注番号採番 + 仕入先送付目印記録」の業務通知ダイアログ表示に変更（F-10/F-11 対応）|
 | S-8 | サブナビ表示制御（権限なし機能を非表示 vs グレーアウト）| **非表示**（推奨）。情報量削減 + 業務スコープ明確化 |
 | S-9 | モバイル時の `/products/new` ウィザード | Stepper を縦配置 + Step 2 グリッド縦スクロール。実用性は Phase 6 で業務担当者検証 |
 | S-10 | ローディング Skeleton vs スピナー | Skeleton（推奨）。レイアウトシフト回避 |
