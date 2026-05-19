@@ -798,16 +798,38 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 ##### PATCH /api/v1/purchase-orders/{id}
 
-**Request:** POST 時と同一スキーマ（部分更新、提供フィールドのみ更新）
+**Request:** POST 時と同一スキーマ（部分更新、提供フィールドのみ更新）+ **編集理由必須フィールド**（Phase 6 で F-16 対応、確定）:
+
+```json
+{
+  "lines": [...],
+  "due_date": "...",
+  "edit_reason": "quantity",     // 必須、Enum
+  "edit_note": "仕入先在庫切れにより数量変更"   // 任意、自由テキスト最大 256 文字
+}
+```
+
+**`edit_reason` Enum（必須）:**
+| 値 | 業務意味 |
+|---|---|
+| `quantity` | 数量変更（仕入先在庫切れ、生産計画見直し等）|
+| `deadline` | 納期変更（出荷遅延、繁忙期前倒し等）|
+| `supplier` | 仕入先変更（品質問題、コスト見直し等）|
+| `typo` | 誤入力修正 |
+| `other` | その他（`edit_note` 推奨）|
 
 **処理:**
 1. 発注書取得、`status=Active` を確認（Cancelled なら 409 ORDER-003）
-2. ヘッダ + 明細を更新
-3. audit_logs INSERT（編集前後の差分を記録、ただし unit_price はマスク）
+2. **`edit_reason` 必須バリデーション**（未指定なら 422 ORDER-005）
+3. ヘッダ + 明細を更新
+4. audit_logs INSERT（`changes.before` / `changes.after` に編集前後の差分、`changes.edit_reason` / `changes.edit_note` に業務理由を記録、ただし unit_price はマスク）
 
 **Response 200:** 更新後の発注書
 
-> **設計判断:** 編集履歴は `audit_logs` で `Order.Update` action として全件保持される。改訂理由など業務メモを残したい場合は、編集時のフリーテキスト欄をリクエストに含めて `audit_logs.changes` に保存する運用で対応可能（必要なら Phase 7 で UI 追加）。
+**追加エラー:**
+- 422 ORDER-005: `edit_reason` 未指定または Enum 外の値
+
+> **F-16 解消方針（Phase 6 確定）:** 編集理由を選択肢必須化（5 値 Enum）+ 自由メモ任意化。audit_logs.changes JSONB に `edit_reason` / `edit_note` を保存することで、Post-MVP で「数量変更が多い仕入先」「納期変更が多い時期」等の業務分析が可能。F-15 (差分表示) のデータ基盤と一体化、Phase 7 で UI 追加するだけで変更履歴ビュー実現可。
 
 #### O-05: 発注中止
 
