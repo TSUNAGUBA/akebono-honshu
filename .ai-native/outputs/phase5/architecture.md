@@ -90,7 +90,7 @@ src/
 │   │   ├─ Auth/                     # POST /auth/sync, etc.
 │   │   ├─ Products/                 # /products, /products/{id}/images
 │   │   ├─ Suppliers/                # /suppliers
-│   │   ├─ Orders/                   # /orders, /orders/{id}/lines
+│   │   ├─ PurchaseOrders/           # /purchase-orders, /purchase-orders/{id}/lines
 │   │   ├─ Outputs/                  # /outputs/excel, /outputs/labels
 │   │   └─ ...
 │   ├─ Authorization/                # Authorization Policies (4 権限)
@@ -169,7 +169,7 @@ src/
 │   ├─ products/
 │   │   ├─ index.vue                  # P-04 商品一覧
 │   │   └─ [id].vue                   # P-04 商品詳細
-│   ├─ orders/
+│   ├─ orders/                        # フロント URL は短縮形 `/orders/*` (UI 表現)、API 側は `/api/v1/purchase-orders/*` (技術名)
 │   ├─ suppliers/
 │   └─ ...
 ├─ components/
