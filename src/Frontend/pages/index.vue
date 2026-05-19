@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// ルートアクセス時は middleware/auth.global.ts により /login or /users へ
-onMounted(() => navigateTo('/users'))
+// / アクセス時のリダイレクトは middleware/auth.global.ts で処理されるため、
+// 本ページは middleware 通過中の loading 表示のみ。
+// onMounted で navigateTo を呼ぶと、URL 直接アクセス時の Vue Router 初期化
+// タイミングで誤動作する可能性があるため使わない。
 </script>
 
 <template>
