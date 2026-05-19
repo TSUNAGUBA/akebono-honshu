@@ -89,20 +89,34 @@ docker compose exec postgres psql -U akebono-honshu -d akebono-honshu -c "SELECT
 
 §1 のツールを揃えてから、リポジトリ clone 後に以下を実施。
 
-### 2.1 Backend 認証情報の設定 (PostgreSQL を選択肢 A で構築した方)
+### 2.1 Backend 認証情報の設定
 
-選択肢 A で、`akebono-honshu` 以外のユーザ (例: `pguser`) で接続したい場合、`appsettings.json` の Connection String を書き換えるか、**`appsettings.Development.json`** に以下を追記します (こちらが推奨、共通設定を壊さない):
+設定の優先度 (低 → 高):
+1. `appsettings.json` (リポジトリ管理、本番デフォルトはプレースホルダ `__OVERRIDE_ME__`)
+2. `appsettings.Development.json` (リポジトリ管理、**チーム共通の開発デフォルト** = `akebono-honshu / localdev`)
+3. `dotnet user-secrets` (リポジトリ外、**個人固有の機密値** = `pguser / 個人パスワード` 等)
+4. 環境変数 `ConnectionStrings__Postgres` (CI / コンテナ起動時の上書き)
 
-```jsonc
-// src/Backend/Presentation/appsettings.Development.json に追記
-{
-  "ConnectionStrings": {
-    "Postgres": "Host=localhost;Port=5432;Database=akebono-honshu;Username=pguser;Password=<password>"
-  }
-}
+**§1.3.A の選択肢 A** で `akebono-honshu / localdev` ロールを作成した方は **何も設定不要**、appsettings.Development.json の値で動きます。
+
+**`pguser` 等の別ユーザで接続する方** (Iteration 0 動作確認中のオペレーター環境など):
+
+```powershell
+cd src\Backend\Presentation
+
+# UserSecretsId は .csproj に設定済 (akebono-honshu-iter0-dev-secrets)、init は不要
+# Connection String を user-secrets に格納 (リポジトリには記録されない)
+dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=akebono-honshu;Username=pguser;Password=<your_password>"
+
+# 確認
+dotnet user-secrets list
 ```
 
-> ASP.NET Core の規約により、`ASPNETCORE_ENVIRONMENT=Development` (既定) では `appsettings.json` → `appsettings.Development.json` の順でマージされ、後者が優先されます。Iteration 1 で `User Secrets` 方式 (`dotnet user-secrets`) に移行予定。
+格納先 (リポジトリ外、git 管理不要):
+- Windows: `%APPDATA%\Microsoft\UserSecrets\akebono-honshu-iter0-dev-secrets\secrets.json`
+- Mac/Linux: `~/.microsoft/usersecrets/akebono-honshu-iter0-dev-secrets/secrets.json`
+
+> 不要になったら `dotnet user-secrets remove "ConnectionStrings:Postgres"` でクリア、`dotnet user-secrets clear` で全削除可能。
 
 ### 2.2 ターミナル 1: PostgreSQL
 

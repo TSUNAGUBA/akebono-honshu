@@ -6,6 +6,7 @@
     <AssemblyName>Akebono.Api</AssemblyName>
     <RootNamespace>Akebono.Api</RootNamespace>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UserSecretsId>akebono-honshu-iter0-dev-secrets</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Infrastructure\Akebono.Infrastructure.csproj" />

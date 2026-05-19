@@ -110,10 +110,11 @@
 | 5 | corepack 同梱が環境依存 (Volta 経由など)、pnpm インストール経路は複数想定が必要 | RUNBOOK 1.2 で 3 経路 (corepack / Volta / npm global) を併記 |
 | 6 | DB 名・ロール名はリポジトリ名と一致させると認識しやすい | `akebono` → `akebono-honshu` に統一、Iteration 1 以降のテーブル定義はこの DB 内で展開 |
 
-**Iteration 1 着手前に Claude 側で整備するタスク:**
-- `appsettings.Development.json` に Connection String を移し、`appsettings.json` を本番デフォルト値で固定
-- `dotnet user-secrets` で個人認証情報を git 管理外に分離する案内追加
-- パッケージ追加時の WebFetch 確認をデフォルト運用化
+**Iteration 1 着手前に Claude 側で整備するタスク (完了 2026-05-19):**
+- ✅ `appsettings.Development.json` にチーム共通の開発デフォルト Connection String を格納、`appsettings.json` は本番プレースホルダ (`__OVERRIDE_ME__`) に変更
+- ✅ `dotnet user-secrets` 用に `Akebono.Api.csproj` に `<UserSecretsId>akebono-honshu-iter0-dev-secrets</UserSecretsId>` を追加、RUNBOOK §2.1 に個人認証情報の格納手順記載
+- ✅ CLAUDE.md `.NET / C#` セクションに class library での `Microsoft.Extensions.*` 明示 using + NuGet バージョン事前確認 (WebFetch) のルール追記
+- 🔁 パッケージ追加時の WebFetch 確認は CLAUDE.md ルール化済、Iteration 1 以降の運用で実証する
 
 
 
