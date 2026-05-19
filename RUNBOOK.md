@@ -191,16 +191,51 @@ pnpm dev
    ```
    期待結果: `Login.Success`, `User.List` 等が記録されている。
 
+### 3.1 Iteration 1 追加シナリオ (マスタ管理 17 種)
+
+> **前提:** ステップ §2.1 + §2.2 で `db/init/01-schema.sql` 投入済の前提に加え、`db/init/02-masters.sql` を pgAdmin4 で実行して 17 マスタ + Seed データを投入する。
+
+1. ブラウザで `http://localhost:3000` → `owner` / `localdev` でログイン
+2. 上部ナビ「マスタ管理」をクリック → `/masters` に 17 マスタのカードが表示される
+3. **ブランド (拡張なしマスタ)** カード → `/masters/brands` で 2 件 (akebono / プライベート)
+   - 「+ 新規追加」→ コード `099`、名称 `テスト` → 保存 → 3 件に増える
+   - 編集 → 名称変更 → 保存
+   - 削除 → 確認ダイアログ → 一覧から消える
+   - 「論理削除済みを含む」チェック → 削除済みが表示 → 「復元」で復活
+4. **仕入先 (M-04 拡張ありマスタ)** → `/masters/suppliers`
+   - `officialName` (DEPARTURES 等)、国 (日本/中国)、工場コードが拡張カラム表示
+   - 新規追加時、「国」select に countries マスタが選択肢として表示 (FK 連携)
+5. **連絡文章テンプレ (M-05)** → `/masters/document-template-confirmations`
+   - 本文 textarea + 標準印字 checkbox で編集
+6. **権限制御 (C-02) 確認:**
+   - ログアウト → `planner` / `localdev` で再ログイン
+   - `/masters/brands` 画面右上に「参照のみ (品番台帳管理権限なし)」表示
+   - 各行の操作列が「—」、編集/削除ボタンなし
+7. **監査ログ:**
+   ```sql
+   SELECT id, occurred_at, action, entity_type, entity_id, note
+   FROM audit_logs
+   WHERE entity_type IN ('Brand', 'Supplier', 'Color')
+   ORDER BY id DESC LIMIT 20;
+   ```
+   期待結果: `Brand.Create`, `Brand.Update`, `Brand.Delete`, `Brand.Restore`, `Supplier.List` 等が記録
+
 ---
 
 ## 4. 想定エンドポイント
 
-| メソッド | パス | 概要 | 認証 |
-|---|---|---|---|
-| GET | `/health` | ヘルスチェック | なし |
-| POST | `/api/v1/auth/login` | ダミー認証ログイン | なし |
-| GET | `/api/v1/auth/me` | 現在のユーザ情報 | Bearer 必須 |
-| GET | `/api/v1/users` | ユーザ一覧 | Bearer 必須 |
+| メソッド | パス | 概要 | 認証 | 権限 |
+|---|---|---|---|---|
+| GET | `/health` | ヘルスチェック | なし | – |
+| GET | `/swagger` | Swagger UI (API ドキュメント + 動作確認画面) | なし | – |
+| POST | `/api/v1/auth/login` | ダミー認証ログイン | なし | – |
+| GET | `/api/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer | – |
+| GET | `/api/v1/users` | ユーザ一覧 | Bearer | – |
+| GET | `/api/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
+| POST/PATCH/DELETE | `/api/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission >= 1` |
+
+`{master}` は: brands / sizes / functions / countries / suppliers / departments / product-types / product-seasons / product-groups / colors / materials / material-classifications / warehouses / delivery-destinations / document-template-purchases / document-template-confirmations / document-text-purchases
 
 ---
 

@@ -141,6 +141,38 @@
 
 **ゲート:** 全 5 マスタ機能完成 + 独立コードレビュアー (Clean Architecture 準拠 / EF Core N+1 検出 / Firebase 同期失敗時の Reconciler 動作) + システム監査官 (audit_logs 改竄防止 / RDS ロール権限 / Firebase Custom Claims 同期パス) 指摘ゼロ
 
+#### Iteration 1 完了記録 (2026-05-19)
+
+**実装内容 (commit 範囲: `1b89fdc` → `5b5d3cc`):**
+- 1.A: `db/init/02-masters.sql` で 17 マスタ + users 拡張 + Seed データ投入
+- 1.B: Domain 層 Entity 17 個 + IMasterEntity / MasterEntityBase 共通契約 + User 拡張
+- 1.C: AkebonoDbContext 拡張 + MasterService<T> ジェネリック共通 CRUD + SupplierService 個別
+- 1.D: 17 マスタ REST エンドポイント (102 routes) + Swagger UI 導入 (Swashbuckle.AspNetCore 6.9.0 + Bearer 認証スキーマ)
+- 1.E: Nuxt マスタ管理画面 (動的ルート `/masters/[master]` + MasterEditDialog 共通モーダル + 17 マスタスキーマ定義 + FK 自動取得)
+- 1.F: C-02 権限制御最小実装 (`product_ledger_permission >= 1` をマスタ編集系に要求、Frontend で編集 UI 非表示)
+- 1.G: RUNBOOK + iteration-plan 更新
+
+**Iteration 1 で得た知見 (Iteration 2 以降に適用):**
+
+| # | 知見 | Iteration 2 以降の適用方針 |
+|---|---|---|
+| 1 | Swashbuckle.AspNetCore v10 は Microsoft.OpenApi 2.x への breaking change で名前空間が変更され、訓練データ知識では追従困難 (CS0246 大量発生) | NuGet パッケージ追加時の WebFetch 確認は CLAUDE.md ルール通り実施しつつ、breaking change 含む メジャー version は **安定版へのダウングレード** を即決判断する。具体的に Swashbuckle は v6.9.0 で固定 |
+| 2 | `Nuxt 3.21+` で `ssr: false` が `NUXT_VITE_NODE_OPTIONS.socketPath` エラーで起動失敗 | `ssr: false` 使用禁止、`app.vue` 全体を `<ClientOnly>` でラップして実質 CSR 化する方式を採用 (Iteration 4 Firebase Auth 移行時に正式化) |
+| 3 | `localStorage` 認証 + SSR 有効 で hydration mismatch が発生し、リロード時にレイアウト破壊 | `middleware/auth.global.ts` 先頭で `if (import.meta.server) return` を必須化、認証チェックは CSR でのみ実行。`pages/index.vue` の `onMounted` ナビゲーションは middleware に移管 |
+| 4 | Tailwind CSS の `content` 配列空 (`[]`) で `@nuxtjs/tailwindcss` モジュール任せにすると、新ファイル大量追加時に JIT が認識漏れする可能性 | `tailwind.config.ts` の `content` は **明示パス列挙** で安定化 (二重保護) |
+| 5 | `EF Core ChangeTracker` レベルの `AuditLogInterceptor` は実装複雑度が高い (relation の追跡 / DTO mapping / 既存 audit との重複) | Iteration 1 では Service レベル `audit.LogAsync` で十分機能、Interceptor 化は Iteration 2 以降で対象拡大時に再検討 |
+| 6 | 17 マスタ × 6 endpoint = 102 routes を 1 ファイルに集約すると保守性低下が懸念されたが、`MapBase<T>` / `MapSimple<T>` ヘルパー導入で重複が消えた | 18+ マスタ追加時 (Iteration 2 で商品関連) も同パターンで拡張可能 |
+| 7 | Phase 5 §3.18 `users.product_ledger_permission` の値域 (0-3) は MVP では `>= 1` の 2 値判定で十分機能 | Iteration 2 以降の発注書作成権限 (0/1/2) も同様に「閾値以上」で簡素実装、細分化は実需要時 |
+| 8 | C# `out parameter` は `async` メソッドで使用不可、`record` 戻り値で代替 | `MasterEditAuth` パターン (`ActorId` + `ErrorResult`) を権限チェック標準形として Iteration 2 以降の発注権限チェックでも踏襲 |
+
+**Iteration 1 で運用継続される設計判断:**
+- ダミー認証 (`DummyTokenService` HMAC) は維持、Iteration 4 で Firebase Auth に置換
+- 監査ログは Service レベル `audit.LogAsync(entity_type.action 形式)` で記録
+- マスタの 4 権限カテゴリのうち実装したのは品番台帳のみ、他 3 つは Iteration 2/3 で実需に応じて追加
+
+**Iteration 2 着手前の整備事項 (なし):**
+- Iteration 1 終了時点で Iteration 2 (商品マスタ) 着手の障壁はなし。`product_families` / `products` の FK 参照先 (brands / suppliers / countries / colors / sizes / materials 等) は全て投入済み
+
 ---
 
 ### Iteration 2: 商品マスタ (推奨期間: 2-3 週間)
@@ -221,14 +253,14 @@ CLAUDE.md 原則 9 / 方法論 SP-8 に従い、**各 Iteration 完了時に独�
 
 ## 5. Iteration 別スコープ集計
 
-| Iteration | 期間 | 機能数 | 内容 |
-|---|---|---|---|
-| Iteration 0 | 1-2 週間 | – | **ローカル開発環境のみ** (docker-compose / .NET 8 + Nuxt 4 スケルトン / ダミー認証 / ログイン + ユーザ一覧 1 画面表示) |
-| Iteration 1 | 2-3 週間 | 8 機能 | C-01〜C-03 + M-01〜M-05 (ローカルダミー認証で動作) |
-| Iteration 2 | 2-3 週間 | 6 機能 | P-01〜P-06 (ローカルダミー認証で動作) |
-| Iteration 3 | 3 週間 | 7 機能 | O-01〜O-07 (Excel 出力含む、ローカルダミー認証で動作) |
-| Iteration 4 | 2-3 週間 | – | Hardening + **AWS インフラ構築 + Firebase 本番認証切替** + CI/CD + UAT 準備 |
-| **合計** | **約 10-14 週間 (約 2.5-3.5 ヶ月)** | **21 機能** | MVP リリース |
+| Iteration | 期間 | 機能数 | 状態 | 内容 |
+|---|---|---|---|---|
+| Iteration 0 | 1-2 週間 | – | ✅ 完了 (2026-05-19) | **ローカル開発環境のみ** (docker-compose / .NET 8 + Nuxt 4 スケルトン / ダミー認証 / ログイン + ユーザ一覧 1 画面表示) |
+| Iteration 1 | 2-3 週間 | 8 機能 | ✅ 完了 (2026-05-19) | C-01〜C-03 + M-01〜M-05 (ローカルダミー認証で動作)。C-02 は品番台帳権限のみ実装、他 3 権限は Iteration 2/3 で実需対応 |
+| Iteration 2 | 2-3 週間 | 6 機能 | 次 | P-01〜P-06 (ローカルダミー認証で動作) |
+| Iteration 3 | 3 週間 | 7 機能 | – | O-01〜O-07 (Excel 出力含む、ローカルダミー認証で動作) |
+| Iteration 4 | 2-3 週間 | – | – | Hardening + **AWS インフラ構築 + Firebase 本番認証切替** + CI/CD + UAT 準備 |
+| **合計** | **約 10-14 週間 (約 2.5-3.5 ヶ月)** | **21 機能** | | MVP リリース |
 
 ---
 
