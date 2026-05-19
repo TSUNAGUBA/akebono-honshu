@@ -828,9 +828,14 @@ S3 アップロード完了後、メタデータを DB に登録。
    - 上記を 1 UPDATE で実行
 3. **2 回目以降** (`first_exported_at IS NOT NULL`): `last_exported_at=NOW()` のみ UPDATE
 4. `purchase_order_export_logs` INSERT（`is_first_export = first_exported_at == NOW()`）
-5. ClosedXML テンプレートに流し込み
+5. ClosedXML テンプレートに流し込み（**MVP は ① 国内用テンプレート `templates/purchase-order-domestic.xlsx` 1 ファイル固定**、Phase 6 オペレーター確認で確定）
 6. MemoryStream で Response Body
-7. audit_logs INSERT (`Excel.Export`)
+7. audit_logs INSERT (`Excel.Export`、`excel_template_version` を記録）
+
+> **テンプレート方針（Phase 6 確定）:**
+> - MVP: ① 国内用 1 種類のみ実装。Application 層のリソースとしてバンドル
+> - Post-MVP: ② 海外用、③ 海外用＋管理表 を追加（発注書の業務区分 = 国内/海外 から自動選択する分岐ロジックを Phase 7 以降で導入）
+> - テンプレ更新は Application のリリースに同梱。DB マスタ管理ではない（`document_template_purchases` テーブルは「連絡文章」テンプレ用で別概念）
 
 **冪等性:** 初回出力時の `order_no` 採番は `Idempotency-Key` ヘッダで二重採番防止（推奨）。
 

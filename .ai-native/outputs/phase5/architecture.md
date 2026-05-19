@@ -301,7 +301,8 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 [7] Audit: GET でも閲覧扱いとして audit_logs INSERT (action=ExcelExported)
 ```
 
-**SoT チェック:** Excel テンプレートは Application 層に固定（DB に持たない、MVP では）。
+**SoT チェック:** Excel テンプレートは Application 層に固定（DB に持たない、MVP では）。**MVP は ① 国内用テンプレートのみ実装**（Phase 6 オペレーター確認で確定）。
+**Post-MVP 計画:** ② 海外用、③ 海外用＋管理表 の 2 種類を追加予定。テンプレ種別は発注書の業務区分（国内/海外）から自動選択する設計を Phase 7 以降で導入（MVP では切替不要のため `templates/purchase-order-domestic.xlsx` 1 ファイル固定）。
 **性能:** Phase 3 NFR §1.1 = 5秒以内、Phase 5 でテンプレート最適化方針確定。
 
 ### 4.5 シナリオ E: 権限変更時の Firebase Custom Claims 同期（管理機能 + R-11 緩和）
