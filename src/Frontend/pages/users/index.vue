@@ -7,7 +7,7 @@ interface UserItem {
   isActive: boolean
 }
 
-const { user, logout } = useAuth()
+const { logout } = useAuth()
 const { apiFetch } = useApi()
 
 const users = ref<UserItem[]>([])
@@ -31,32 +31,13 @@ onMounted(async () => {
     loading.value = false
   }
 })
-
-const onLogout = async () => {
-  logout()
-  await navigateTo('/login')
-}
 </script>
 
 <template>
   <main class="mx-auto max-w-5xl px-4 py-8">
-    <header class="mb-8 flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold">ユーザ一覧</h1>
-        <p class="text-sm text-gray-500">Iteration 0 動作確認画面</p>
-      </div>
-      <div class="flex items-center gap-4">
-        <span class="text-sm text-gray-600">
-          ログイン中: <strong>{{ user?.displayName }}</strong>
-        </span>
-        <button
-          type="button"
-          class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
-          @click="onLogout"
-        >
-          ログアウト
-        </button>
-      </div>
+    <header class="mb-6">
+      <h1 class="text-2xl font-bold">ユーザ一覧</h1>
+      <p class="text-sm text-gray-500">M-03 ユーザマスタ (Iteration 1 で権限管理拡張予定)</p>
     </header>
 
     <section class="rounded-lg border border-gray-200 bg-white shadow-sm">
