@@ -289,13 +289,88 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 
 ### 2.4 商品（P-01〜P-06）
 
-#### P-01〜P-02: 商品マスタ新規登録 + サイズ展開
+#### P-01〜P-03: 商品マスタ新規登録 + サイズ展開 + 仕入単価（バルク登録）
+
+> **Phase 6 修正:** F-06 ロールバック問題への対応として、新規ウィザードは **単一バルク登録エンドポイント** で 1 トランザクション完結。既存の個別エンドポイント (`POST /families`, `POST /expand`, `POST /supplier-prices`) は **P-05 編集機能専用** として残置（再利用）。
 
 | メソッド | パス | 用途 |
 |---|---|---|
-| `POST` | `/api/v1/products/families` | 商品企画 (product_family) 新規作成 |
-| `POST` | `/api/v1/products/families/{familyId}/expand` | サイズ展開（色×サイズで SKU 一括生成）|
-| `GET` | `/api/v1/products/families/{familyId}/preview-sku` | 仮品番プレビュー（9桁 + 候補連番） |
+| `POST` | `/api/v1/products/families/complete` | **新規ウィザード一括登録**（family + products + supplier_prices を 1 トランザクション） |
+| `POST` | `/api/v1/products/families` | 企画親のみ新規（編集機能用、Phase 5 後半 or Phase 7 で要否再判断）|
+| `POST` | `/api/v1/products/families/{familyId}/expand` | サイズ追加展開（既存企画に色/サイズを追加する編集用途）|
+| `GET` | `/api/v1/products/families/{familyId}/preview-sku` | 仮品番プレビュー（9桁 + 候補連番、ウィザード Step 1 用） |
+
+##### POST /api/v1/products/families/complete
+
+**認可:** `product:write` AND `price:write`
+
+**Request:**
+```json
+{
+  "family": {
+    "planned_year_code": "F",
+    "product_type_id": 12,
+    "product_season_id": 3,
+    "brand_id": 5,
+    "function_id": 2,
+    "product_group_id": 7,
+    "upper_material_id": 21,
+    "insole_material_id": 22,
+    "outsole_material_id": 23,
+    "factory_supplier_id": 14,
+    "product_name_1": "婦人サンダル A",
+    "product_name_2": "春夏 新作"
+  },
+  "expansion": {
+    "color_ids": [11, 12, 13],
+    "size_ids": [1, 2, 3, 4]
+  },
+  "supplier_prices": [
+    {
+      "supplier_id": 14,
+      "unit_price": 1250.00,
+      "currency_code": "JPY",
+      "exchange_rate": null,
+      "effective_from": "2026-06-01",
+      "decided_at": "2026-05-19"
+    }
+  ]
+}
+```
+
+**処理（単一トランザクション内）:**
+1. FluentValidation でリクエスト全体検証
+2. `product_families` INSERT（sequence_no 採番含む）
+3. 色 × サイズ全組合せで `products` バルク INSERT（11桁 SKU 生成）
+4. `product_supplier_prices` バルク INSERT（アイテム単位、複数仕入先対応）
+5. `audit_logs` INSERT（action=ProductFamilyCreated、子エンティティ件数を summary に記録）
+6. コミット
+
+**Response 201:**
+```json
+{
+  "data": {
+    "family": { "id": 42, "sequence_no": "071", ... },
+    "products": [ {"id": 1, "sku": "FA20710F1101", ...}, ... ],
+    "supplier_prices": [ {"id": 1, ...} ]
+  }
+}
+```
+
+**エラー（全体ロールバック）:**
+- 422 PROD-002: 必須項目欠落、色/サイズ未指定
+- 409 PROD-003: SKU 重複（同一企画キーの再採番衝突、自動リトライで吸収）
+- 409 PRICE-001: 仕入単価重複
+- 422 PRICE-002: unit_price <= 0
+- 422 PROD-005: family/expansion/supplier_prices の整合性違反（factory_supplier_id が supplier_prices に含まれない等）
+
+**冪等性:** `Idempotency-Key` ヘッダ必須（API-8 ポリシー、ネットワーク失敗時の二重生成防止）。
+
+> **設計判断:**
+> - F-06 ロールバック問題を解消（中途半端な family + products + prices が DB に残らない）
+> - フロントは Step 4 確認画面で一括送信、Step 1-3 はクライアント側状態管理（Pinia store）のみ
+> - ネットワーク失敗時はクライアント側に入力データが保持されているため再送可能
+> - ペイロードサイズ概算: family 1KB + products 50件 × 0.3KB + supplier_prices 3件 × 0.3KB ≒ 17KB（軽量）
 
 ##### POST /api/v1/products/families
 

@@ -210,7 +210,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 |---|---|---|---|
 | F-01〜F-04 | UI 表現改善 | なし | Phase 5 UI 改修で吸収可 |
 | F-05 仕入単価一括設定 | なし | API `POST /supplier-prices` を反復呼出で実現可、UI 機能追加で吸収 |
-| **F-06 ロールバック挙動** | **あり** | 商品登録ウィザードのトランザクション境界が不明確。**API 設計（複数エンドポイント連続呼出）が業務の単一トランザクション期待と不整合**。→ Phase 5 api-design.md に「ウィザード Draft 状態保持」エンドポイント追加または「バルク登録単一エンドポイント `POST /products/families/complete`」追加の要否を検討 |
+| **F-06 ロールバック挙動** | **解消済** | Phase 6 で A 案（バルク登録単一 API）採用、Phase 5 反映済。`POST /products/families/complete` を新設、ウィザード Step 4 で 1 トランザクション完結。中途半端な DB データを排除 |
 | F-07 デフォルト値 | なし | フロント側で実装可能（ログインユーザコンテキスト + UserDefaults エンドポイント追加余地）|
 | F-08 数量一括設定 | なし | UI 改修で吸収 |
 | F-09 連絡文章 6 行制限 | なし | UI 表示改善 |
@@ -243,7 +243,7 @@ Phase 6 ゲート条件「フィードバック反映後の I/F 設計に矛盾�
 
 | # | issue | 対応方針 |
 |---|---|---|
-| F-06 | 商品登録ウィザードのロールバック挙動 | **api-design.md 追記:** ウィザード全体を `POST /products/families/complete` 単一トランザクションエンドポイントに集約。または各ステップ Draft 保持 + 最終 commit エンドポイント。Phase 5 に差し戻し |
+| ~~F-06~~ | ~~商品登録ウィザードのロールバック挙動~~ | **解消済 (2026-05-19)** Phase 6 で A 案採用、`POST /products/families/complete` 新設で Phase 5 (api-design.md, screen-design.md) に反映完了 |
 | F-07 | 発注ヘッダのデフォルト値 | screen §3.7 ヘッダセクション補強。フロント実装で ログインユーザコンテキスト活用、初期値プリセット |
 | F-10 | Draft/Submitted 状態と次アクションの可視化 | api-design.md `GET /purchase-orders/{id}` レスポンスに `next_actions: ["edit", "confirm_with_excel", "cancel"]` 追加 |
 | F-12 | Excel テンプレート体裁 | Phase 7 実装前にオペレーター経由で既存 Excel ファイル入手、テンプレート再現作業を Phase 7 タスクとして明示 |
