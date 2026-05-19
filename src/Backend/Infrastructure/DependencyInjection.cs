@@ -5,6 +5,8 @@ using Akebono.Infrastructure.Audit;
 using Akebono.Infrastructure.Auth;
 using Akebono.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Akebono.Infrastructure;
 

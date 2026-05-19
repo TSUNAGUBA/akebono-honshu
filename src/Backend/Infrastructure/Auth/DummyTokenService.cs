@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Akebono.Application.Auth;
+using Microsoft.Extensions.Configuration;
 
 namespace Akebono.Infrastructure.Auth;
 
