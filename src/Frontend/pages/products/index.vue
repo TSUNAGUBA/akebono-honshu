@@ -166,16 +166,16 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       </table>
     </section>
 
-    <!-- カード表示 (画像メイン、コンパクト) -->
-    <section v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+    <!-- カード表示 (画像メイン、PC 5 列固定) -->
+    <section v-else class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
       <NuxtLink
         v-for="i in filtered"
         :key="i.id"
         :to="`/products/${i.id}`"
         class="group flex flex-col overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm transition hover:border-blue-500 hover:shadow-md"
       >
-        <!-- 画像エリア (アスペクト 4:3、横長で高さ抑制) -->
-        <div class="relative aspect-[4/3] w-full overflow-hidden bg-gray-100">
+        <!-- 画像エリア (アスペクト 1:1 正方形) -->
+        <div class="relative aspect-square w-full overflow-hidden bg-gray-100">
           <img
             v-if="i.primaryImageS3Key"
             :src="imageUrl(i.primaryImageS3Key)"
