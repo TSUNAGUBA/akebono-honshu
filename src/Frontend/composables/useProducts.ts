@@ -15,6 +15,8 @@ export interface FamilyListItem {
   status: number
   skuVariationCount: number
   imageCount: number
+  /** 代表画像 (order_no=1 の有効画像) の s3_key。画像未登録時は null */
+  primaryImageS3Key: string | null
   currentMinPrice: number | null
   currentMaxPrice: number | null
   currencyCode: string

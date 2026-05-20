@@ -161,6 +161,11 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
                 Family = pf,
                 SkuCount = pf.Products.Count(p => !p.IsDeleted),
                 ImageCount = pf.Images.Count(i => !i.IsDeleted),
+                PrimaryImageS3Key = pf.Images
+                    .Where(i => !i.IsDeleted)
+                    .OrderBy(i => i.OrderNo)
+                    .Select(i => i.S3Key)
+                    .FirstOrDefault(),
                 MinPrice = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null).Min(p => (decimal?)p.UnitPrice),
                 MaxPrice = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null).Max(p => (decimal?)p.UnitPrice),
                 Currency = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null)
@@ -172,8 +177,6 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
 
         return items.Select(x => new FamilyListItem(
             x.Family.Id,
-            // 9 桁 = 1+1+1+3+1+? いや、9 桁仕様: planned + type + season + seq3 + factory + ... 実は 7 桁 (上位)
-            // Phase 5 では「上位 9 桁」と表記、ここでは family + sequence で family レベル ID 表示用に簡易化
             $"{x.Family.PlannedYearCode}{x.Family.ProductType?.ItemConversionCode ?? "?"}{x.Family.ProductSeason?.ItemConversionCode ?? "?"}{x.Family.SequenceNo}{x.Family.FactorySupplier?.ItemConversionCode ?? "?"}",
             x.Family.ProductName1,
             x.Family.ProductName2,
@@ -184,6 +187,7 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
             x.Family.Status,
             x.SkuCount,
             x.ImageCount,
+            x.PrimaryImageS3Key,
             x.MinPrice, x.MaxPrice, x.Currency,
             x.Family.UpdatedAt
         )).ToList();

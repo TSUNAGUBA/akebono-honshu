@@ -56,6 +56,8 @@ public record FamilyListItem(
     short Status,
     int SkuVariationCount,
     int ImageCount,
+    /// <summary>代表画像 (order_no が最小の有効画像) の s3_key。画像未登録時は null</summary>
+    string? PrimaryImageS3Key,
     decimal? CurrentMinPrice,
     decimal? CurrentMaxPrice,
     string CurrencyCode,
