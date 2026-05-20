@@ -19,7 +19,11 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
     .WithOrigins(builder.Configuration["Cors:Origins"]?.Split(',') ?? ["http://localhost:3000"])
     .AllowAnyHeader()
     .AllowAnyMethod()
-    .AllowCredentials()));
+    .AllowCredentials()
+    // Content-Disposition は CORS のデフォルト simple response header に
+    // 含まれないため明示 expose。Frontend の Excel ダウンロード (useOrders.
+    // downloadExcel) で filename 抽出に使用 (Iter 3 O-06)。
+    .WithExposedHeaders("Content-Disposition")));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
