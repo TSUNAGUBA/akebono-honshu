@@ -29,6 +29,13 @@ const onLogout = async () => {
           >
             マスタ管理
           </NuxtLink>
+          <NuxtLink
+            to="/products"
+            class="rounded-md px-3 py-1.5 text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+            active-class="bg-blue-100 font-semibold text-blue-700"
+          >
+            商品管理
+          </NuxtLink>
         </div>
       </div>
       <div class="flex items-center gap-3">
