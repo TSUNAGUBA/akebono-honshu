@@ -12,6 +12,13 @@ using Microsoft.OpenApi.Models;
 // .NET Core / .NET 5+ は既定で限定的なエンコーディングのみ対応のため必須。
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+// Iter 4 段階 B 後続: 全 DB timestamp カラムを TIMESTAMP (without time zone) で JST naive 保存。
+// Npgsql 6+ は DateTime.Kind=Utc を timestamp without time zone カラムに書き込もうとすると
+// 例外を投げる。Akebono.Domain.Common.SystemTime.Now は Kind=Unspecified を返すので
+// 通常は問題ないが、外部入力 (JSON deserialize 等) で Kind=Utc が混入した場合の保険として
+// LegacyTimestampBehavior を有効化する (Kind 制約を緩和)。
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddAkebonoInfrastructure(builder.Configuration);

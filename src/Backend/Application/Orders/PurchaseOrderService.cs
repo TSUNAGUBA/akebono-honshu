@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Domain.Orders;
 using Microsoft.EntityFrameworkCore;
 
@@ -27,7 +28,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var now = DateTime.UtcNow;
+            var now = SystemTime.Now;
             var order = new PurchaseOrder
             {
                 MgmtNo = nextMgmtNo,
@@ -188,7 +189,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var now = DateTime.UtcNow;
+            var now = SystemTime.Now;
             order.SupplierId = req.SupplierId;
             order.DeliveryDestinationId = req.DeliveryDestinationId;
             order.DepartmentId = req.DepartmentId;
@@ -256,7 +257,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
         if (order is null) return false;
         if (order.Status == OrderStatus.Cancelled) return true; // 冪等
 
-        var now = DateTime.UtcNow;
+        var now = SystemTime.Now;
         order.Status = OrderStatus.Cancelled;
         order.CancelledAt = now;
         order.CancelledByUserId = actorUserId;
@@ -291,7 +292,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
     /// <summary>mgmt_no 採番 (例: "26-00001")。年下 2 桁 + ハイフン + 5 桁ゼロ埋め連番。</summary>
     private async Task<string> GenerateMgmtNoAsync(CancellationToken ct)
     {
-        var year2 = DateTime.UtcNow.Year % 100;
+        var year2 = SystemTime.Now.Year % 100;
         var prefix = $"{year2:D2}-";
         var existing = await db.PurchaseOrders
             .Where(o => o.MgmtNo.StartsWith(prefix))

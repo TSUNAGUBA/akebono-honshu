@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -37,7 +38,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
 
     public async Task<Supplier> CreateAsync(SupplierWriteRequest req, long actorUserId, CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
+        var now = SystemTime.Now;
         var entity = new Supplier
         {
             Code = req.Code,
@@ -75,7 +76,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         entity.CountryId = req.CountryId;
         entity.SupplierType = req.SupplierType;
         entity.AlertTarget = req.AlertTarget;
-        entity.UpdatedAt = DateTime.UtcNow;
+        entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
 
         await db.SaveChangesAsync(ct);
@@ -93,7 +94,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         if (entity is null) return false;
 
         entity.DeleteFlag = true;
-        entity.UpdatedAt = DateTime.UtcNow;
+        entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -110,7 +111,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         if (entity is null) return false;
 
         entity.DeleteFlag = false;
-        entity.UpdatedAt = DateTime.UtcNow;
+        entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 

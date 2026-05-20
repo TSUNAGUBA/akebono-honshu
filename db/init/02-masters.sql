@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS sizes (
     name                  VARCHAR(255) NOT NULL,
     item_conversion_code  VARCHAR(4)   NOT NULL,
     delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     legacy_id             VARCHAR(64)  NULL
 );
@@ -70,9 +70,9 @@ CREATE TABLE IF NOT EXISTS brands (
     code                VARCHAR(3)   NOT NULL UNIQUE,
     name                VARCHAR(255) NOT NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -85,9 +85,9 @@ CREATE TABLE IF NOT EXISTS functions (
     code                VARCHAR(3)   NOT NULL UNIQUE,
     name                VARCHAR(255) NOT NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -100,9 +100,9 @@ CREATE TABLE IF NOT EXISTS countries (
     code                VARCHAR(3)   NOT NULL UNIQUE,
     name                VARCHAR(255) NOT NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -120,9 +120,9 @@ CREATE TABLE IF NOT EXISTS suppliers (
     supplier_type         SMALLINT     NOT NULL,
     alert_target          SMALLINT     NOT NULL DEFAULT 0,
     delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     legacy_id             VARCHAR(64)  NULL
 );
@@ -137,9 +137,9 @@ CREATE TABLE IF NOT EXISTS departments (
     code                VARCHAR(3)   NOT NULL UNIQUE,
     name                VARCHAR(255) NOT NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -154,9 +154,9 @@ CREATE TABLE IF NOT EXISTS product_types (
     item_conversion_code     CHAR(1)      NOT NULL,
     size_demographic_code    CHAR(1)      NOT NULL,
     delete_flag              BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
-    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
     legacy_id                VARCHAR(64)  NULL
 );
@@ -171,9 +171,9 @@ CREATE TABLE IF NOT EXISTS product_seasons (
     item_conversion_code  CHAR(1)      NOT NULL,
     conversion_order      VARCHAR(64)  NULL,
     delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     legacy_id             VARCHAR(64)  NULL
 );
@@ -187,9 +187,9 @@ CREATE TABLE IF NOT EXISTS product_groups (
     name                VARCHAR(255)  NOT NULL,
     planning_fee        NUMERIC(12,2) NOT NULL DEFAULT 0,
     delete_flag         BOOLEAN       NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP     NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT        NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP     NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT        NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)   NULL
 );
@@ -203,9 +203,9 @@ CREATE TABLE IF NOT EXISTS colors (
     name                  VARCHAR(255) NOT NULL,
     item_conversion_code  CHAR(2)      NOT NULL,
     delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     legacy_id             VARCHAR(64)  NULL
 );
@@ -218,9 +218,9 @@ CREATE TABLE IF NOT EXISTS material_classifications (
     code                VARCHAR(3)   NOT NULL UNIQUE,
     name                VARCHAR(255) NOT NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -234,9 +234,9 @@ CREATE TABLE IF NOT EXISTS materials (
     name                            VARCHAR(255) NOT NULL,
     material_classification_id      BIGINT       NOT NULL REFERENCES material_classifications(id),
     delete_flag                     BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
-    updated_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
     legacy_id                       VARCHAR(64)  NULL
 );
@@ -250,9 +250,9 @@ CREATE TABLE IF NOT EXISTS warehouses (
     code                VARCHAR(3)   NOT NULL UNIQUE,
     name                VARCHAR(255) NOT NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -269,9 +269,9 @@ CREATE TABLE IF NOT EXISTS delivery_destinations (
     remark_2            VARCHAR(255) NULL,
     remark_3            VARCHAR(255) NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -285,9 +285,9 @@ CREATE TABLE IF NOT EXISTS document_template_purchases (
     name                VARCHAR(255) NOT NULL,
     body                TEXT         NOT NULL,
     delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
     legacy_id           VARCHAR(64)  NULL
 );
@@ -302,9 +302,9 @@ CREATE TABLE IF NOT EXISTS document_template_confirmations (
     body                 TEXT         NOT NULL,
     standard_print_flag  BOOLEAN      NOT NULL DEFAULT FALSE,
     delete_flag          BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
-    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
     legacy_id            VARCHAR(64)  NULL
 );
@@ -319,9 +319,9 @@ CREATE TABLE IF NOT EXISTS document_text_purchases (
     body                 TEXT         NOT NULL,
     standard_print_flag  BOOLEAN      NOT NULL DEFAULT FALSE,
     delete_flag          BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
-    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
     legacy_id            VARCHAR(64)  NULL
 );

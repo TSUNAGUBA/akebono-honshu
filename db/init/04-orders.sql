@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     mgmt_no                         VARCHAR(16)  NOT NULL UNIQUE,
     order_no                        VARCHAR(16)  NULL,
     status                          SMALLINT     NOT NULL DEFAULT 0,
-    cancelled_at                    TIMESTAMPTZ  NULL,
+    cancelled_at                    TIMESTAMP    NULL,
     cancelled_by_user_id            BIGINT       NULL REFERENCES users(id),
     cancel_reason                   VARCHAR(255) NULL,
 
@@ -37,12 +37,12 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     manager_user_id                 BIGINT       NOT NULL REFERENCES users(id),
 
     communication_text              TEXT         NULL,
-    first_exported_at               TIMESTAMPTZ  NULL,
-    last_exported_at                TIMESTAMPTZ  NULL,
+    first_exported_at               TIMESTAMP    NULL,
+    last_exported_at                TIMESTAMP    NULL,
 
-    created_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
-    updated_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
     legacy_id                       VARCHAR(64)  NULL,
 
@@ -75,9 +75,9 @@ CREATE TABLE IF NOT EXISTS purchase_order_lines (
     unit_price_snapshot             NUMERIC(12,2) NOT NULL,
     currency_code_snapshot          CHAR(3)       NOT NULL,
     subtotal                        NUMERIC(14,2) GENERATED ALWAYS AS (quantity * unit_price_snapshot) STORED,
-    created_at                      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMP     NOT NULL DEFAULT NOW(),
     created_by_user_id              BIGINT        NOT NULL REFERENCES users(id),
-    updated_at                      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMP     NOT NULL DEFAULT NOW(),
     updated_by_user_id              BIGINT        NOT NULL REFERENCES users(id),
 
     CONSTRAINT chk_pol_quantity     CHECK (quantity > 0),
@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_pol_product ON purchase_order_lines (product_id);
 CREATE TABLE IF NOT EXISTS purchase_order_export_logs (
     id                              BIGSERIAL PRIMARY KEY,
     purchase_order_id               BIGINT       NOT NULL REFERENCES purchase_orders(id),
-    exported_at                     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    exported_at                     TIMESTAMP    NOT NULL DEFAULT NOW(),
     exported_by_user_id             BIGINT       NOT NULL REFERENCES users(id),
     is_first_export                 BOOLEAN      NOT NULL,
     excel_template_version          VARCHAR(16)  NOT NULL

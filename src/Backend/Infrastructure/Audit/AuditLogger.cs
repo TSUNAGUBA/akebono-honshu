@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
 using Akebono.Infrastructure.Persistence;
 
@@ -17,7 +18,7 @@ public class AuditLogger(AkebonoDbContext db) : IAuditLogger
     {
         db.AuditLogs.Add(new AuditLog
         {
-            OccurredAt = DateTime.UtcNow,
+            OccurredAt = SystemTime.Now,
             ActorUserId = actorUserId,
             Action = action,
             EntityType = entityType,

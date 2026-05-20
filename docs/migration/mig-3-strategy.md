@@ -61,7 +61,7 @@ CREATE TABLE staging_legacy_products (
     cost_unit_price     NUMERIC(12,2),
     raw_classification  JSONB,  -- 分類 1〜20 を JSONB 保持 (後で参照可)
     raw_materials       JSONB,  -- 部位 1〜10 + 素材 + 混率
-    imported_at         TIMESTAMPTZ DEFAULT NOW()
+    imported_at         TIMESTAMP DEFAULT NOW()
 );
 ```
 

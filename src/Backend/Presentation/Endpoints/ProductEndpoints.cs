@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Application.Products;
 using Akebono.Domain.Products;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -164,7 +165,7 @@ public static class ProductEndpoints
                 await file.CopyToAsync(stream, ct);
             }
 
-            var now = DateTime.UtcNow;
+            var now = SystemTime.Now;
             var image = new ProductImage
             {
                 ProductFamilyId = id,
@@ -208,7 +209,7 @@ public static class ProductEndpoints
                 var img = images.FirstOrDefault(x => x.Id == imageId);
                 if (img is null) continue;
                 img.OrderNo = newOrder++;
-                img.UpdatedAt = DateTime.UtcNow;
+                img.UpdatedAt = SystemTime.Now;
                 img.UpdatedByUserId = auth.ActorId!.Value;
             }
             await db.SaveChangesAsync(ct);
@@ -228,7 +229,7 @@ public static class ProductEndpoints
             if (image is null) return Results.NotFound();
 
             image.IsDeleted = true;
-            image.UpdatedAt = DateTime.UtcNow;
+            image.UpdatedAt = SystemTime.Now;
             image.UpdatedByUserId = auth.ActorId!.Value;
             await db.SaveChangesAsync(ct);
 

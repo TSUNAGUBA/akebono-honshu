@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 
@@ -52,7 +53,7 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var now = DateTime.UtcNow;
+            var now = SystemTime.Now;
             var family = new ProductFamily
             {
                 PlannedYearCode = req.Family.PlannedYearCode,
@@ -324,7 +325,7 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         family.ProductName1 = req.ProductName1;
         family.ProductName2 = req.ProductName2;
         family.Status = req.Status;
-        family.UpdatedAt = DateTime.UtcNow;
+        family.UpdatedAt = SystemTime.Now;
         family.UpdatedByUserId = actorUserId;
 
         await db.SaveChangesAsync(ct);
@@ -342,14 +343,14 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         if (family is null) return false;
 
         family.IsDeleted = true;
-        family.UpdatedAt = DateTime.UtcNow;
+        family.UpdatedAt = SystemTime.Now;
         family.UpdatedByUserId = actorUserId;
 
         var skus = await db.Products.Where(p => p.ProductFamilyId == familyId && !p.IsDeleted).ToListAsync(ct);
         foreach (var sku in skus)
         {
             sku.IsDeleted = true;
-            sku.UpdatedAt = DateTime.UtcNow;
+            sku.UpdatedAt = SystemTime.Now;
             sku.UpdatedByUserId = actorUserId;
         }
 

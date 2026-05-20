@@ -36,7 +36,7 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
     /// <summary>新規作成。Code 重複は呼び出し側で事前チェック必須 (DB UNIQUE 制約違反でも検知可)。</summary>
     public async Task<TEntity> CreateAsync(TEntity entity, long actorUserId, CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
+        var now = SystemTime.Now;
         entity.CreatedAt = now;
         entity.UpdatedAt = now;
         entity.CreatedByUserId = actorUserId;
@@ -66,7 +66,7 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
         if (entity is null) return null;
 
         mutator(entity);
-        entity.UpdatedAt = DateTime.UtcNow;
+        entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
 
         await db.SaveChangesAsync(ct);
@@ -87,7 +87,7 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
         if (entity is null) return false;
 
         entity.DeleteFlag = true;
-        entity.UpdatedAt = DateTime.UtcNow;
+        entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -107,7 +107,7 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
         if (entity is null) return false;
 
         entity.DeleteFlag = false;
-        entity.UpdatedAt = DateTime.UtcNow;
+        entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 

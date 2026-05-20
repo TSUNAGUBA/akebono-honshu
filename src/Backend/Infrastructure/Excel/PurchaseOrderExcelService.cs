@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Application.Orders;
 using Akebono.Domain.Orders;
 using ClosedXML.Excel;
@@ -43,7 +44,7 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             .ToListAsync(ct);
 
         var isFirstExport = order.FirstExportedAt is null;
-        var now = DateTime.UtcNow;
+        var now = SystemTime.Now;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try

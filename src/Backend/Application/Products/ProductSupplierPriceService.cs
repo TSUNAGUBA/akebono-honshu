@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Common;
 using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 
@@ -35,7 +36,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
                          && !p.IsDeleted)
                 .FirstOrDefaultAsync(ct);
 
-            var now = DateTime.UtcNow;
+            var now = SystemTime.Now;
             if (current is not null)
             {
                 current.EffectiveTo = req.EffectiveFrom.AddDays(-1);

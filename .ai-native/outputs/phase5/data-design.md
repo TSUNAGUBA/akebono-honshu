@@ -33,13 +33,13 @@
 | サロゲート PK | `id BIGSERIAL PRIMARY KEY` | 全テーブル |
 | 業務 PK（masters）| `code VARCHAR(3)` UNIQUE NOT NULL | 18マスタ |
 | FK | `<参照先単数形>_id BIGINT REFERENCES <table>(id)` | `supplier_id`, `product_family_id` |
-| 監査列（全テーブル共通） | `created_at`, `created_by_user_id`, `updated_at`, `updated_by_user_id` | `TIMESTAMPTZ NOT NULL` / `BIGINT REFERENCES users(id)` |
+| 監査列（全テーブル共通） | `created_at`, `created_by_user_id`, `updated_at`, `updated_by_user_id` | `TIMESTAMP NOT NULL`（JST naive、Iter 4 段階 B で `timestamp with time zone` から変更）/ `BIGINT REFERENCES users(id)` |
 | 論理削除 | マスタは `delete_flag BOOLEAN NOT NULL DEFAULT FALSE`（既存スキーマ踏襲）、トランザクションは `is_deleted BOOLEAN NOT NULL DEFAULT FALSE` | - |
 | 旧システム由来 ID | `legacy_id VARCHAR(64) NULL` | Phase 4 MIG-3 |
 | boolean | `BOOLEAN`、ただし既存スキーマ互換のため `INTEGER` 表現は `standard_print_flag` のみ残す | - |
 | 金額 | `NUMERIC(12, 2)`（円 + 為替対応で小数2位）| `unit_price`, `total_amount` |
 | 日付（業務）| `DATE`（時刻不要） | `due_date`, `effective_from` |
-| 日時（システム）| `TIMESTAMPTZ`（タイムゾーン明示）| `created_at` |
+| 日時（システム）| `TIMESTAMP`（JST naive、Iter 4 段階 B 改訂。DB レベル `timezone='Asia/Tokyo'` を永続設定、C# 側は `Akebono.Domain.Common.SystemTime.Now` で JST `Kind=Unspecified` 値を生成）| `created_at` |
 
 ### 1.3 SoT 配置（Phase 4 §5 / architecture.md §1.2 再掲）
 
@@ -131,9 +131,9 @@
 > - `code VARCHAR(3) NOT NULL UNIQUE`（業務 PK、'000'〜'999' ゼロパディング）
 > - `name VARCHAR(255) NOT NULL`
 > - `delete_flag BOOLEAN NOT NULL DEFAULT FALSE`
-> - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+> - `created_at TIMESTAMP NOT NULL DEFAULT NOW()`
 > - `created_by_user_id BIGINT NOT NULL REFERENCES users(id)`
-> - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+> - `updated_at TIMESTAMP NOT NULL DEFAULT NOW()`
 > - `updated_by_user_id BIGINT NOT NULL REFERENCES users(id)`
 > - `legacy_id VARCHAR(64) NULL`（移行用、MIG-3）
 >
@@ -396,7 +396,7 @@
 | `mgmt_no` | `VARCHAR(16) NOT NULL UNIQUE` | 作成管理番号（例: `26-00411`、発注作成時に採番、BR-03）|
 | `order_no` | `VARCHAR(16) NULL UNIQUE` | 発注番号（例: `S3858`、初回 Excel 出力時に採番、BR-03）|
 | `status` | `SMALLINT NOT NULL DEFAULT 0` | **0=Active（編集・出力可）, 1=Cancelled（参照のみ）** — Phase 6 で 4 値から 2 値に簡素化（F-10/F-11 対応）|
-| `cancelled_at` | `TIMESTAMPTZ NULL` | |
+| `cancelled_at` | `TIMESTAMP NULL` | |
 | `cancelled_by_user_id` | `BIGINT NULL REFERENCES users(id)` | |
 | `cancel_reason` | `VARCHAR(255) NULL` | |
 | `supplier_id` | `BIGINT NOT NULL REFERENCES suppliers(id)` | 発注先（仕入先/工場）|
@@ -416,8 +416,8 @@
 | `sub_orderer_6_user_id` | `BIGINT NULL REFERENCES users(id)` | 副6 |
 | `manager_user_id` | `BIGINT NOT NULL REFERENCES users(id)` | 発注管理者 |
 | `communication_text` | `TEXT NULL` | 連絡文章（O-07 で複写/編集、最大6行は Application 層で検証）|
-| `first_exported_at` | `TIMESTAMPTZ NULL` | **初回 Excel 出力日時**（仕入先送付の業務目印、Phase 6 で追加）。NULL = 未出力、NOT NULL = 初回出力済（バッジ表示用）|
-| `last_exported_at` | `TIMESTAMPTZ NULL` | **最終 Excel 出力日時**（再出力時に毎回更新）|
+| `first_exported_at` | `TIMESTAMP NULL` | **初回 Excel 出力日時**（仕入先送付の業務目印、Phase 6 で追加）。NULL = 未出力、NOT NULL = 初回出力済（バッジ表示用）|
+| `last_exported_at` | `TIMESTAMP NULL` | **最終 Excel 出力日時**（再出力時に毎回更新）|
 | 共通監査 4 列 + `legacy_id` | | |
 
 **インデックス:**
@@ -477,7 +477,7 @@
 |---|---|---|
 | `id` | `BIGSERIAL PRIMARY KEY` | |
 | `purchase_order_id` | `BIGINT NOT NULL REFERENCES purchase_orders(id)` | 対象発注書 |
-| `exported_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | 出力日時 |
+| `exported_at` | `TIMESTAMP NOT NULL DEFAULT NOW()` | 出力日時 |
 | `exported_by_user_id` | `BIGINT NOT NULL REFERENCES users(id)` | 出力操作者 |
 | `is_first_export` | `BOOLEAN NOT NULL` | この出力が初回かどうか（`purchase_orders.first_exported_at` 採番のトリガとなったかの可視化）|
 | `excel_template_version` | `VARCHAR(16) NOT NULL` | テンプレートバージョン（テンプレ変更時の追跡用）|
@@ -497,7 +497,7 @@
 | カラム | 型 | 補足 |
 |---|---|---|
 | `id` | `BIGSERIAL PRIMARY KEY` | |
-| `occurred_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | 発生日時 |
+| `occurred_at` | `TIMESTAMP NOT NULL DEFAULT NOW()` | 発生日時 |
 | `actor_user_id` | `BIGINT NULL REFERENCES users(id)` | 操作者（未認証イベントは NULL）|
 | `actor_firebase_uid` | `VARCHAR(128) NULL` | Firebase UID（users テーブル削除済でも追跡可）|
 | `actor_ip` | `INET NULL` | 操作元 IP |
@@ -636,7 +636,7 @@
 
 | # | 視点 | チェック結果 |
 |---|---|---|
-| 1 | 技術スタック制約 | ✅ PostgreSQL 16 + EF Core 8 + Npgsql の型マッピングは標準対応（BIGSERIAL → long, TIMESTAMPTZ → DateTimeOffset, NUMERIC → decimal, JSONB → string or JsonDocument）|
+| 1 | 技術スタック制約 | ✅ PostgreSQL 16 + EF Core 8 + Npgsql の型マッピングは標準対応（BIGSERIAL → long, TIMESTAMP → DateTimeOffset, NUMERIC → decimal, JSONB → string or JsonDocument）|
 | 2 | ユースケース | ✅ UC-1〜UC-4 全カバー、商品 SKU 生成・マルチ仕入先・発注作成・改訂・中止・Excel 出力すべてエンティティに対応 |
 | 3 | ユーザビリティ | ✅ マスタの `delete_flag` 部分インデックスでアクティブ件数の高速取得、商品一覧の `idx_pf_status_deleted` で初期表示 500ms 達成可能 |
 | 4 | データ設計上の都合 | ✅ §11 正規化チェック完了、非正規化箇所は根拠付き |
