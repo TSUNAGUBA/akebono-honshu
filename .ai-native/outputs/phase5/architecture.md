@@ -308,6 +308,9 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 
 ### 4.5 シナリオ E: 権限変更時の Firebase Custom Claims 同期（管理機能 + R-11 緩和）
 
+> **実装ステータス (2026-05-20 時点):** 段階 B では未実装。RBAC は OnTokenValidated で users.firebase_uid 引当 → 各 endpoint の `CheckMasterEditAsync` / `CheckOrderEditAsync` で RDS の権限カラム (`product_ledger_permission` 等) を毎リクエスト評価する RDS 直読方式。Custom Claims 同期 + Reconciler バッチは段階 C (本番デプロイ + シナリオ E + R-11 緩和) で実装予定。
+> **Reconciler のタイムゾーン:** Iter 4 段階 B で DB を TIMESTAMP (JST naive) に統一したため、Reconciler バッチも `Akebono.Domain.Common.SystemTime.Now` を基準に running window 判定する (コンテナ標準 TZ=UTC との混在事故を防ぐ)。
+
 ```
 [1] Admin User: /users/{uid}/permissions で権限ロール変更
 [2] Frontend: PATCH /api/v1/users/{uid}/permissions
@@ -336,16 +339,16 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 
 ### 5.1 認証・認可
 
-| 関心事 | 実装 | 該当要件 |
-|---|---|---|
-| ログイン | Firebase Auth `signInWithEmailAndPassword` | AUTH-001 (UC-AUTH-01) |
-| 削除済ユーザ拒否 | Firebase Auth `disabled=true` + RDS `is_active=false` | AUTH-003 / SEC-12 |
-| パスワードハッシュ | Firebase 標準 scrypt | SEC-04 |
-| ブルートフォース | Firebase 標準レートリミット | SEC-06 |
-| アイドル切断 8h | フロント `useIdle` + `signOut` | SEC-05 |
-| トークン検証 | JwtBearer + Firebase JWKS | SEC-08 |
-| 4 権限ポリシー | Custom Claims + AuthorizationPolicy（サーバ最終判定）| SEC-11 / C-02 |
-| 権限変更同期 | RDS 先行 → setCustomUserClaims（§4.5）| 原則6 |
+| 関心事 | 実装 | 該当要件 | 実装ステータス |
+|---|---|---|---|
+| ログイン | Firebase Auth `signInWithEmailAndPassword` | AUTH-001 (UC-AUTH-01) | ✅ 段階 B 完了 |
+| 削除済ユーザ拒否 | Firebase Auth `disabled=true` + RDS `is_active=false` | AUTH-003 / SEC-12 | ✅ 段階 B 完了 (OnTokenValidated は `!IsDeleted` で引当、各 endpoint で IsActive 評価) |
+| パスワードハッシュ | Firebase 標準 scrypt | SEC-04 | ✅ Firebase 標準 |
+| ブルートフォース | Firebase 標準レートリミット | SEC-06 | ✅ Firebase 標準 |
+| アイドル切断 8h | フロント `useIdle` + `signOut` | SEC-05 | ⏳ 段階 C 着手後実装 |
+| トークン検証 | JwtBearer + Firebase JWKS | SEC-08 | ✅ 段階 B 完了 |
+| 4 権限ポリシー | RDS 直読 (`CheckMasterEditAsync` / `CheckOrderEditAsync`)。段階 C 以降 Custom Claims + AuthorizationPolicy を追加してサーバ最終判定を二重化 | SEC-11 / C-02 | ⏳ RDS 直読のみ段階 B 完了、Custom Claims は段階 C |
+| 権限変更同期 | RDS 先行 → setCustomUserClaims（§4.5）| 原則6 | ⏳ 段階 C 着手後実装 (シナリオ E) |
 
 ### 5.2 エラーハンドリング
 

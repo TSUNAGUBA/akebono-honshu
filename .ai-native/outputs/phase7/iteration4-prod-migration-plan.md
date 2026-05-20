@@ -202,6 +202,21 @@ flowchart LR
 | **オペレーター** | Secrets Manager に投入 | `akebono/prod/db-connection` (DB 接続文字列)、`akebono/prod/firebase-sa-key` (Firebase Service Account 鍵 JSON) |
 | **Claude** | `AwsSecretsManagerProvider` 実装 (AWS SDK で取得、Backend 起動時に環境変数注入) |
 
+#### 4.2.2bis Prod Firebase project 切替 (dev/prod 取り違え防止、段階 B レビュー指摘 SA P0-1)
+
+> **背景:** 段階 B では dev 用 `akebono-honshu` project を Web/Backend で共有していた。本番では別 project に分離して、dev のテストユーザが本番 RDS に到達できる事故を防ぐ。Backend は `appsettings.json` で `Firebase:ProjectId` を `__OVERRIDE_ME__` のままにし、起動時 throw でフェイルファストする設計に変更済。
+
+| 主体 | 作業 |
+|---|---|
+| **オペレーター** | Firebase Console で本番 project 新規作成 (例: `akebono-honshu-prod`)、Authentication / Email/Password 有効化、テストユーザ作成 |
+| **オペレーター** | Web app 登録 → 本番用 `firebaseConfig` を取得 (apiKey / authDomain / projectId など) |
+| **オペレーター** | 本番 Service Account 鍵を生成して Secrets Manager (`akebono/prod/firebase-sa-key`) に投入 |
+| **オペレーター** | App Runner 環境変数 `Firebase__ProjectId=akebono-honshu-prod` を設定 (`__OVERRIDE_ME__` から上書き) |
+| **オペレーター** | Firebase Hosting / Github Actions の build 環境で `NUXT_PUBLIC_FIREBASE_*` 環境変数を本番値に設定 (.env はリポジトリ外なので CI/CD 側で注入) |
+| **オペレーター** | 本番 RDS の `users.firebase_uid` を **本番** project の UID で再紐付け (`UPDATE users SET firebase_uid='<prod-uid>' WHERE login_id='owner';`)。dev の UID は無効化される |
+| **オペレーター** | Firebase Console → Authentication → Settings → **Authorized domains** に本番 Frontend ドメイン (`*.web.app` / 独自ドメイン) を追加、dev domain を除外 |
+| **Claude** | デプロイ前検証: 起動ログで `Firebase:ProjectId` が `akebono-honshu-prod` であることを確認 (もし dev のまま起動したら Program.cs の throw で落ちる設計) |
+
 #### 4.2.3 App Runner (Backend)
 
 | 主体 | 作業 |

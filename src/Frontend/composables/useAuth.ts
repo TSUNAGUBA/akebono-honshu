@@ -89,9 +89,14 @@ export const useAuth = () => {
           await syncWithBackend(fbUser)
         }
         catch {
-          // sync 失敗 (例: users.firebase_uid 未紐付け) は Firebase 側もログアウトして状態整合
-          await signOut($firebaseAuth as Auth)
-          auth.value = null
+          // sync 失敗 (例: users.firebase_uid 未紐付け / inactive) は Firebase もログアウト。
+          // signOut が失敗しても UI の認証済状態を残さないよう、auth.value=null は finally で保証 (レビュー CR-6)。
+          try {
+            await signOut($firebaseAuth as Auth)
+          }
+          finally {
+            auth.value = null
+          }
         }
       }
       else {

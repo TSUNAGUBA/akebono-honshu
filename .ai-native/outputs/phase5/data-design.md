@@ -636,7 +636,7 @@
 
 | # | 視点 | チェック結果 |
 |---|---|---|
-| 1 | 技術スタック制約 | ✅ PostgreSQL 16 + EF Core 8 + Npgsql の型マッピングは標準対応（BIGSERIAL → long, TIMESTAMP → DateTimeOffset, NUMERIC → decimal, JSONB → string or JsonDocument）|
+| 1 | 技術スタック制約 | ✅ PostgreSQL 16 + EF Core 8 + Npgsql の型マッピングは標準対応（BIGSERIAL → long, TIMESTAMP → DateTime [Kind=Unspecified、Iter 4 段階 B JST naive 移行に合わせ DateTimeOffset から変更], NUMERIC → decimal, JSONB → string or JsonDocument）|
 | 2 | ユースケース | ✅ UC-1〜UC-4 全カバー、商品 SKU 生成・マルチ仕入先・発注作成・改訂・中止・Excel 出力すべてエンティティに対応 |
 | 3 | ユーザビリティ | ✅ マスタの `delete_flag` 部分インデックスでアクティブ件数の高速取得、商品一覧の `idx_pf_status_deleted` で初期表示 500ms 達成可能 |
 | 4 | データ設計上の都合 | ✅ §11 正規化チェック完了、非正規化箇所は根拠付き |

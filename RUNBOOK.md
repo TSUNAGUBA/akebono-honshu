@@ -23,7 +23,10 @@
 **既存ローカル環境を Iter 4 段階 B に追従する手順:**
 
 1. `git pull` でブランチ最新化
-2. **DB 移行 (既存 DB のみ):** pgAdmin4 で `db/migration/iter4-tz-to-jst-naive.sql` を実行 (全 TIMESTAMPTZ → TIMESTAMP に変換)
+2. **DB 移行 (既存 DB のみ、Backend 停止中に実行):**
+   - 起動中の Backend を停止 (`ALTER COLUMN ... TYPE` が ACCESS EXCLUSIVE LOCK を取るため、in-flight トランザクションがあると待ちが発生する)
+   - pgAdmin4 で `db/migration/iter4-tz-to-jst-naive.sql` を実行 (全 TIMESTAMPTZ → TIMESTAMP に変換)
+   - 完了後 Backend を再起動
 3. **Firebase Console での準備 (オペレーター作業、初回のみ):**
    - <https://console.firebase.google.com> でプロジェクト `akebono-honshu` (作成済) を選択
    - Authentication → Users → テストユーザ追加 (例: `owner@akebono.example` + 任意パスワード)
@@ -32,16 +35,19 @@
    ```sql
    UPDATE users SET firebase_uid = '<コピーしたUID>' WHERE login_id = 'owner';
    ```
-5. **Backend:** `cd src/Backend && dotnet restore` (Microsoft.AspNetCore.Authentication.JwtBearer 8.0.27 が追加)
-6. **Frontend:** `cd src/Frontend && pnpm install` (firebase 12.13.0 が追加)
+5. **Backend:** `cd src/Backend && dotnet restore` (`Microsoft.AspNetCore.Authentication.JwtBearer 8.0.27` が追加)
+6. **Frontend:** `cd src/Frontend && pnpm install` (`firebase 12.13.0` が追加) → `cp .env.example .env` (Firebase config を含む)
 7. 通常通り Backend (`dotnet run --project Presentation`) + Frontend (`pnpm dev`) を起動
 8. <http://localhost:3000> → メール + パスワードでログイン → ユーザ一覧表示
-9. 検証: `SELECT occurred_at, actor_user_id, action, result FROM audit_logs WHERE action LIKE 'Login.%' ORDER BY occurred_at DESC LIMIT 5;` で `Login.Success` (result=0) が記録される
+9. 検証: `SELECT occurred_at, actor_user_id, action, result FROM audit_logs WHERE action LIKE 'Login.%' OR action='Auth.UidUnboundProbe' ORDER BY occurred_at DESC LIMIT 5;` で `Login.Success` (result=0) が記録される
 
-> **Firebase config 設定:** Web app 用の `firebaseConfig` (apiKey 等) は公開情報のため `nuxt.config.ts:runtimeConfig.public.firebase` に既定値として埋込済。別 project に切替える場合は `NUXT_PUBLIC_FIREBASE_*` 環境変数で上書き可能。Backend は `appsettings.json:Firebase:ProjectId` (現状 `akebono-honshu`) のみ参照、本番は環境変数 `Firebase__ProjectId` で上書き。
+> **Firebase config 設定 (レビュー指摘 SA P0-1 反映):**
+> - **Backend:** `appsettings.json:Firebase:ProjectId` は `__OVERRIDE_ME__` プレースホルダー。dev は `appsettings.Development.json` で `akebono-honshu` に上書き済。本番は環境変数 `Firebase__ProjectId=akebono-honshu-prod` 等で上書きする (起動時に Program.cs が値を検証し、プレースホルダーのままなら throw)
+> - **Frontend:** `nuxt.config.ts:runtimeConfig.public.firebase` に default 値は持たない。dev は `.env.example` を `.env` にコピー、prod は CI/CD 環境で `NUXT_PUBLIC_FIREBASE_*` を本番値に注入する。未設定の場合 `plugins/firebase.client.ts` が起動時に throw
+>
 > **Service Account 鍵:** 段階 B では未使用。段階 C のシナリオ E (Custom Claims 同期) で使用予定のため、オペレーターのローカルに保管したまま (Git 管理外)。
 
-以下の §1〜§4 は Iter 0 当時のローカル開発手順を歴史的記録として残します。**Iter 4 段階 B 以降は §0 の手順を優先してください**。
+> **§0 の手順は実際の最新仕様です。以下の §1〜§7 は Iter 0 当時のローカル開発手順を歴史的記録として残しますが、認証関連 (`/auth/login`、`owner / localdev` 等) は削除済の旧仕様です。新規セットアップでは §0 の手順を優先し、§1〜§7 はインフラ準備 (PostgreSQL / docker / .NET / pnpm セットアップ等の非認証部分) のリファレンスとしてのみ参照してください。**
 
 ---
 
@@ -277,17 +283,11 @@ dotnet run --project Presentation
 
 #### 疎通確認
 ```powershell
-# ヘルスチェック
+# ヘルスチェック (Iter 4 段階 B 以降も同様)
 Invoke-RestMethod http://localhost:5000/health
-
-# ログイン API
-Invoke-RestMethod -Uri http://localhost:5000/api/v1/auth/login `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body '{"loginId":"owner","password":"localdev"}'
 ```
 
-期待結果: `token`, `userId`, `displayName` を含む JSON 応答。
+> **Iter 4 段階 B (2026-05-20) で `/auth/login` は削除されました。** 認証は Firebase JS SDK 経由 (`signInWithEmailAndPassword` → ID Token を `Authorization: Bearer` 送信) のみ。CLI で `/auth/sync` を直接叩く場合は Firebase REST API でメール+パスワードから ID Token を取得してから `Authorization: Bearer <idToken>` ヘッダ付きで POST する必要があり手間。**動作確認はブラウザ経由 (§0 step 8) で行ってください**。
 
 ### 2.4 ターミナル 3: Frontend (Nuxt 3)
 
@@ -305,8 +305,10 @@ pnpm dev
 
 ## 3. 動作確認シナリオ
 
+> **⚠️ Iter 4 段階 B (2026-05-20) でログイン方式が変更されています。** 以下の `owner / localdev` 記述は旧 Iter 0 ダミー認証時代の手順です。**新しい手順は §0 (Iter 4 段階 B 完了による変更点) を参照してください**。要点: メール (例: `owner@akebono.example`) + Firebase Console で設定したパスワードを使用。
+
 1. ブラウザで `http://localhost:3000` にアクセス → `/login` にリダイレクト
-2. ログイン ID: `owner`、パスワード: `localdev` (初期入力済) → 「ログイン」クリック
+2. メール + パスワードを入力 → 「ログイン」クリック (旧: `owner / localdev`)
 3. `/users` にリダイレクト、ユーザ一覧テーブルに 3 件 (owner / planner / sales) が表示
 4. 「ログアウト」ボタン → `/login` に戻る
 5. 監査ログ確認:
@@ -329,7 +331,7 @@ pnpm dev
 
 > **前提:** ステップ §2.1 + §2.2 で `db/init/01-schema.sql` 投入済の前提に加え、`db/init/02-masters.sql` を pgAdmin4 で実行して 17 マスタ + Seed データを投入する。
 
-1. ブラウザで `http://localhost:3000` → `owner` / `localdev` でログイン
+1. ブラウザで `http://localhost:3000` → メール (Firebase で `owner` 行に紐付け済アカウント) + パスワードでログイン (Iter 4 段階 B 以降、旧 `owner / localdev` 形式は廃止)
 2. 上部ナビ「マスタ管理」をクリック → `/masters` に 17 マスタのカードが表示される
 3. **ブランド (拡張なしマスタ)** カード → `/masters/brands` で 2 件 (akebono / プライベート)
    - 「+ 新規追加」→ コード `099`、名称 `テスト` → 保存 → 3 件に増える
@@ -415,8 +417,8 @@ pnpm dev
 |---|---|---|---|---|
 | GET | `/health` | ヘルスチェック | なし | – |
 | GET | `/swagger` | Swagger UI (API ドキュメント + 動作確認画面) | なし | – |
-| POST | `/api/v1/auth/login` | ダミー認証ログイン | なし | – |
-| GET | `/api/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer | – |
+| POST | `/api/v1/auth/sync` | Firebase Auth ログイン直後の業務情報同期 (Iter 4 段階 B、`/auth/login` から置換) | Bearer (Firebase ID Token) | – |
+| GET | `/api/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer (Firebase ID Token) | – |
 | GET | `/api/v1/users` | ユーザ一覧 | Bearer | – |
 | GET | `/api/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
 | POST/PATCH/DELETE | `/api/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
@@ -474,11 +476,11 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 │   │   ├── Akebono.sln
 │   │   ├── Domain/             エンティティ
 │   │   ├── Application/        ビジネスロジック + 抽象
-│   │   ├── Infrastructure/     EF Core + ダミー認証 + 監査
+│   │   ├── Infrastructure/     EF Core + 監査 (Iter 4 段階 B で認証は Presentation/Program.cs の JwtBearer に移行)
 │   │   └── Presentation/       Minimal API エンドポイント
 │   └── Frontend/       Nuxt 3 + Reka UI + Tailwind CSS
 │       ├── pages/              ルーティング (login, users)
-│       ├── composables/        useAuth (ダミー認証) / useApi
+│       ├── composables/        useAuth (Firebase Auth、Iter 4 段階 B) / useApi (getIdToken Bearer)
 │       └── middleware/         認証ガード
 ├── RUNBOOK.md (本ファイル)
 └── CLAUDE.md           Claude Code 環境固有の実装ルール
@@ -499,7 +501,7 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 | Frontend で `Failed to fetch http://localhost:5000` | Backend が起動していない / CORS 不整合 / Connection String が DB に届いていない (`appsettings.Development.json` で上書き確認) |
 | `audit_logs` が記録されない | Backend が DB に接続できていない。`appsettings.json` または `appsettings.Development.json` の `ConnectionStrings:Postgres` を確認、pgAdmin4 で対象ロールが該当 DB へのアクセス権限を持つか確認 |
 | `pnpm install` で `EACCES` | Node のパーミッション問題。Volta or nvm 経由で Node を入れ直す |
-| ログイン失敗 (Invalid credentials) | パスワードは固定 `localdev`、ログイン ID は `owner` / `planner` / `sales` のいずれか |
+| ログイン失敗 (Iter 4 段階 B 以降) | Firebase Console のテストユーザ Email + パスワードを使う。`users.firebase_uid` が紐付け済か確認 (`SELECT firebase_uid FROM users WHERE login_id='owner'`)。未紐付けは 403 で `Auth.UidUnboundProbe` が audit_logs に記録される |
 | `pnpm dev` でポート 3000 衝突 | 別アプリ使用中、`pnpm dev --port 3001` で代替 (`.env` の NUXT_PUBLIC_API_BASE は変更不要) |
 
 ---
@@ -508,7 +510,7 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 
 **実装済み (Iteration 0):**
 - PostgreSQL ローカル起動 + 初期スキーマ + Seed (選択肢 A pgAdmin4 / 選択肢 B docker)
-- .NET 8 Backend (4 層) + EF Core 8 + ダミー認証 + audit_logs 記録
+- .NET 8 Backend (4 層) + EF Core 8 + Firebase Auth (JwtBearer + JWKS、Iter 4 段階 B) + audit_logs 記録
 - Nuxt 3 Frontend + ログイン画面 + ユーザ一覧画面 + 認証 middleware
 
 **Iteration 0 で得た知見 (Iteration 1 以降に適用):**

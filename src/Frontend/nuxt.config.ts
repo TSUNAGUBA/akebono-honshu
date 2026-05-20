@@ -14,14 +14,17 @@ export default defineNuxtConfig({
     public: {
       apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:5000/api/v1',
       // Firebase Web SDK 用 config (公開情報、Backend は Project ID のみ参照)。
-      // 本番は環境変数 NUXT_PUBLIC_FIREBASE_* で上書き、dev は Firebase Console から取得した値を直書き。
+      // dev/prod で必ず異なる project を使い分けるため default 値は持たない:
+      // - dev: .env (リポジトリ外、`.env.example` をコピー) から注入
+      // - prod: ビルド時に NUXT_PUBLIC_FIREBASE_* 環境変数で注入
+      // 未定義の場合 plugins/firebase.client.ts が起動時に throw する。
       firebase: {
-        apiKey: process.env.NUXT_PUBLIC_FIREBASE_API_KEY || 'AIzaSyAdhBwA3IXlarKVNiVk-4JOymalID3067M',
-        authDomain: process.env.NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'akebono-honshu.firebaseapp.com',
-        projectId: process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID || 'akebono-honshu',
-        storageBucket: process.env.NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'akebono-honshu.firebasestorage.app',
-        messagingSenderId: process.env.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '455760580161',
-        appId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID || '1:455760580161:web:90b175589dd87b82e0c0c0',
+        apiKey: process.env.NUXT_PUBLIC_FIREBASE_API_KEY || '',
+        authDomain: process.env.NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '',
+        projectId: process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID || '',
+        storageBucket: process.env.NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET || '',
+        messagingSenderId: process.env.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '',
+        appId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID || '',
       },
     },
   },

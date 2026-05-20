@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Domain.Entities;
@@ -14,17 +15,26 @@ public static class AuthEndpoints
     /// </summary>
     public const string AkebonoUserIdClaim = "akebono_user_id";
 
+    /// <summary>
+    /// Firebase ID Token の ClaimsPrincipal から Firebase UID を取得する。
+    /// Firebase は `user_id` claim を発行するが、ASP.NET Core の JwtBearer ハンドラが
+    /// 一部の claim を `ClaimTypes.NameIdentifier` にマップするケースに備え両方を試す。
+    /// </summary>
+    internal static string? GetFirebaseUid(ClaimsPrincipal? principal)
+        => principal?.FindFirst("user_id")?.Value
+           ?? principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/v1/auth");
 
-        // フロントが Firebase Auth ログイン直後に呼ぶ。ClaimsPrincipal から Firebase UID
-        // (Claim "user_id") を取り出し、users.firebase_uid 引当 + 業務情報返却 + audit log。
-        // 未紐付け UID は 403 を返し「Firebase は通ったが業務ユーザが紐付いていない」を区別。
+        // フロントが Firebase Auth ログイン直後に呼ぶ。ClaimsPrincipal から Firebase UID を取得し、
+        // users.firebase_uid 引当 + 業務情報返却 + audit log。
+        // 未紐付け UID は 403、inactive ユーザは 403 + Login.Failure 監査記録を返し
+        // 「Firebase は通ったが業務ユーザが利用不可」を区別する。
         group.MapPost("/sync", [Authorize] async (HttpContext http, AuthService svc, CancellationToken ct) =>
         {
-            var firebaseUid = http.User.FindFirst("user_id")?.Value
-                ?? http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var firebaseUid = GetFirebaseUid(http.User);
             if (string.IsNullOrEmpty(firebaseUid))
                 return Results.Problem(statusCode: 401, title: "Unauthorized",
                     detail: "Firebase UID claim missing");
@@ -32,7 +42,7 @@ public static class AuthEndpoints
             var result = await svc.SyncAsync(firebaseUid, ct);
             return result is null
                 ? Results.Problem(statusCode: 403, title: "Forbidden",
-                    detail: "Firebase ユーザは認証済ですが、業務ユーザに紐付いていません。管理者にお問合せください")
+                    detail: "Firebase ユーザは認証済ですが、業務ユーザに紐付いていないか無効化されています。管理者にお問合せください")
                 : Results.Ok(result);
         });
 
