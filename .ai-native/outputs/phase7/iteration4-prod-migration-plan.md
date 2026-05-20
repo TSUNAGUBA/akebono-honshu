@@ -213,7 +213,8 @@ flowchart LR
 | **オペレーター** | 本番 Service Account 鍵を生成して Secrets Manager (`akebono/prod/firebase-sa-key`) に投入 |
 | **オペレーター** | App Runner 環境変数 `Firebase__ProjectId=akebono-honshu-prod` を設定 (`__OVERRIDE_ME__` から上書き) |
 | **オペレーター** | Firebase Hosting / Github Actions の build 環境で `NUXT_PUBLIC_FIREBASE_*` 環境変数を本番値に設定 (.env はリポジトリ外なので CI/CD 側で注入) |
-| **オペレーター** | 本番 RDS の `users.firebase_uid` を **本番** project の UID で再紐付け (`UPDATE users SET firebase_uid='<prod-uid>' WHERE login_id='owner';`)。dev の UID は無効化される |
+| **オペレーター** | 本番 RDS の `users.firebase_uid` を **本番** project の UID で再紐付け (`UPDATE users SET firebase_uid='<prod-uid>' WHERE login_id='owner';`)。dev で発行された UID は別 project のため本番では認証されなくなる |
+| **オペレーター** | UID 再紐付け直後は App Runner の `IMemoryCache` flush のため、全インスタンスを再起動 (or 1 instance に絞って起動) する。さもないと最大 60s は dev UID キャッシュが残る |
 | **オペレーター** | Firebase Console → Authentication → Settings → **Authorized domains** に本番 Frontend ドメイン (`*.web.app` / 独自ドメイン) を追加、dev domain を除外 |
 | **Claude** | デプロイ前検証: 起動ログで `Firebase:ProjectId` が `akebono-honshu-prod` であることを確認 (もし dev のまま起動したら Program.cs の throw で落ちる設計) |
 

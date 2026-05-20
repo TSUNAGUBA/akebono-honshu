@@ -310,6 +310,7 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 
 > **実装ステータス (2026-05-20 時点):** 段階 B では未実装。RBAC は OnTokenValidated で users.firebase_uid 引当 → 各 endpoint の `CheckMasterEditAsync` / `CheckOrderEditAsync` で RDS の権限カラム (`product_ledger_permission` 等) を毎リクエスト評価する RDS 直読方式。Custom Claims 同期 + Reconciler バッチは段階 C (本番デプロイ + シナリオ E + R-11 緩和) で実装予定。
 > **Reconciler のタイムゾーン:** Iter 4 段階 B で DB を TIMESTAMP (JST naive) に統一したため、Reconciler バッチも `Akebono.Domain.Common.SystemTime.Now` を基準に running window 判定する (コンテナ標準 TZ=UTC との混在事故を防ぐ)。
+> **IMemoryCache の段階 C スケーリング:** 段階 B では OnTokenValidated 内で 60s `IMemoryCache` を使い RDS への UID lookup を抑制している。段階 C で App Runner を 2 instance 以上に水平拡張すると **プロセスローカル cache のためインスタンス間で最大 60s 不整合** が発生 (firebase_uid 紐付け変更/論理削除がインスタンス毎に伝播)。許容範囲なら維持、許容しなければ ElastiCache (Redis) 等で共有 cache に置換する判断を段階 C 着手前に行う。dev → prod 切替 (§4.2.2bis) の初回 UID 再紐付け直後は **App Runner を 1 instance に絞るか全 instance を再起動** して cache を flush するのが安全。
 
 ```
 [1] Admin User: /users/{uid}/permissions で権限ロール変更

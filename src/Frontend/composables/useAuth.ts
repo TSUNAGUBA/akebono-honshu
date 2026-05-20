@@ -113,8 +113,14 @@ export const useAuth = () => {
 
   const logout = async (): Promise<void> => {
     const { $firebaseAuth } = useNuxtApp()
-    await signOut($firebaseAuth as Auth)
-    auth.value = null
+    // signOut が失敗しても UI の認証済状態を残さないため auth.value=null は finally で保証
+    // (watchAuthState の対応と整合、レビュー 2 周目 P2 CR)
+    try {
+      await signOut($firebaseAuth as Auth)
+    }
+    finally {
+      auth.value = null
+    }
   }
 
   const canEditMaster = computed(() => (auth.value?.productLedgerPermission ?? 0) >= 1)

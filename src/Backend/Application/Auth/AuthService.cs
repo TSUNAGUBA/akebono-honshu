@@ -27,6 +27,8 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit)
 
         if (!user.IsActive)
         {
+            // 通常は OnTokenValidated の引当条件 (`!IsDeleted && IsActive`) で弾かれて到達しないが、
+            // OnTokenValidated 例外時の Claim 未付与経路で /auth/sync が叩かれた場合の防御深層化として残置。
             await audit.LogAsync(user.Id, "Login.Failure",
                 note: $"User is inactive: {user.LoginId}",
                 success: false, cancellationToken: ct);

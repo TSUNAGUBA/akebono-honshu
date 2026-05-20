@@ -41,14 +41,22 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
     // downloadExcel) で filename 抽出に使用 (Iter 3 O-06)。
     .WithExposedHeaders("Content-Disposition")));
 
-// Firebase Auth + JwtBearer 認証 (Iter 4 段階 B、レビュー指摘反映後)
+// Firebase Auth + JwtBearer 認証 (Iter 4 段階 B、2 周目レビュー反映)
 // - Firebase ID Token を JWKS で検証 (issuer/audience = projectId、ValidateIssuerSigningKey 明示)
 // - OnTokenValidated で users.firebase_uid → users.id を引当て (60s IMemoryCache)、
 //   ClaimsPrincipal に akebono_user_id を追加 (各 Endpoint は HttpContext.User から読むだけ)
-// - 引当時は !IsDeleted のみで判定 (IsActive は SyncAsync / CheckXxx 各 endpoint で個別判定し、
-//   inactive ユーザにも Login.Failure を残せる経路を確保)
+// - 引当条件: `!IsDeleted && IsActive`。inactive/deleted ユーザは Claim 未付与 → 各 endpoint で 401。
+//   (1 周目で `!IsDeleted` のみに緩めたが、読込系 endpoint で IsActive 未検証になる regression が
+//    2 周目で発覚し元に戻した。SyncAsync の inactive Login.Failure 経路は通常到達しないが
+//    防御深層化のため残置)
 // - DB 障害時は warn ログ + Claim 未付与で続行 (CLAUDE.md 原則 4 非ブロッキング)
-// - users 未紐付け UID は Auth.UidUnboundProbe で監査記録 (攻撃者の偵察検知用)
+// - users 未紐付け UID は Auth.UidUnboundProbe で監査記録、ただし
+//   (a) /auth/sync は SyncAsync の Login.Failure が拾うため重複回避でスキップ
+//   (b) per-UID 5 分 TTL の de-dup cache で audit_logs DoS 増幅を防止
+// - cache 注意: user 編集 API (段階 C 着手後 P-12) で firebase_uid 変更 / 論理削除した際は
+//   cache.Remove($"fb_uid:{uid}") を呼んで 60s 遅延を回避すること
+// - multi-instance 注意: 段階 C で App Runner を 2 instance 以上に水平拡張する場合
+//   IMemoryCache はプロセスローカルなため一時的な不整合発生。架構判断は architecture.md §4.5 参照
 var firebaseProjectId = builder.Configuration["Firebase:ProjectId"];
 if (string.IsNullOrEmpty(firebaseProjectId) || firebaseProjectId == "__OVERRIDE_ME__")
 {
@@ -83,21 +91,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 var sp = ctx.HttpContext.RequestServices;
                 var logger = sp.GetRequiredService<ILoggerFactory>()
                     .CreateLogger("JwtBearer.OnTokenValidated");
+                var cache = sp.GetRequiredService<IMemoryCache>();
 
                 long? actorId;
                 try
                 {
-                    var cache = sp.GetRequiredService<IMemoryCache>();
                     actorId = await cache.GetOrCreateAsync(
                         $"fb_uid:{firebaseUid}",
                         async entry =>
                         {
                             // 60s キャッシュ: firebase_uid UNIQUE index 前提で安全。
-                            // ユーザ無効化・削除の反映は最大 60s 遅延 (各 endpoint で IsActive を別途検証するため実害なし)。
+                            // ユーザ無効化・soft-delete の反映は最大 60s 遅延 (段階 C で
+                            // 編集 API 追加時に cache.Remove を呼ぶ仕組みを入れる前提)。
                             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
                             var db = sp.GetRequiredService<IAkebonoDbContext>();
                             return await db.Users
-                                .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted)
+                                .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted && u.IsActive)
                                 .Select(u => (long?)u.Id)
                                 .FirstOrDefaultAsync(ctx.HttpContext.RequestAborted);
                         });
@@ -113,19 +122,36 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
                 if (actorId is null)
                 {
-                    // Firebase 認証は通過したが users.firebase_uid に紐付け無し。
-                    // 攻撃者の偵察検知のため監査記録 (非ブロッキング、CLAUDE.md 原則 4)。
-                    try
+                    // Firebase 認証は通過したが users 引当不可 (未紐付け or inactive or deleted)。
+                    // 攻撃者の偵察検知のため監査記録するが、以下の条件で抑制:
+                    // (a) /auth/sync は SyncAsync の Login.Failure が拾うため二重記録回避
+                    // (b) per-UID 5 分 TTL の de-dup cache で同一 UID の連続記録 (DoS 増幅) を防止
+                    var path = ctx.HttpContext.Request.Path.Value ?? string.Empty;
+                    var isSyncEndpoint = path.EndsWith("/auth/sync", StringComparison.Ordinal);
+                    if (!isSyncEndpoint)
                     {
-                        var audit = sp.GetRequiredService<IAuditLogger>();
-                        await audit.LogAsync(null, "Auth.UidUnboundProbe",
-                            note: $"uid={firebaseUid}, path={ctx.HttpContext.Request.Path}",
-                            success: false,
-                            cancellationToken: ctx.HttpContext.RequestAborted);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "Auth.UidUnboundProbe audit 記録失敗");
+                        var probeKey = $"uid_probe_logged:{firebaseUid}";
+                        if (!cache.TryGetValue(probeKey, out _))
+                        {
+                            cache.Set(probeKey, true, TimeSpan.FromMinutes(5));
+                            try
+                            {
+                                var audit = sp.GetRequiredService<IAuditLogger>();
+                                // UID は擬似識別子だが個人特定回避のため先頭 8 文字に短縮、
+                                // path はクエリストリングを除外して記録 (SEC 観点)。
+                                var uidShort = firebaseUid.Length > 8
+                                    ? firebaseUid.Substring(0, 8) + "..."
+                                    : firebaseUid;
+                                await audit.LogAsync(null, "Auth.UidUnboundProbe",
+                                    note: $"uid={uidShort}, method={ctx.HttpContext.Request.Method}, path={path}",
+                                    success: false,
+                                    cancellationToken: ctx.HttpContext.RequestAborted);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogWarning(ex, "Auth.UidUnboundProbe audit 記録失敗");
+                            }
+                        }
                     }
                     return;
                 }
