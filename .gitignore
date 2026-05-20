@@ -36,3 +36,7 @@ dist/
 # Misc
 *.tmp
 *.bak
+
+# Iteration 2: 商品画像ローカル保存 (Iter 4 で S3 移行時に廃止)
+src/Backend/Presentation/wwwroot/uploads/product-images/*
+!src/Backend/Presentation/wwwroot/uploads/product-images/.gitkeep

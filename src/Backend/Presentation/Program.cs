@@ -50,7 +50,16 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// wwwroot/uploads/product-images/ ディレクトリを起動時に確保 (Iteration 2 ローカルファイル保存)
+// Iteration 4 で S3 + Pre-signed URL に置換予定
+var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+var uploadDir = Path.Combine(webRoot, "uploads", "product-images");
+Directory.CreateDirectory(uploadDir);
+
 app.UseCors();
+
+// 商品画像のローカル配信 (Iteration 2)
+app.UseStaticFiles();
 
 app.UseSwagger();
 app.UseSwaggerUI(options =>
@@ -64,5 +73,6 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapAuthEndpoints();
 app.MapUserEndpoints();
 app.MapMasterEndpoints();
+app.MapProductEndpoints();
 
 app.Run();
