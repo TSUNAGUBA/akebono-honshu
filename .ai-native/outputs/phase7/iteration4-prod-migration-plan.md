@@ -9,12 +9,12 @@
 
 ## 0. 段階分割の全体像
 
-| 段階 | 目的 | 期間目安 | 完了基準 |
-|---|---|---|---|
-| **段階 A** | ローカル Backend を既存 / 新規 AWS RDS に接続 | 1-2 日 | ローカル `dotnet run` で AWS RDS のデータを読み書きできる |
-| **段階 B** | ダミー認証を Firebase Auth に置換 | 3-5 日 | ローカル環境で Firebase ID Token を使ってログインできる |
-| **段階 C** | Backend / Frontend を AWS / Firebase Hosting にデプロイ | 5-7 日 | ブラウザから本番 URL にアクセスし、ログイン → 商品一覧表示まで疎通 |
-| **段階 D** | GitHub Actions で自動デプロイ | 2-3 日 | main push で本番反映 |
+| 段階 | 目的 | 期間目安 | 完了基準 | 状態 |
+|---|---|---|---|---|
+| **段階 A** | ローカル Backend を既存 / 新規 AWS RDS に接続 | 1-2 日 | ローカル `dotnet run` で AWS RDS のデータを読み書きできる | ✅ 完了 2026-05-20 |
+| **段階 B** | ダミー認証を Firebase Auth に置換 | 3-5 日 | ローカル環境で Firebase ID Token を使ってログインできる | ✅ 完了 2026-05-20 |
+| **段階 C** | Backend / Frontend を AWS / Firebase Hosting にデプロイ | 5-7 日 | ブラウザから本番 URL にアクセスし、ログイン → 商品一覧表示まで疎通 | 未着手 |
+| **段階 D** | GitHub Actions で自動デプロイ | 2-3 日 | main push で本番反映 | 未着手 |
 
 各段階は **前段が完了してから次に進む** こと。前段が動かないまま次に進むと切り分けが困難になる。
 
@@ -27,7 +27,8 @@ flowchart LR
     D --> P[本番運用]
 
     style L fill:#e0e0e0
-    style A fill:#fff3cd
+    style A fill:#c3e6cb
+    style B fill:#c3e6cb
     style B fill:#fff3cd
     style C fill:#fff3cd
     style D fill:#fff3cd
@@ -121,7 +122,14 @@ flowchart LR
 
 ---
 
-## 3. 段階 B: ダミー認証 → Firebase Auth 切替 (3-5 日)
+## 3. 段階 B: ダミー認証 → Firebase Auth 切替 (3-5 日) ✅ 完了 2026-05-20
+
+> **完了サマリ (2026-05-20):**
+> - Firebase project `akebono-honshu` (dev 兼用) を作成、Email/Password 認証有効化、テストユーザ `owner@akebono.example` 作成済
+> - Backend: `ITokenService` / `DummyTokenService` を完全削除、`Microsoft.AspNetCore.Authentication.JwtBearer 8.0.27` + JWKS 検証に置換、`POST /api/v1/auth/sync` 新設 (commit `1197acb`)
+> - Frontend: `firebase@^12.13.0` 導入、`plugins/firebase.client.ts` + `useAuth.ts` を `signInWithEmailAndPassword` ベースに刷新 (commit `1197acb`)
+> - 追加変更: timestamp カラムを TIMESTAMP (without time zone) で JST naive 保存に統一、`SystemTime.Now` ヘルパー導入 (commit `b7706bc`、オペレーター要望に基づく)
+> - Service Account 鍵は段階 C (シナリオ E `setCustomUserClaims` / Reconciler バッチ) で使用予定、現状は未使用
 
 ### 3.1 ゴール
 
@@ -161,10 +169,10 @@ flowchart LR
 
 ### 3.5 ヒアリング `__TODO__` リスト
 
-- [ ] Firebase project ID (dev / prod 2 つ)
-- [ ] Web app config の `apiKey` / `authDomain` / `projectId`
-- [ ] Service Account 鍵 (JSON、秘密)
-- [ ] テストユーザの Email / 仮パスワード / 想定権限 (`product_ledger_permission` 等の値)
+- [x] Firebase project ID (dev / prod 2 つ) → dev 兼用 `akebono-honshu` を採用、prod は段階 C で別途作成
+- [x] Web app config の `apiKey` / `authDomain` / `projectId` → `nuxt.config.ts:runtimeConfig.public.firebase` に既定値として埋込み、本番は `NUXT_PUBLIC_FIREBASE_*` で上書き
+- [x] Service Account 鍵 (JSON、秘密) → オペレーターがリポジトリ外に保管。段階 C 以降で使用
+- [x] テストユーザの Email / 仮パスワード / 想定権限 → `owner@akebono.example` (owner 行 = 全 4 権限) を Firebase UID 紐付け済
 
 ---
 

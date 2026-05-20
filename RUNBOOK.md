@@ -1,8 +1,47 @@
-# RUNBOOK: ローカル開発手順 (Phase 7 Iteration 0)
+# RUNBOOK: ローカル開発手順 (Phase 7 Iteration 0 ベース + Iter 4 段階 A/B 反映)
 
-> **対象:** akebono アパレル生産管理システム MVP の **Iteration 0 (ローカル開発環境)**。AWS インフラ・Firebase 本番認証は Iteration 4 Hardening で構築、Iteration 0-3 は本手順でローカル動作確認します。
+> **対象:** akebono アパレル生産管理システム MVP の **ローカル開発環境**。
+> Iter 4 段階 A (AWS RDS 接続、2026-05-20 完了) と 段階 B (Firebase Auth 切替、2026-05-20 完了) を反映済。
+> 段階 C (本番 App Runner + Firebase Hosting デプロイ) は別文書。
 >
-> **ゴール:** PostgreSQL + .NET Backend + Nuxt Frontend をローカルで起動し、ログイン → ユーザ一覧表示まで疎通
+> **ゴール:** PostgreSQL + .NET Backend + Nuxt Frontend をローカルで起動し、Firebase Auth でログイン → ユーザ一覧表示まで疎通
+
+---
+
+## 0. Iter 4 段階 B 完了 (2026-05-20) による変更点
+
+| 項目 | 旧 (Iter 0 ダミー) | 新 (Iter 4 段階 B) |
+|---|---|---|
+| 認証方式 | `POST /api/v1/auth/login` に loginId/password → 独自 HMAC JWT | Firebase Auth (Email/Password) でログイン → ID Token を `Authorization: Bearer` 送信 |
+| 同期 endpoint | – | `POST /api/v1/auth/sync` (Firebase UID → users.firebase_uid 引当 + 業務情報返却 + audit log) |
+| ログイン UI | `owner` / `localdev` の固定フォーム | メール (Firebase) + パスワード |
+| Backend ミドルウェア | なし (`ITokenService.TryValidate`) | `AddJwtBearer` + JWKS 検証 + `OnTokenValidated` で `users.firebase_uid` → `ClaimsPrincipal.akebono_user_id` 解決 |
+| Backend secret | `DummyAuth:Secret` (削除済) | `Firebase:ProjectId=akebono-honshu` (appsettings.json) |
+| Frontend SDK | localStorage `akebono-auth` | `firebase@^12.13.0` の `signInWithEmailAndPassword` + `onAuthStateChanged` |
+| timestamp | TIMESTAMPTZ (UTC + JST 表示) | TIMESTAMP (without time zone)、JST naive 統一 + `SystemTime.Now` |
+
+**既存ローカル環境を Iter 4 段階 B に追従する手順:**
+
+1. `git pull` でブランチ最新化
+2. **DB 移行 (既存 DB のみ):** pgAdmin4 で `db/migration/iter4-tz-to-jst-naive.sql` を実行 (全 TIMESTAMPTZ → TIMESTAMP に変換)
+3. **Firebase Console での準備 (オペレーター作業、初回のみ):**
+   - <https://console.firebase.google.com> でプロジェクト `akebono-honshu` (作成済) を選択
+   - Authentication → Users → テストユーザ追加 (例: `owner@akebono.example` + 任意パスワード)
+   - 追加されたユーザの UID 列をコピー
+4. **RDS に Firebase UID を紐付け:**
+   ```sql
+   UPDATE users SET firebase_uid = '<コピーしたUID>' WHERE login_id = 'owner';
+   ```
+5. **Backend:** `cd src/Backend && dotnet restore` (Microsoft.AspNetCore.Authentication.JwtBearer 8.0.27 が追加)
+6. **Frontend:** `cd src/Frontend && pnpm install` (firebase 12.13.0 が追加)
+7. 通常通り Backend (`dotnet run --project Presentation`) + Frontend (`pnpm dev`) を起動
+8. <http://localhost:3000> → メール + パスワードでログイン → ユーザ一覧表示
+9. 検証: `SELECT occurred_at, actor_user_id, action, result FROM audit_logs WHERE action LIKE 'Login.%' ORDER BY occurred_at DESC LIMIT 5;` で `Login.Success` (result=0) が記録される
+
+> **Firebase config 設定:** Web app 用の `firebaseConfig` (apiKey 等) は公開情報のため `nuxt.config.ts:runtimeConfig.public.firebase` に既定値として埋込済。別 project に切替える場合は `NUXT_PUBLIC_FIREBASE_*` 環境変数で上書き可能。Backend は `appsettings.json:Firebase:ProjectId` (現状 `akebono-honshu`) のみ参照、本番は環境変数 `Firebase__ProjectId` で上書き。
+> **Service Account 鍵:** 段階 B では未使用。段階 C のシナリオ E (Custom Claims 同期) で使用予定のため、オペレーターのローカルに保管したまま (Git 管理外)。
+
+以下の §1〜§4 は Iter 0 当時のローカル開発手順を歴史的記録として残します。**Iter 4 段階 B 以降は §0 の手順を優先してください**。
 
 ---
 
@@ -482,14 +521,17 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 
 | 項目 | 着手 Iteration | 備考 |
 |---|---|---|
-| マスタ 17 種 CRUD | Iteration 1 | 共通テンプレート `MasterController<TEntity, TDto>` |
-| 商品マスタ (P-01〜06) | Iteration 2 | 11 桁 SKU + サイズ展開 + 画像 |
-| 発注書 (O-01〜07) | Iteration 3 | Excel 出力含む MVP のクリティカルパス |
-| Firebase 本番認証 | Iteration 4 | `ITokenService` 実装差替 |
-| AWS インフラ + CI/CD | Iteration 4 | App Runner / RDS / S3 / Terraform / GitHub Actions |
-| EF Core マイグレーション | Iteration 1 | 現在は `db/init/01-schema.sql` を投入 |
-| TLS / セキュリティ強化 | Iteration 4 | KMS / IAM 最小権限 / audit_logs 改竄防止 |
-| User Secrets / Connection String 整理 | Iteration 1 | `appsettings.Development.json` から `dotnet user-secrets` に移行 |
+| マスタ 17 種 CRUD | ✅ Iteration 1 完了 | 共通テンプレート `MasterService<TEntity>` |
+| 商品マスタ (P-01〜06) | ✅ Iteration 2 完了 | 11 桁 SKU + サイズ展開 + 画像 |
+| 発注書 (O-01〜07) | ✅ Iteration 3 完了 | Excel 出力含む MVP のクリティカルパス |
+| Firebase 本番認証 | ✅ Iteration 4 段階 B 完了 (2026-05-20) | JwtBearer + JWKS 検証、`POST /auth/sync` で users.firebase_uid 引当 |
+| AWS RDS 接続 | ✅ Iteration 4 段階 A 完了 (2026-05-20) | dotnet user-secrets で接続文字列管理 |
+| AWS App Runner + Firebase Hosting + S3 | Iteration 4 段階 C | 本番デプロイ (Dockerfile / ECR / Secrets Manager) |
+| CI/CD (GitHub Actions) | Iteration 4 段階 D | main push で自動デプロイ |
+| EF Core マイグレーション | Iteration 1 | 現在は `db/init/01-schema.sql` + `db/migration/*.sql` を投入 |
+| TLS / セキュリティ強化 | Iteration 4 段階 C | KMS / IAM 最小権限 / audit_logs 改竄防止 |
+| User Secrets / Connection String 整理 | ✅ Iteration 4 段階 A 完了 | `dotnet user-secrets` 運用に移行済 |
+| Firebase Custom Claims 同期 (シナリオ E) | Iteration 4 段階 C | 権限変更時の RDS → Firebase 後追い同期 + Reconciler バッチ |
 
 詳細は `.ai-native/outputs/phase7/iteration-plan.md` を参照。
 
