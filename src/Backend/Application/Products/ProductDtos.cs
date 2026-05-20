@@ -47,6 +47,12 @@ public record CompleteFamilyResponse(
 public record FamilyListItem(
     long Id,
     string Sku9Digit,
+    /// <summary>品番 7 桁 (planned_year + type + season + sequence_no + factory)。新規企画品の業務キー。</summary>
+    string ItemNumber,
+    /// <summary>他品番 6 桁 (品番から工場 CD を除いた、商品ファミリーの識別子)。</summary>
+    string ItemFamilyNumber,
+    /// <summary>既存システム由来の品番 (例: FA2071F)。新規企画品では null。</summary>
+    string? LegacyId,
     string ProductName1,
     string? ProductName2,
     string BrandName,
@@ -77,6 +83,12 @@ public record FamilyFullInfo(
     long Id,
     char PlannedYearCode,
     string SequenceNo,
+    /// <summary>品番 7 桁 (planned_year + type + season + sequence_no + factory)。新規企画品の業務キー。</summary>
+    string ItemNumber,
+    /// <summary>他品番 6 桁 (品番から工場 CD を除いた、商品ファミリーの識別子)。</summary>
+    string ItemFamilyNumber,
+    /// <summary>既存システム由来の品番 (例: FA2071F)。新規企画品では null。</summary>
+    string? LegacyId,
     long ProductTypeId,
     string ProductTypeName,
     long ProductSeasonId,

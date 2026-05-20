@@ -175,22 +175,43 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         await audit.LogAsync(actorUserId, "ProductFamily.List",
             entityType: "ProductFamily", note: $"count={items.Count}", cancellationToken: ct);
 
-        return items.Select(x => new FamilyListItem(
-            x.Family.Id,
-            $"{x.Family.PlannedYearCode}{x.Family.ProductType?.ItemConversionCode ?? "?"}{x.Family.ProductSeason?.ItemConversionCode ?? "?"}{x.Family.SequenceNo}{x.Family.FactorySupplier?.ItemConversionCode ?? "?"}",
-            x.Family.ProductName1,
-            x.Family.ProductName2,
-            x.Family.Brand?.Name ?? "?",
-            x.Family.ProductType?.Name ?? "?",
-            x.Family.ProductSeason?.Name ?? "?",
-            x.Family.FactorySupplier?.Name ?? "?",
-            x.Family.Status,
-            x.SkuCount,
-            x.ImageCount,
-            x.PrimaryImageS3Key,
-            x.MinPrice, x.MaxPrice, x.Currency,
-            x.Family.UpdatedAt
-        )).ToList();
+        return items.Select(x =>
+        {
+            var (itemNumber, itemFamilyNumber, sku9Digit) = BuildItemNumbers(x.Family);
+            return new FamilyListItem(
+                x.Family.Id,
+                sku9Digit,
+                itemNumber,
+                itemFamilyNumber,
+                x.Family.LegacyId,
+                x.Family.ProductName1,
+                x.Family.ProductName2,
+                x.Family.Brand?.Name ?? "?",
+                x.Family.ProductType?.Name ?? "?",
+                x.Family.ProductSeason?.Name ?? "?",
+                x.Family.FactorySupplier?.Name ?? "?",
+                x.Family.Status,
+                x.SkuCount,
+                x.ImageCount,
+                x.PrimaryImageS3Key,
+                x.MinPrice, x.MaxPrice, x.Currency,
+                x.Family.UpdatedAt);
+        }).ToList();
+    }
+
+    /// <summary>
+    /// 品番 7 桁・他品番 6 桁・互換用 9 桁文字列を組み立てる。
+    /// 構成: planned_year(1) + type(1) + season(1) + sequence_no(3) + factory(1) = 7 桁、
+    /// 他品番は工場 CD を除いた前 6 桁。互換目的で旧名 sku9Digit (= 品番 7 桁と同値) も返す。
+    /// </summary>
+    private static (string ItemNumber, string ItemFamilyNumber, string Sku9Digit) BuildItemNumbers(ProductFamily family)
+    {
+        var typeCode = family.ProductType?.ItemConversionCode ?? "?";
+        var seasonCode = family.ProductSeason?.ItemConversionCode ?? "?";
+        var factoryCode = family.FactorySupplier?.ItemConversionCode ?? "?";
+        var familyNumber = $"{family.PlannedYearCode}{typeCode}{seasonCode}{family.SequenceNo}";
+        var itemNumber = $"{familyNumber}{factoryCode}";
+        return (itemNumber, familyNumber, itemNumber);
     }
 
     /// <summary>商品企画詳細 (P-05)。1 リクエストで family + products + images + 現在有効単価を返却。</summary>
@@ -229,9 +250,12 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         await audit.LogAsync(actorUserId, "ProductFamily.View",
             entityType: "ProductFamily", entityId: familyId, cancellationToken: ct);
 
+        var (itemNumber, itemFamilyNumber, _) = BuildItemNumbers(family);
+
         return new FamilyDetail(
             new FamilyFullInfo(
                 family.Id, family.PlannedYearCode, family.SequenceNo,
+                itemNumber, itemFamilyNumber, family.LegacyId,
                 family.ProductTypeId, family.ProductType?.Name ?? "?",
                 family.ProductSeasonId, family.ProductSeason?.Name ?? "?",
                 family.FactorySupplierId, family.FactorySupplier?.Name ?? "?",

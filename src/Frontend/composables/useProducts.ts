@@ -5,7 +5,14 @@
 
 export interface FamilyListItem {
   id: number
+  /** @deprecated 命名ミス。実体は 7 桁の品番。`itemNumber` を使用すること。 */
   sku9Digit: string
+  /** 品番 7 桁 (例: NA1001A) — 新規企画品の業務キー */
+  itemNumber: string
+  /** 他品番 6 桁 (例: NA1001) — 商品ファミリーの識別子 */
+  itemFamilyNumber: string
+  /** 既存システム由来の品番 (例: FA2071F)。新規企画品では null */
+  legacyId: string | null
   productName1: string
   productName2: string | null
   brandName: string
@@ -61,6 +68,12 @@ export interface FamilyFullInfo {
   id: number
   plannedYearCode: string
   sequenceNo: string
+  /** 品番 7 桁 */
+  itemNumber: string
+  /** 他品番 6 桁 */
+  itemFamilyNumber: string
+  /** 既存システム由来の品番 (例: FA2071F)。新規企画品では null */
+  legacyId: string | null
   productTypeId: number
   productTypeName: string
   productSeasonId: number

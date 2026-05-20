@@ -37,10 +37,21 @@ const filtered = computed(() => {
     (i) =>
       i.productName1.toLowerCase().includes(q) ||
       (i.productName2 ?? '').toLowerCase().includes(q) ||
-      i.sku9Digit.toLowerCase().includes(q) ||
+      i.itemNumber.toLowerCase().includes(q) ||
+      i.itemFamilyNumber.toLowerCase().includes(q) ||
+      (i.legacyId ?? '').toLowerCase().includes(q) ||
       i.brandName.toLowerCase().includes(q),
   )
 })
+
+/** 表示用の品番 (legacy_id があれば優先、なければ新規発番した itemNumber を表示) */
+const displayItemNumber = (i: FamilyListItem): string => i.legacyId ?? i.itemNumber
+
+/** 表示用の他品番 (legacy_id がある場合は末尾 1 桁を除いた前 6 桁、なければ itemFamilyNumber) */
+const displayItemFamilyNumber = (i: FamilyListItem): string => {
+  if (i.legacyId && i.legacyId.length >= 6) return i.legacyId.slice(0, i.legacyId.length - 1)
+  return i.itemFamilyNumber
+}
 
 const statusBadge = (status: number): { label: string; cls: string } => {
   switch (status) {
@@ -79,7 +90,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       <input
         v-model="search"
         type="search"
-        placeholder="商品名 / 上位コード / ブランドで検索"
+        placeholder="商品名 / 品番 / 他品番 / ブランドで検索"
         class="w-72 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
       />
       <label class="inline-flex items-center gap-2 text-sm text-gray-600">
@@ -116,7 +127,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       <table class="w-full">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">上位コード</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">品番 / 他品番</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">商品名</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">ブランド</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">タイプ / 季節</th>
@@ -139,7 +150,10 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
             class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-blue-50"
             @click="navigateTo(`/products/${i.id}`)"
           >
-            <td class="px-4 py-3 font-mono text-sm">{{ i.sku9Digit }}</td>
+            <td class="px-4 py-3 font-mono text-sm leading-tight">
+              <div>{{ displayItemNumber(i) }}</div>
+              <div class="text-xs text-gray-500">{{ displayItemFamilyNumber(i) }}</div>
+            </td>
             <td class="px-4 py-3 text-sm">
               <div class="font-medium">{{ i.productName1 }}</div>
               <div v-if="i.productName2" class="text-xs text-gray-500">{{ i.productName2 }}</div>
@@ -201,7 +215,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
         </div>
         <!-- カード下部 (コンパクト) -->
         <div class="flex flex-1 flex-col p-2">
-          <div class="font-mono text-[10px] text-gray-500">{{ i.sku9Digit }}</div>
+          <div class="font-mono text-[10px] text-gray-500">{{ displayItemNumber(i) }}</div>
           <div class="mt-0.5 line-clamp-2 text-sm font-semibold text-gray-900" :title="i.productName1">
             {{ i.productName1 }}
           </div>
