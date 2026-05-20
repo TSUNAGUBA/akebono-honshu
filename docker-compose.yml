@@ -4,9 +4,9 @@ services:
     container_name: akebono-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: akebono-honshu
+      POSTGRES_USER: akebono_honshu
       POSTGRES_PASSWORD: localdev
-      POSTGRES_DB: akebono-honshu
+      POSTGRES_DB: akebono_honshu
       TZ: Asia/Tokyo
       PGTZ: Asia/Tokyo
     ports:
@@ -15,7 +15,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U akebono-honshu -d akebono-honshu"]
+      test: ["CMD-SHELL", "pg_isready -U akebono_honshu -d akebono_honshu"]
       interval: 5s
       timeout: 3s
       retries: 10

@@ -49,10 +49,10 @@ flowchart LR
 | インスタンスクラス | **db.t4g.medium** | サイズ問題なし |
 | Multi-AZ | (要確認、ステータス画面で「ロール: インスタンス」だったため Single-AZ 可能性高い) | 本番運用前に Multi-AZ 化推奨 |
 | パブリックアクセス | (要確認、開発 PC からの 5432 接続を許可) | 段階 A では一時許可、段階 C で VPC 内部接続のみに変更 |
-| 現在の利用状況 | **他システム使用中** (2026-05-20 オペレーター回答) | **新規 DB `akebono-honshu` を作成して論理分離** |
+| 現在の利用状況 | **他システム使用中** (2026-05-20 オペレーター回答) | **新規 DB `akebono_honshu` を作成して論理分離** (PostgreSQL 通常識別子のためクォート不要、他システムとの命名衝突回避) |
 | エンドポイント | `akebono1.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com` | – |
 | マスターユーザ | `pguser` (パスワードはオペレーターローカル保管) | – |
-| **判定** | – | **再利用 (akebono1 インスタンス内に akebono-honshu DB を新規作成)** |
+| **判定** | – | **再利用 (akebono1 インスタンス内に akebono_honshu DB を新規作成)** |
 
 ### 1.2 既存 S3
 
@@ -89,7 +89,7 @@ flowchart LR
 | 主体 | 作業 | 詳細 |
 |---|---|---|
 | **オペレーター** | RDS 準備 | 上記 §1.1 判定に基づき、RDS を再利用 or 新規作成。PostgreSQL 16.x、ap-northeast-1、Multi-AZ (PoC は Single-AZ でも可) |
-| **オペレーター** | DB ユーザ作成 | RDS マスターユーザで psql 接続し、`akebono_app` ユーザ作成 (パスワードは自動生成 1Password 等で管理) + `akebono-honshu` データベース作成 + 権限付与 |
+| **オペレーター** | DB ユーザ作成 | RDS マスターユーザで psql 接続し、`akebono_app` ユーザ作成 (パスワードは自動生成 1Password 等で管理) + `akebono_honshu` データベース作成 + 権限付与 |
 | **オペレーター** | セキュリティグループ | 開発用 IP からの 5432 接続を一時許可 (本番では VPC 内部接続のみに変更) |
 | **オペレーター** | 接続情報を Claude に共有 | エンドポイント / DB名 / ユーザ / パスワード (パスワードは個別の安全な経路で) |
 | **Claude** | スキーマ初期化スクリプト動作確認 | `db/init/01-schema.sql` 〜 `04-orders.sql` を AWS RDS に適用 (psql で `\i` 実行)。docker-compose の自動投入は AWS RDS では効かない |
@@ -109,7 +109,7 @@ flowchart LR
 
 ### 2.5 ヒアリング結果 (2026-05-20 確定)
 
-- [x] §1.1 RDS 判定: **既存 `akebono1` インスタンス内に `akebono-honshu` DB を新規作成して論理分離**
+- [x] §1.1 RDS 判定: **既存 `akebono1` インスタンス内に `akebono_honshu` DB を新規作成して論理分離** (アンダースコア命名、PostgreSQL 通常識別子)
 - [x] RDS エンドポイント: `akebono1.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com:5432`、ユーザ `pguser` (パスワードはオペレーターローカル保管、`dotnet user-secrets` で Claude に共有せず)
 - [x] 開発 PC からの 5432 接続: **許可済 (2026-05-20 オペレーター確認)**
 

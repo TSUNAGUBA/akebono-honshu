@@ -51,18 +51,30 @@ pnpm -v
 
 ### 1.3 PostgreSQL の選択肢
 
+> **2026-05-20 命名変更:** DB 名・ロール名を `akebono-honshu` → `akebono_honshu` に変更 (アンダースコア)。PostgreSQL の通常識別子になりクォート (`""`) が不要に。
+>
+> **既にローカル環境を構築済の方の移行手順:**
+>
+> - **選択肢 A (pgAdmin / ローカル PostgreSQL):**
+>   1. pgAdmin4 で `akebono-honshu` データベース右クリック → Properties → General タブで Database 名を `akebono_honshu` に変更
+>   2. `Login/Group Roles > akebono-honshu` 右クリック → Properties → General タブで Name を `akebono_honshu` に変更
+>   3. 接続中セッションがあるとリネーム不可 → pgAdmin の Query Tool を一旦閉じる
+> - **選択肢 B (docker):** Iter 0 のデータは Seed のみ (業務データなし) のため、`docker compose down -v` でボリュームごと削除 → `docker compose up -d postgres` で再作成が最速
+> - **user-secrets 更新:** ローカル接続文字列を再設定: `dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=akebono_honshu;Username=pguser;Password=<your_password>"` (pguser 利用者) または `appsettings.Development.json` のまま (`akebono_honshu / localdev`)
+
+
 #### 選択肢 A: 既存ローカル PostgreSQL を使う (Windows/Mac で簡単)
 
 既に PostgreSQL 16 がローカル PC にインストール済の場合 (pgAdmin4 も推奨):
 
 1. pgAdmin4 でサーバ接続
 2. `Login/Group Roles` 右クリック → `Create > Login/Group Role`
-   - General タブ: Name = **`akebono-honshu`**
+   - General タブ: Name = **`akebono_honshu`**
    - Definition タブ: Password = `localdev`
    - Privileges タブ: `Can login?` **ON**、`Create databases?` **ON**
 3. `Databases` 右クリック → `Create > Database`
-   - General タブ: Database = **`akebono-honshu`**、Owner = `akebono-honshu`
-4. 左ツリーで `Databases > akebono-honshu` を選択 (重要)
+   - General タブ: Database = **`akebono_honshu`**、Owner = `akebono_honshu`
+4. 左ツリーで `Databases > akebono_honshu` を選択 (重要)
 5. `Tools > Query Tool` → リポジトリの `db/init/01-schema.sql` を貼り付け → F5 で実行
 6. 動作確認:
    ```sql
@@ -78,7 +90,7 @@ pnpm -v
 # ルートディレクトリで
 docker compose up -d postgres
 docker compose ps
-docker compose exec postgres psql -U akebono-honshu -d akebono-honshu -c "SELECT id, login_id, display_name FROM users;"
+docker compose exec postgres psql -U akebono_honshu -d akebono_honshu -c "SELECT id, login_id, display_name FROM users;"
 ```
 
 `./db/init/01-schema.sql` が docker-compose の初期化スクリプトとして自動投入され、ロール + DB + Seed が一度に揃います。
@@ -91,7 +103,7 @@ docker compose exec postgres psql -U akebono-honshu -d akebono-honshu -c "SELECT
 
 ##### Step 1. データベース新規作成 (RDS マスター接続)
 
-ローカル PC の psql から RDS マスターユーザで一度接続し、本システム用 DB を作成 (`akebono-honshu`)。他システムとは DB 単位で論理分離する。
+ローカル PC の psql から RDS マスターユーザで一度接続し、本システム用 DB を作成 (`akebono_honshu`)。他システムとは DB 単位で論理分離する。
 
 ```bash
 # 接続 (パスワードは対話的に聞かれる、ユーザ手元のものを入力)
@@ -99,8 +111,8 @@ psql -h <rds-endpoint> -p 5432 -U pguser -d postgres
 ```
 
 ```sql
--- akebono-honshu DB を新規作成 (オーナーは pguser のまま、別途アプリ専用ユーザを作る場合は段階 C で実施)
-CREATE DATABASE "akebono-honshu" OWNER pguser;
+-- akebono_honshu DB を新規作成 (オーナーは pguser のまま、別途アプリ専用ユーザを作る場合は段階 C で実施)
+CREATE DATABASE "akebono_honshu" OWNER pguser;
 \q
 ```
 
@@ -108,20 +120,20 @@ CREATE DATABASE "akebono-honshu" OWNER pguser;
 
 ```bash
 # 新規 DB に接続し直し、初期化スクリプトを順に投入
-psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
-psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/02-masters.sql
 
-psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/03-products.sql
 
-psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/04-orders.sql
 
 # 動作確認
-psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -c "SELECT id, login_id, display_name FROM users;"
 # → owner / planner / sales の 3 件が表示されれば OK
 ```
@@ -135,14 +147,14 @@ cd src/Backend/Presentation
 
 # Connection String を user-secrets に格納 (リポジトリには記録されない)
 dotnet user-secrets set "ConnectionStrings:Postgres" \
-  "Host=<rds-endpoint>;Port=5432;Database=akebono-honshu;Username=pguser;Password=<your-password>;SslMode=Require"
+  "Host=<rds-endpoint>;Port=5432;Database=akebono_honshu;Username=pguser;Password=<your-password>;SslMode=Require"
 
 # 確認 (パスワードは出力される、Claude には共有しない)
 dotnet user-secrets list
 ```
 
 > **戻したいとき (ローカル PostgreSQL へロールバック):**
-> `dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=akebono-honshu;Username=akebono-honshu;Password=localdev"`
+> `dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=akebono_honshu;Username=akebono_honshu;Password=localdev"`
 
 ##### Step 4. 動作確認
 
@@ -176,11 +188,11 @@ cd ../../Frontend && pnpm dev
 
 設定の優先度 (低 → 高):
 1. `appsettings.json` (リポジトリ管理、本番デフォルトはプレースホルダ `__OVERRIDE_ME__`)
-2. `appsettings.Development.json` (リポジトリ管理、**チーム共通の開発デフォルト** = `akebono-honshu / localdev`)
+2. `appsettings.Development.json` (リポジトリ管理、**チーム共通の開発デフォルト** = `akebono_honshu / localdev`)
 3. `dotnet user-secrets` (リポジトリ外、**個人固有の機密値** = `pguser / 個人パスワード` 等)
 4. 環境変数 `ConnectionStrings__Postgres` (CI / コンテナ起動時の上書き)
 
-**§1.3.A の選択肢 A** で `akebono-honshu / localdev` ロールを作成した方は **何も設定不要**、appsettings.Development.json の値で動きます。
+**§1.3.A の選択肢 A** で `akebono_honshu / localdev` ロールを作成した方は **何も設定不要**、appsettings.Development.json の値で動きます。
 
 **`pguser` 等の別ユーザで接続する方** (Iteration 0 動作確認中のオペレーター環境など):
 
@@ -189,7 +201,7 @@ cd src\Backend\Presentation
 
 # UserSecretsId は .csproj に設定済 (akebono-honshu-iter0-dev-secrets)、init は不要
 # Connection String を user-secrets に格納 (リポジトリには記録されない)
-dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=akebono-honshu;Username=pguser;Password=<your_password>"
+dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=akebono_honshu;Username=pguser;Password=<your_password>"
 
 # 確認
 dotnet user-secrets list
@@ -269,7 +281,7 @@ pnpm dev
 
    選択肢 B (docker):
    ```powershell
-   docker compose exec postgres psql -U akebono-honshu -d akebono-honshu `
+   docker compose exec postgres psql -U akebono_honshu -d akebono_honshu `
      -c "SELECT id, occurred_at, action, actor_user_id, note FROM audit_logs ORDER BY id DESC LIMIT 10;"
    ```
    期待結果: `Login.Success`, `User.List` 等が記録されている。
@@ -400,7 +412,7 @@ pnpm dev
 - CLI: Ctrl+C で停止、コマンド再実行で再開
 
 ### PostgreSQL (選択肢 A)
-Windows サービスとして常駐、停止不要。データベースを完全リセットしたい場合は pgAdmin4 で `akebono-honshu` データベースを削除 → §1.3.A の手順 3〜6 で再作成。
+Windows サービスとして常駐、停止不要。データベースを完全リセットしたい場合は pgAdmin4 で `akebono_honshu` データベースを削除 → §1.3.A の手順 3〜6 で再作成。
 
 ### PostgreSQL (選択肢 B、docker)
 ```powershell

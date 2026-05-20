@@ -1,6 +1,6 @@
 -- Iteration 1: 17 マスタ + users 拡張
 -- Phase 5 data-design.md §3.1-3.18
--- pgAdmin4 で akebono-honshu DB に対して実行 (docker 利用者は再構築で自動投入)
+-- pgAdmin4 で akebono_honshu DB に対して実行 (docker 利用者は再構築で自動投入)
 
 SET TIMEZONE = 'Asia/Tokyo';
 
