@@ -2,7 +2,7 @@
 const { user, logout } = useAuth()
 
 const onLogout = async () => {
-  logout()
+  await logout()
   await navigateTo('/login')
 }
 </script>

@@ -1,4 +1,3 @@
-using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Application.Migration;
 using Microsoft.EntityFrameworkCore;
@@ -20,14 +19,13 @@ public static class LegacyImportEndpoints
 
         admin.MapPost("/legacy-import", async (
             HttpContext http,
-            ITokenService tokens,
             IAkebonoDbContext db,
             LegacyImportService svc,
             IFormFile file,
             CancellationToken ct) =>
         {
             // 認可: process_record_permission = 1 (Owner) のみ
-            if (!AuthEndpoints.TryGetUserId(http, tokens, out var actorId))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
 
             var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == actorId, ct);

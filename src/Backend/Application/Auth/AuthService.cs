@@ -3,34 +3,40 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Akebono.Application.Auth;
 
-public class AuthService(IAkebonoDbContext db, ITokenService tokenService, IAuditLogger audit)
+public class AuthService(IAkebonoDbContext db, IAuditLogger audit)
 {
-    /// <summary>Iteration 0: ダミー認証。固定パスワード "localdev" のみ許可、ユーザ存在チェックのみ</summary>
-    public async Task<LoginResponse?> LoginAsync(LoginRequest request, CancellationToken ct = default)
+    /// <summary>
+    /// Firebase Auth でログインに成功したフロントが最初に呼ぶ sync endpoint の実装。
+    /// JwtBearer ミドルウェアが Firebase ID Token を検証済、ClaimsPrincipal から取得した
+    /// Firebase UID で users.firebase_uid → 業務ユーザ情報 (権限含む) を引当てて返す。
+    /// 未紐付け UID は null を返し、呼び出し側で 403 / 業務エラーに変換する。
+    /// </summary>
+    public async Task<SyncResponse?> SyncAsync(string firebaseUid, CancellationToken ct = default)
     {
-        const string DummyPassword = "localdev";
-
-        if (request.Password != DummyPassword)
-        {
-            await audit.LogAsync(null, "Login.Failure", note: $"Invalid password for {request.LoginId}", success: false, cancellationToken: ct);
-            return null;
-        }
-
         var user = await db.Users
-            .Where(u => u.LoginId == request.LoginId && u.IsActive && !u.IsDeleted)
+            .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted)
             .FirstOrDefaultAsync(ct);
 
         if (user is null)
         {
-            await audit.LogAsync(null, "Login.Failure", note: $"User not found: {request.LoginId}", success: false, cancellationToken: ct);
+            await audit.LogAsync(null, "Login.Failure",
+                note: $"Firebase UID not bound to users.firebase_uid: {firebaseUid}",
+                success: false, cancellationToken: ct);
             return null;
         }
 
-        var token = tokenService.IssueToken(user.Id, user.LoginId);
+        if (!user.IsActive)
+        {
+            await audit.LogAsync(user.Id, "Login.Failure",
+                note: $"User is inactive: {user.LoginId}",
+                success: false, cancellationToken: ct);
+            return null;
+        }
 
-        await audit.LogAsync(user.Id, "Login.Success", entityType: "User", entityId: user.Id, cancellationToken: ct);
+        await audit.LogAsync(user.Id, "Login.Success",
+            entityType: "User", entityId: user.Id, cancellationToken: ct);
 
-        return new LoginResponse(token, user.Id, user.DisplayName,
+        return new SyncResponse(user.Id, user.EmployeeNo, user.DisplayName, user.IsActive,
             user.ProductLedgerPermission,
             user.PurchaseOrderCreatePermission,
             user.PurchaseOrderInfoPermission,

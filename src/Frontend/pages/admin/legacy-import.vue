@@ -71,7 +71,7 @@ const execute = async () => {
   } catch (e: unknown) {
     const err = e as { statusCode?: number; data?: { detail?: string; title?: string } }
     if (err.statusCode === 401) {
-      logout()
+      await logout()
       await navigateTo('/login')
       return
     }

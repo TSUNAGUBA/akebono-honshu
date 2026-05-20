@@ -1,4 +1,3 @@
-using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Application.Orders;
 
@@ -16,30 +15,30 @@ public static class OrderEndpoints
         var orders = app.MapGroup("/api/v1/orders");
 
         // 一覧 (O-03)
-        orders.MapGet("/", async (HttpContext http, ITokenService tokens, PurchaseOrderService svc,
+        orders.MapGet("/", async (HttpContext http, PurchaseOrderService svc,
                                     bool? includeCancelled, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, tokens, out var actorId))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
             var items = await svc.ListAsync(actorId, includeCancelled ?? false, ct);
             return Results.Ok(new { data = items });
         });
 
         // 詳細 (O-04 編集画面ベース)
-        orders.MapGet("/{id:long}", async (HttpContext http, ITokenService tokens, PurchaseOrderService svc,
+        orders.MapGet("/{id:long}", async (HttpContext http, PurchaseOrderService svc,
                                             long id, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, tokens, out var actorId))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
             var detail = await svc.GetDetailAsync(id, actorId, ct);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
         });
 
         // 新規作成 (O-01)
-        orders.MapPost("/", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        orders.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
                                     PurchaseOrderService svc, CreateOrderRequest req, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckOrderEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             try
             {
@@ -53,10 +52,10 @@ public static class OrderEndpoints
         });
 
         // 編集 (O-04、F-16 EditReason 必須)
-        orders.MapPatch("/{id:long}", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        orders.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               PurchaseOrderService svc, long id, UpdateOrderRequest req, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckOrderEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             try
             {
@@ -74,20 +73,20 @@ public static class OrderEndpoints
         });
 
         // 中止 (O-05)
-        orders.MapPost("/{id:long}/cancel", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        orders.MapPost("/{id:long}/cancel", async (HttpContext http, IAkebonoDbContext db,
                                                      PurchaseOrderService svc, long id, CancelOrderRequest req, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckOrderEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.CancelAsync(id, req, auth.ActorId!.Value, ct);
             return ok ? Results.NoContent() : Results.NotFound();
         });
 
         // Excel 出力 (O-06、MVP クリティカルパス)
-        orders.MapGet("/{id:long}/export.xlsx", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        orders.MapGet("/{id:long}/export.xlsx", async (HttpContext http, IAkebonoDbContext db,
                                                         IPurchaseOrderExcelService excel, long id, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckOrderEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             try
             {
@@ -103,10 +102,10 @@ public static class OrderEndpoints
         });
 
         // 連絡文章テンプレ提案 (O-07)
-        orders.MapGet("/communication-suggestions", async (HttpContext http, ITokenService tokens,
+        orders.MapGet("/communication-suggestions", async (HttpContext http,
                                                             PurchaseOrderService svc, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, tokens, out _))
+            if (!AuthEndpoints.TryGetUserId(http, out _))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
             var items = await svc.GetCommunicationSuggestionsAsync(ct);
             return Results.Ok(new { data = items });

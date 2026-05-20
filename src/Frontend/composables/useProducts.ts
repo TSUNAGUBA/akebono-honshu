@@ -213,13 +213,14 @@ export const useProducts = () => {
   const uploadImage = async (familyId: number, file: File): Promise<ImageSummary> => {
     const form = new FormData()
     form.append('file', file)
-    const { user } = useAuth()
+    const { getIdToken } = useAuth()
+    const token = await getIdToken()
     const res = await $fetch<ImageSummary>(
       `${config.public.apiBase}/products/families/${familyId}/images`,
       {
         method: 'POST',
         body: form,
-        headers: user.value ? { Authorization: `Bearer ${user.value.token}` } : {},
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       },
     )
     return res

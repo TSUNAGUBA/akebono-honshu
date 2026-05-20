@@ -147,13 +147,14 @@ export const useOrders = () => {
 
   /** Excel ダウンロード (O-06)。Blob を取得して a タグで download。 */
   const downloadExcel = async (id: number): Promise<void> => {
-    const { user } = useAuth()
-    if (!user.value) throw new Error('未認証')
+    const { getIdToken } = useAuth()
+    const token = await getIdToken()
+    if (!token) throw new Error('未認証')
     const response = await $fetch.raw<Blob>(
       `${config.public.apiBase}/orders/${id}/export.xlsx`,
       {
         method: 'GET',
-        headers: { Authorization: `Bearer ${user.value.token}` },
+        headers: { Authorization: `Bearer ${token}` },
         responseType: 'blob',
       },
     )

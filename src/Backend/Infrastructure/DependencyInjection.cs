@@ -9,7 +9,6 @@ using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
 using Akebono.Infrastructure.Excel;
 using Akebono.Infrastructure.Audit;
-using Akebono.Infrastructure.Auth;
 using Akebono.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -28,7 +27,6 @@ public static class DependencyInjection
         services.AddDbContext<AkebonoDbContext>(opt => opt.UseNpgsql(connection));
         services.AddScoped<IAkebonoDbContext>(sp => sp.GetRequiredService<AkebonoDbContext>());
 
-        services.AddSingleton<ITokenService, DummyTokenService>();
         services.AddScoped<IAuditLogger, AuditLogger>();
         services.AddScoped<AuthService>();
         services.AddScoped<UserQueryService>();

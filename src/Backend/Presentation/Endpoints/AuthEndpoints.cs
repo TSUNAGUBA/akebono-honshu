@@ -1,27 +1,44 @@
 using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Domain.Entities;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace Akebono.Api.Endpoints;
 
 public static class AuthEndpoints
 {
+    /// <summary>
+    /// JwtBearer の OnTokenValidated で users テーブル引当後、ClaimsPrincipal に追加する Claim 名。
+    /// 業務ユーザ ID (users.id BIGINT) を string 化して保持する。
+    /// </summary>
+    public const string AkebonoUserIdClaim = "akebono_user_id";
+
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/v1/auth");
 
-        group.MapPost("/login", async (LoginRequest req, AuthService svc, CancellationToken ct) =>
+        // フロントが Firebase Auth ログイン直後に呼ぶ。ClaimsPrincipal から Firebase UID
+        // (Claim "user_id") を取り出し、users.firebase_uid 引当 + 業務情報返却 + audit log。
+        // 未紐付け UID は 403 を返し「Firebase は通ったが業務ユーザが紐付いていない」を区別。
+        group.MapPost("/sync", [Authorize] async (HttpContext http, AuthService svc, CancellationToken ct) =>
         {
-            var result = await svc.LoginAsync(req, ct);
+            var firebaseUid = http.User.FindFirst("user_id")?.Value
+                ?? http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(firebaseUid))
+                return Results.Problem(statusCode: 401, title: "Unauthorized",
+                    detail: "Firebase UID claim missing");
+
+            var result = await svc.SyncAsync(firebaseUid, ct);
             return result is null
-                ? Results.Problem(statusCode: 401, title: "Login failed", detail: "Invalid credentials")
+                ? Results.Problem(statusCode: 403, title: "Forbidden",
+                    detail: "Firebase ユーザは認証済ですが、業務ユーザに紐付いていません。管理者にお問合せください")
                 : Results.Ok(result);
         });
 
-        group.MapGet("/me", async (HttpContext http, ITokenService tokens, AuthService svc, CancellationToken ct) =>
+        group.MapGet("/me", [Authorize] async (HttpContext http, AuthService svc, CancellationToken ct) =>
         {
-            if (!TryGetUserId(http, tokens, out var userId))
+            if (!TryGetUserId(http, out var userId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
 
             var me = await svc.GetMeAsync(userId, ct);
@@ -31,13 +48,15 @@ public static class AuthEndpoints
         return app;
     }
 
-    internal static bool TryGetUserId(HttpContext http, ITokenService tokens, out long userId)
+    /// <summary>
+    /// JwtBearer + OnTokenValidated 後、ClaimsPrincipal に詰めた akebono_user_id Claim を読む。
+    /// 業務ユーザが users テーブルに引当できなかった場合、Claim 自体が付かないため false。
+    /// </summary>
+    internal static bool TryGetUserId(HttpContext http, out long userId)
     {
         userId = 0;
-        var header = http.Request.Headers.Authorization.ToString();
-        if (string.IsNullOrEmpty(header) || !header.StartsWith("Bearer ", StringComparison.Ordinal))
-            return false;
-        return tokens.TryValidate(header[7..], out userId);
+        var raw = http.User.FindFirst(AkebonoUserIdClaim)?.Value;
+        return long.TryParse(raw, out userId);
     }
 
     /// <summary>
@@ -47,11 +66,10 @@ public static class AuthEndpoints
     /// </summary>
     internal static async Task<MasterEditAuth> CheckMasterEditAsync(
         HttpContext http,
-        ITokenService tokens,
         IAkebonoDbContext db,
         CancellationToken ct)
     {
-        if (!TryGetUserId(http, tokens, out var userId))
+        if (!TryGetUserId(http, out var userId))
             return new(null, Results.Problem(statusCode: 401, title: "Unauthorized"));
 
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
@@ -72,11 +90,10 @@ public static class AuthEndpoints
     /// </summary>
     internal static async Task<MasterEditAuth> CheckOrderEditAsync(
         HttpContext http,
-        ITokenService tokens,
         IAkebonoDbContext db,
         CancellationToken ct)
     {
-        if (!TryGetUserId(http, tokens, out var userId))
+        if (!TryGetUserId(http, out var userId))
             return new(null, Results.Problem(statusCode: 401, title: "Unauthorized"));
 
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);

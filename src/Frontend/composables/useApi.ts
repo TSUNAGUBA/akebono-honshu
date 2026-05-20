@@ -1,15 +1,17 @@
 export const useApi = () => {
   const config = useRuntimeConfig()
-  const { user } = useAuth()
+  const { getIdToken } = useAuth()
 
-  const apiFetch = <T>(path: string, opts: Parameters<typeof $fetch<T>>[1] = {}) =>
-    $fetch<T>(`${config.public.apiBase}${path}`, {
+  const apiFetch = async <T>(path: string, opts: Parameters<typeof $fetch<T>>[1] = {}) => {
+    const token = await getIdToken()
+    return await $fetch<T>(`${config.public.apiBase}${path}`, {
       ...opts,
       headers: {
         ...(opts.headers ?? {}),
-        ...(user.value ? { Authorization: `Bearer ${user.value.token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     })
+  }
 
   return { apiFetch }
 }

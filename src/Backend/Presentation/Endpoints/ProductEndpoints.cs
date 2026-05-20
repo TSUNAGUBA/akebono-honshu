@@ -1,4 +1,3 @@
-using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Application.Products;
 using Akebono.Domain.Products;
@@ -25,30 +24,30 @@ public static class ProductEndpoints
         var families = app.MapGroup("/api/v1/products/families");
 
         // 一覧 (P-04)
-        families.MapGet("/", async (HttpContext http, ITokenService tokens, ProductFamilyService svc,
+        families.MapGet("/", async (HttpContext http, ProductFamilyService svc,
                                      bool? includeDeleted, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, tokens, out var actorId))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
             var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
             return Results.Ok(new { data = items });
         });
 
         // 詳細 (P-05)
-        families.MapGet("/{id:long}", async (HttpContext http, ITokenService tokens, ProductFamilyService svc,
+        families.MapGet("/{id:long}", async (HttpContext http, ProductFamilyService svc,
                                               long id, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, tokens, out var actorId))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
             var detail = await svc.GetDetailAsync(id, actorId, ct);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
         });
 
         // バルク登録 (P-01〜P-03)
-        families.MapPost("/complete", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        families.MapPost("/complete", async (HttpContext http, IAkebonoDbContext db,
                                               ProductFamilyService svc, CompleteFamilyRequest req, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckMasterEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             try
             {
@@ -66,30 +65,30 @@ public static class ProductEndpoints
         });
 
         // 更新 (P-05)
-        families.MapPatch("/{id:long}", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        families.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                                  ProductFamilyService svc, long id, UpdateFamilyRequest req, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckMasterEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
             return updated is null ? Results.NotFound() : Results.Ok(updated);
         });
 
         // 論理削除 (P-05)
-        families.MapDelete("/{id:long}", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        families.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                                   ProductFamilyService svc, long id, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckMasterEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
             return ok ? Results.NoContent() : Results.NotFound();
         });
 
         // 単価追加 (BR-04 履歴管理)
-        families.MapPost("/{id:long}/supplier-prices", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        families.MapPost("/{id:long}/supplier-prices", async (HttpContext http, IAkebonoDbContext db,
                                                                 ProductSupplierPriceService svc, long id, AddSupplierPriceRequest req, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckMasterEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             try
             {
@@ -104,10 +103,10 @@ public static class ProductEndpoints
         });
 
         // 単価履歴一覧
-        families.MapGet("/{id:long}/supplier-prices", async (HttpContext http, ITokenService tokens,
+        families.MapGet("/{id:long}/supplier-prices", async (HttpContext http,
                                                                ProductSupplierPriceService svc, long id, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, tokens, out var actorId))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
             var items = await svc.ListHistoryAsync(id, actorId, ct);
             var data = items.Select(p => new CurrentSupplierPrice(
@@ -118,10 +117,10 @@ public static class ProductEndpoints
 
         // ── P-06 画像管理 ─────────────────────────────────
         // 画像アップロード (IFormFile + メタ登録、Iteration 4 で S3 Pre-signed URL に置換)
-        families.MapPost("/{id:long}/images", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        families.MapPost("/{id:long}/images", async (HttpContext http, IAkebonoDbContext db,
                                                        IWebHostEnvironment env, long id, IFormFile file, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckMasterEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             // バリデーション
@@ -186,10 +185,10 @@ public static class ProductEndpoints
         }).DisableAntiforgery();
 
         // 並び順変更
-        families.MapPatch("/{id:long}/images/reorder", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        families.MapPatch("/{id:long}/images/reorder", async (HttpContext http, IAkebonoDbContext db,
                                                                 long id, List<long> orderedIds, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckMasterEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             var images = await db.ProductImages
@@ -218,10 +217,10 @@ public static class ProductEndpoints
         });
 
         // 画像論理削除
-        families.MapDelete("/{id:long}/images/{imageId:long}", async (HttpContext http, ITokenService tokens, IAkebonoDbContext db,
+        families.MapDelete("/{id:long}/images/{imageId:long}", async (HttpContext http, IAkebonoDbContext db,
                                                                        long id, long imageId, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckMasterEditAsync(http, tokens, db, ct);
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             var image = await db.ProductImages

@@ -24,7 +24,7 @@ onMounted(async () => {
       ? 'セッションが切れました。再ログインしてください。'
       : 'ユーザ一覧の取得に失敗しました'
     if (err.statusCode === 401) {
-      logout()
+      await logout()
       await navigateTo('/login')
     }
   } finally {
