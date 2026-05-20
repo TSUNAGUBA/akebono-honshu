@@ -106,6 +106,12 @@ BEGIN
     -- ────────────────────────────────────────────────────────────
     -- §C products に SKU 単位で INSERT
     --    color は colors.legacy_id 一致、size は sizes.legacy_id 一致で引当
+    --
+    --    旧 CSV は SKU 末尾文字違い (FX2043F / FX2043S 等) で同じ
+    --    family+color+size 組合せの別 SKU を持つケースが 36 件あり、
+    --    新システムの UNIQUE (family,color,size) 制約と衝突する。
+    --    全 UNIQUE 制約 (sku / family+color+size) に対し ON CONFLICT
+    --    DO NOTHING で先着 SKU のみ取込、重複は静かにスキップする。
     -- ────────────────────────────────────────────────────────────
     INSERT INTO products (
       product_family_id, color_id, size_id, sku, legacy_id,
@@ -127,7 +133,7 @@ BEGIN
     FROM staging_legacy_products sl
     JOIN product_families pf ON pf.legacy_id = sl.legacy_family_code
     WHERE sl.legacy_sku IS NOT NULL
-    ON CONFLICT (sku) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     GET DIAGNOSTICS v_inserted_products = ROW_COUNT;
     RAISE NOTICE 'products inserted: %', v_inserted_products;
