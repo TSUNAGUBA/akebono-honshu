@@ -7,7 +7,8 @@
 
 | ファイル | 最終更新 | 概要 |
 |---------|---------|------|
-| iteration-plan.md | 2026-05-19 | Iteration 分割計画 (0-4)、各 Iteration のスコープ・ゲート条件・期間目安、Post-MVP 計画 |
+| iteration-plan.md | 2026-05-20 | Iteration 分割計画 (0-4)、各 Iteration のスコープ・ゲート条件・期間目安、Post-MVP 計画。Iter 4 進捗棚卸し表を含む |
+| iteration4-prod-migration-plan.md | 2026-05-20 | Iter 4 本番移行計画。AWS / Firebase / CI/CD 切替を段階 A〜D に分けてオペレーター作業と Claude 作業を分離。インフラ初級者向け |
 | pre-iteration-tasks.md | 2026-05-19 | Iteration 1 着手前タスク (T-1 不要化済 F-21 廃止 / T-2 国内用 Excel サンプル調達、画像 3 枚受領済 / .xlsx は Iteration 1 開始 1 週間前まで) |
 
 ## Phase 7 進行状態

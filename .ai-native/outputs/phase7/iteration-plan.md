@@ -311,6 +311,42 @@ Iteration 4 (Hardening) のスコープ (本番認証 / AWS インフラ / CI/CD
 
 **ゲート:** 方法論 §Phase 7 完了ゲート 3 件 (機能完成 / コードレビュアー 7 視点 / システム監査官リリース OK) + オペレーターサインオフ
 
+#### Iteration 4 進捗棚卸し (2026-05-20 時点)
+
+> **位置付け:** Iteration 4 着手途中の中間棚卸し。MIG-3 (既存 CSV 取込) は実装完了、商品マスタ画面に対する「品番/他品番」UI 整備は暫定完了。
+> **本番化計画:** 詳細手順は `iteration4-prod-migration-plan.md` (段階 A → B → C → D の段階的移行手順) を参照。
+
+| カテゴリ | サブタスク | 状態 | コミット範囲 / 参照 | 残作業 |
+|---|---|---|---|---|
+| **MIG-3 既存データ移行** | 取込戦略ドキュメント | ✅ 完了 | `517fb84` / `docs/migration/mig-3-strategy.md` | – |
+| **MIG-3 既存データ移行** | 取込スクリプト 4 種 (pre-patch / step-01 / step-02 / step-03) | ✅ 完了 | `b04bb13` / `db/migration/*.sql` | – |
+| **MIG-3 既存データ移行** | 画面 1 操作完結 UI (Backend `LegacyImportService` + Frontend `/admin/legacy-import`) | ✅ 完了 | `536ee05` 〜 `34a3d5e` | – |
+| **MIG-3 既存データ移行** | 取込後の品番/他品番 UI 整備 (暫定) | 🟡 暫定完了 | `445f7f2` 〜 `a1fe898` | 本実装 (`Sku9Digit` リネーム + 用語統一)、新規企画ウィザード対応 |
+| **MIG-3 既存データ移行** | fallback supplier で取込まれた family の整合性パッチ | 未着手 | – | `products.legacy_id` 末尾 1 桁から factory_supplier_id 逆引き SQL パッチ |
+| **MIG-3 既存データ移行** | 仮割当マスタの一括メンテナンス UI (商品分類 / brand / function / 素材 = Iter 2 課題 #5・#6) | 未着手 | – | `status=Draft` の family を Draft タブで一括修正できる画面追加 |
+| **本番認証切替** | `ITokenService` / `IAuthService` 抽象化 | ✅ 完了 (Iter 0) | `src/Backend/Application/Auth/ITokenService.cs` | – |
+| **本番認証切替** | `FirebaseAuthService` / Firebase Admin SDK 実装 | 未着手 | – | `DummyTokenService` → `FirebaseAuthService` 置換、JwtBearer + Firebase JWKS 検証、Custom Claims 同期 (シナリオ E) |
+| **本番認証切替** | Frontend Firebase JS SDK 統合 | 未着手 | 現状 `localStorage` + ダミートークン | `plugins/firebase.client.ts` + `composables/useAuth.ts` の Firebase 化 (Iter 1 知見 #2/#3 で `<ClientOnly>` 化 + middleware SSR skip 必須) |
+| **AWS インフラ構築** | App Runner (Backend ホスティング) | 未着手 | – | Terraform 雛形作成 + ECR + デプロイ |
+| **AWS インフラ構築** | RDS PostgreSQL 16 Multi-AZ | 未着手 (既存 RDS 再利用可否ヒアリング待ち) | – | 既存 RDS のバージョン確認、再利用 / 新規作成判断 |
+| **AWS インフラ構築** | S3 (商品画像 + 監査ログアーカイブ) | 未着手 (既存 S3 再利用可否ヒアリング待ち) | – | 用途別バケット作成、SSE-S3 / Object Lock 設定 |
+| **AWS インフラ構築** | KMS + Secrets Manager (DB 接続文字列、Firebase SA 鍵) | 未着手 | – | CMK 作成、Secret 投入 |
+| **AWS インフラ構築** | CloudWatch Logs / Metrics / Alarms + SNS | 未着手 | – | Serilog 出力先設定、アラーム閾値設計 |
+| **画像ストレージ抽象化** | `IImageStorageService` 抽象 + `LocalImageStorage` / `S3ImageStorage` | 未着手 (Iter 2 知見 #6 で先送り) | 現状 `wwwroot/uploads/...` 直書き | DI 切替で本番 = S3 / ローカル = ファイル |
+| **CI/CD パイプライン** | GitHub Actions: lint / test / build | 未着手 (PR チェック workflow は存在) | `.github/workflows/pr-checks.yml` 等 | Backend `dotnet test` / Frontend `pnpm typecheck` / Docker build 追加 |
+| **CI/CD パイプライン** | Backend → ECR Push → App Runner Deploy | 未着手 | – | AWS OIDC + ECR push + App Runner update |
+| **CI/CD パイプライン** | Frontend → Firebase Hosting Deploy | 未着手 | – | `firebase deploy` workflow |
+| **統合テスト E2E** | UC-1〜UC-4 通しシナリオ | 未着手 | – | Playwright or Cypress 採用判断、シナリオ実装 |
+| **性能調整** | NFR §1.1 応答時間検証 | 未着手 | – | 大量データ投入後の計測、必要に応じて Index 追加 |
+| **セキュリティ最終確認** | audit_logs INSERT 専用権限 + S3 Object Lock | 未着手 | – | DB ロール権限 REVOKE、S3 Object Lock 設定 |
+| **セキュリティ最終確認** | IAM 最小権限再確認 | 未着手 | – | App Runner / GitHub Actions の IAM Role 最小化 |
+| **レスポンシブ最終確認** | 全画面のモバイル/タブレット/PC 表示確認 | 未着手 | – | CLAUDE.md 原則 8 (UI レスポンシブ) チェックリスト |
+| **Excel 本テンプレ実装** | `templates/purchase-order-domestic.xlsx` セルマッピング | 未着手 (テンプレファイル待ち) | 現状: ClosedXML 動的生成 (iter3-v1 仮テンプレ) | `IPurchaseOrderExcelService` 実装差替、印刷検収 |
+| **UAT 準備** | UAT シナリオ + 業務担当者マニュアル | 未着手 | – | UC-1〜UC-4 ベースでシナリオ作成 |
+| **Post-Phase6 フィードバック反映** | Phase 6 §6.2 アジェンダ吸収 | 未着手 | – | オペレーターセッション実施後 |
+
+**進捗概況:** MVP 機能 (Iter 1〜3 + MIG-3) は完成。残るは **本番化** (認証切替 + AWS インフラ + CI/CD) + **品質ハードニング** (E2E / 性能 / セキュリティ) + **検収準備** (Excel 本テンプレ / UAT)。「本番化」は段階的移行手順 (`iteration4-prod-migration-plan.md`) に沿って進める。
+
 ---
 
 ## 4. 各 Iteration 共通の品質運用
