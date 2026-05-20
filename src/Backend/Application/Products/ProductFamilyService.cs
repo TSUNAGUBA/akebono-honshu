@@ -170,6 +170,13 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
                 MaxPrice = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null).Max(p => (decimal?)p.UnitPrice),
                 Currency = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null)
                                             .Select(p => p.CurrencyCode).FirstOrDefault() ?? "JPY",
+                // 旧 11 桁 SKU (例: FA2071F4010) の前 7 桁 = 旧品番 7 桁。
+                // MIG-3 で factory_supplier がフォールバック解決された family でも、
+                // products.legacy_id には実際の旧 SKU がそのまま入っているため、こちらを優先。
+                LegacyProductSku = pf.Products
+                    .Where(p => p.LegacyId != null)
+                    .Select(p => p.LegacyId)
+                    .FirstOrDefault(),
             }).ToListAsync(ct);
 
         await audit.LogAsync(actorUserId, "ProductFamily.List",
@@ -177,7 +184,7 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
 
         return items.Select(x =>
         {
-            var (itemNumber, itemFamilyNumber, sku9Digit) = BuildItemNumbers(x.Family);
+            var (itemNumber, itemFamilyNumber, sku9Digit) = BuildItemNumbers(x.Family, x.LegacyProductSku);
             return new FamilyListItem(
                 x.Family.Id,
                 sku9Digit,
@@ -206,12 +213,13 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
     ///     品番   = 他品番 + factory(1)
     /// - 既存品 (legacy_id != null、MIG-3 取込済):
     ///     他品番 = legacy_id (= 旧 legacy_family_code、例: FA2071)
-    ///     品番   = legacy_id + factory.item_conversion_code (例: FA2071F)
-    ///   ※ MIG-3 で factory_supplier がフォールバック解決された family では
-    ///      工場 CD が実値と異なる可能性あり (暫定許容、本実装で products.legacy_id 前 7 桁採用に切替予定)。
+    ///     品番   = 旧 products.legacy_id (旧 11 桁 SKU) の前 7 桁を優先 (例: FA2071F)。
+    ///              旧 SKU が取得できない場合のみ、family.LegacyId + factory.item_conversion_code に
+    ///              フォールバック (MIG-3 fallback supplier の場合は工場 CD が実値とずれる)。
     /// sku9Digit は下位互換のため常に「planned_year + type + season + seq + factory」を返す。
     /// </summary>
-    private static (string ItemNumber, string ItemFamilyNumber, string Sku9Digit) BuildItemNumbers(ProductFamily family)
+    private static (string ItemNumber, string ItemFamilyNumber, string Sku9Digit) BuildItemNumbers(
+        ProductFamily family, string? legacyProductSku)
     {
         var typeCode = family.ProductType?.ItemConversionCode ?? "?";
         var seasonCode = family.ProductSeason?.ItemConversionCode ?? "?";
@@ -222,7 +230,9 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         if (!string.IsNullOrEmpty(family.LegacyId))
         {
             itemFamilyNumber = family.LegacyId;
-            itemNumber = $"{family.LegacyId}{factoryCode}";
+            itemNumber = (!string.IsNullOrEmpty(legacyProductSku) && legacyProductSku.Length >= 7)
+                ? legacyProductSku[..7]
+                : $"{family.LegacyId}{factoryCode}";
         }
         else
         {
@@ -270,7 +280,8 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         await audit.LogAsync(actorUserId, "ProductFamily.View",
             entityType: "ProductFamily", entityId: familyId, cancellationToken: ct);
 
-        var (itemNumber, itemFamilyNumber, _) = BuildItemNumbers(family);
+        var legacyProductSku = products.FirstOrDefault(p => p.LegacyId != null)?.LegacyId;
+        var (itemNumber, itemFamilyNumber, _) = BuildItemNumbers(family, legacyProductSku);
 
         return new FamilyDetail(
             new FamilyFullInfo(
