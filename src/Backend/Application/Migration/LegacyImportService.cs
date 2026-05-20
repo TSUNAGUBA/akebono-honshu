@@ -223,8 +223,14 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
     {
         // 138 列のパラメータ INSERT。PostgreSQL Bind protocol の上限が 32767 パラメータのため、
         // 138 列 × 200 行 = 27600 < 32767 で安全なバッチサイズを採用。
+        //
+        // 注意: EF Core ExecuteSqlRawAsync は DBNull.Value の型マッピングを持たないため、
+        //       ADO.NET (DbCommand + DbParameter) を直接使う (既存 CountStagingAsync と同パターン)。
         const int batchSize = 200;
         var cols = string.Join(",", Enumerable.Range(1, ExpectedColumns).Select(i => $"c{i:D3}"));
+
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
 
         for (int offset = 0; offset < rows.Count; offset += batchSize)
         {
@@ -232,9 +238,8 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
             var sb = new StringBuilder();
             sb.Append("INSERT INTO staging_legacy_products(").Append(cols).Append(") VALUES ");
 
-            // ExecuteSqlRawAsync は IEnumerable<object> (non-nullable) を要求するため、
-            // null セルは DBNull.Value に変換 (SQL の NULL として送信)
-            var parameters = new List<object>();
+            using var cmd = conn.CreateCommand();
+            int paramIdx = 0;
             for (int r = 0; r < batch.Count; r++)
             {
                 if (r > 0) sb.Append(',');
@@ -242,13 +247,18 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
                 for (int c = 0; c < ExpectedColumns; c++)
                 {
                     if (c > 0) sb.Append(',');
-                    sb.Append('{').Append(parameters.Count).Append('}');
-                    parameters.Add((object?)batch[r][c] ?? DBNull.Value);
+                    var paramName = $"@p{paramIdx}";
+                    sb.Append(paramName);
+                    var p = cmd.CreateParameter();
+                    p.ParameterName = paramName;
+                    p.Value = (object?)batch[r][c] ?? DBNull.Value;
+                    cmd.Parameters.Add(p);
+                    paramIdx++;
                 }
                 sb.Append(')');
             }
-
-            await db.Database.ExecuteSqlRawAsync(sb.ToString(), parameters.ToArray(), ct);
+            cmd.CommandText = sb.ToString();
+            await cmd.ExecuteNonQueryAsync(ct);
         }
     }
 
