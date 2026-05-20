@@ -1,6 +1,7 @@
 using Akebono.Application.Common;
 using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
+using Akebono.Domain.Orders;
 using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -36,6 +37,11 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<Product> Products => Set<Product>();
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
     public DbSet<ProductSupplierPrice> ProductSupplierPrices => Set<ProductSupplierPrice>();
+
+    // 発注関連 (Iteration 3)
+    public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
+    public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
+    public DbSet<PurchaseOrderExportLog> PurchaseOrderExportLogs => Set<PurchaseOrderExportLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -251,6 +257,94 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
 
             b.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId);
+        });
+
+        // 発注関連 (Iteration 3、Phase 5 §5)
+        modelBuilder.Entity<PurchaseOrder>(b =>
+        {
+            b.ToTable("purchase_orders");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.MgmtNo).HasColumnName("mgmt_no").IsRequired().HasMaxLength(16);
+            b.Property(x => x.OrderNo).HasColumnName("order_no").HasMaxLength(16);
+            b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
+            b.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
+            b.Property(x => x.CancelledByUserId).HasColumnName("cancelled_by_user_id");
+            b.Property(x => x.CancelReason).HasColumnName("cancel_reason").HasMaxLength(255);
+            b.Property(x => x.SupplierId).HasColumnName("supplier_id");
+            b.Property(x => x.SupplierOfficialNameSnapshot).HasColumnName("supplier_official_name_snapshot").HasMaxLength(255);
+            b.Property(x => x.SupplierCodeSnapshot).HasColumnName("supplier_code_snapshot").HasMaxLength(3);
+            b.Property(x => x.DeliveryDestinationId).HasColumnName("delivery_destination_id");
+            b.Property(x => x.CustomerNameSnapshot).HasColumnName("customer_name_snapshot").HasMaxLength(255);
+            b.Property(x => x.DepartmentId).HasColumnName("department_id");
+            b.Property(x => x.WarehouseId).HasColumnName("warehouse_id");
+            b.Property(x => x.DueDate).HasColumnName("due_date");
+            b.Property(x => x.OrdererUserId).HasColumnName("orderer_user_id");
+            b.Property(x => x.SubOrderer1UserId).HasColumnName("sub_orderer_1_user_id");
+            b.Property(x => x.SubOrderer2UserId).HasColumnName("sub_orderer_2_user_id");
+            b.Property(x => x.SubOrderer3UserId).HasColumnName("sub_orderer_3_user_id");
+            b.Property(x => x.SubOrderer4UserId).HasColumnName("sub_orderer_4_user_id");
+            b.Property(x => x.SubOrderer5UserId).HasColumnName("sub_orderer_5_user_id");
+            b.Property(x => x.SubOrderer6UserId).HasColumnName("sub_orderer_6_user_id");
+            b.Property(x => x.ManagerUserId).HasColumnName("manager_user_id");
+            b.Property(x => x.CommunicationText).HasColumnName("communication_text");
+            b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
+            b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
+
+            b.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId);
+            b.HasOne(x => x.DeliveryDestination).WithMany().HasForeignKey(x => x.DeliveryDestinationId);
+            b.HasOne(x => x.Department).WithMany().HasForeignKey(x => x.DepartmentId);
+            b.HasOne(x => x.Warehouse).WithMany().HasForeignKey(x => x.WarehouseId);
+            b.HasOne(x => x.Orderer).WithMany().HasForeignKey(x => x.OrdererUserId);
+            b.HasOne(x => x.Manager).WithMany().HasForeignKey(x => x.ManagerUserId);
+            b.HasMany(x => x.Lines).WithOne(l => l.PurchaseOrder!).HasForeignKey(l => l.PurchaseOrderId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(x => x.ExportLogs).WithOne(l => l.PurchaseOrder!).HasForeignKey(l => l.PurchaseOrderId);
+
+            b.HasIndex(x => x.MgmtNo).IsUnique();
+        });
+
+        modelBuilder.Entity<PurchaseOrderLine>(b =>
+        {
+            b.ToTable("purchase_order_lines");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.PurchaseOrderId).HasColumnName("purchase_order_id");
+            b.Property(x => x.LineNo).HasColumnName("line_no");
+            b.Property(x => x.ProductId).HasColumnName("product_id");
+            b.Property(x => x.SkuSnapshot).HasColumnName("sku_snapshot").IsRequired().HasMaxLength(11);
+            b.Property(x => x.ProductNameSnapshot).HasColumnName("product_name_snapshot").IsRequired().HasMaxLength(255);
+            b.Property(x => x.Quantity).HasColumnName("quantity");
+            b.Property(x => x.UnitPriceSnapshot).HasColumnName("unit_price_snapshot").HasColumnType("numeric(12,2)");
+            b.Property(x => x.CurrencyCodeSnapshot).HasColumnName("currency_code_snapshot").IsRequired().HasMaxLength(3).IsFixedLength();
+            b.Property(x => x.Subtotal)
+                .HasColumnName("subtotal")
+                .HasColumnType("numeric(14,2)")
+                .HasComputedColumnSql("quantity * unit_price_snapshot", stored: true)
+                .ValueGeneratedOnAddOrUpdate();
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId);
+            b.HasIndex(x => new { x.PurchaseOrderId, x.LineNo }).IsUnique();
+        });
+
+        modelBuilder.Entity<PurchaseOrderExportLog>(b =>
+        {
+            b.ToTable("purchase_order_export_logs");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.PurchaseOrderId).HasColumnName("purchase_order_id");
+            b.Property(x => x.ExportedAt).HasColumnName("exported_at");
+            b.Property(x => x.ExportedByUserId).HasColumnName("exported_by_user_id");
+            b.Property(x => x.IsFirstExport).HasColumnName("is_first_export");
+            b.Property(x => x.ExcelTemplateVersion).HasColumnName("excel_template_version").IsRequired().HasMaxLength(16);
         });
     }
 

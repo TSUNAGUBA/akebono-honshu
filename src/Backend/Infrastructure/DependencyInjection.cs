@@ -1,10 +1,12 @@
 using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Application.Masters;
+using Akebono.Application.Orders;
 using Akebono.Application.Products;
 using Akebono.Application.Users;
 using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
+using Akebono.Infrastructure.Excel;
 using Akebono.Infrastructure.Audit;
 using Akebono.Infrastructure.Auth;
 using Akebono.Infrastructure.Persistence;
@@ -55,6 +57,10 @@ public static class DependencyInjection
         // 商品関連 (Iteration 2、Phase 5 §4)
         services.AddScoped<ProductFamilyService>();
         services.AddScoped<ProductSupplierPriceService>();
+
+        // 発注関連 (Iteration 3、Phase 5 §5)
+        services.AddScoped<PurchaseOrderService>();
+        services.AddScoped<IPurchaseOrderExcelService, PurchaseOrderExcelService>();
 
         return services;
     }
