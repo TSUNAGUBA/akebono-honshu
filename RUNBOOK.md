@@ -83,6 +83,89 @@ docker compose exec postgres psql -U akebono-honshu -d akebono-honshu -c "SELECT
 
 `./db/init/01-schema.sql` が docker-compose の初期化スクリプトとして自動投入され、ロール + DB + Seed が一度に揃います。
 
+#### 選択肢 C: AWS RDS PostgreSQL を使う (Iter 4 本番移行 段階 A)
+
+> **位置付け:** `iteration4-prod-migration-plan.md` 段階 A 用。ローカル Backend / Frontend と AWS RDS の組み合わせで動作確認する。Phase 4 確定は PostgreSQL 16、現状 RDS は 14.17 だが MVP スキーマは 14 互換のため動作可能。
+>
+> **前提:** RDS インスタンス (`akebono1` 等) のセキュリティグループに開発 PC の IP からの 5432 接続を許可済み。
+
+##### Step 1. データベース新規作成 (RDS マスター接続)
+
+ローカル PC の psql から RDS マスターユーザで一度接続し、本システム用 DB を作成 (`akebono-honshu`)。他システムとは DB 単位で論理分離する。
+
+```bash
+# 接続 (パスワードは対話的に聞かれる、ユーザ手元のものを入力)
+psql -h <rds-endpoint> -p 5432 -U pguser -d postgres
+```
+
+```sql
+-- akebono-honshu DB を新規作成 (オーナーは pguser のまま、別途アプリ専用ユーザを作る場合は段階 C で実施)
+CREATE DATABASE "akebono-honshu" OWNER pguser;
+\q
+```
+
+##### Step 2. スキーマ初期化 (4 ファイルを順に投入)
+
+```bash
+# 新規 DB に接続し直し、初期化スクリプトを順に投入
+psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+  -f db/init/01-schema.sql
+
+psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+  -f db/init/02-masters.sql
+
+psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+  -f db/init/03-products.sql
+
+psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+  -f db/init/04-orders.sql
+
+# 動作確認
+psql "host=<rds-endpoint> port=5432 dbname=akebono-honshu user=pguser sslmode=require" \
+  -c "SELECT id, login_id, display_name FROM users;"
+# → owner / planner / sales の 3 件が表示されれば OK
+```
+
+> パスワードは `PGPASSWORD` 環境変数で渡すと自動化しやすい (`PGPASSWORD=xxx psql ...`)。
+
+##### Step 3. Backend の接続先を RDS に切替
+
+```bash
+cd src/Backend/Presentation
+
+# Connection String を user-secrets に格納 (リポジトリには記録されない)
+dotnet user-secrets set "ConnectionStrings:Postgres" \
+  "Host=<rds-endpoint>;Port=5432;Database=akebono-honshu;Username=pguser;Password=<your-password>;SslMode=Require"
+
+# 確認 (パスワードは出力される、Claude には共有しない)
+dotnet user-secrets list
+```
+
+> **戻したいとき (ローカル PostgreSQL へロールバック):**
+> `dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=akebono-honshu;Username=akebono-honshu;Password=localdev"`
+
+##### Step 4. 動作確認
+
+```bash
+# Backend
+dotnet run --project Presentation
+
+# 別ターミナル / Frontend
+cd ../../Frontend && pnpm dev
+```
+
+ブラウザで `http://localhost:3000` → ログイン (owner / 開発時パスワード) → ユーザ一覧 → 商品管理 が表示できれば、ローカル UI + AWS RDS の構成で疎通完了。
+
+##### トラブルシュート
+
+| 症状 | 確認ポイント |
+|---|---|
+| `connection refused` | RDS セキュリティグループ、開発 PC の現在 IP が許可されているか |
+| `password authentication failed` | pguser のパスワードを再確認 (RDS console から再リセット可能) |
+| `SSL is not enabled on the server` | RDS の `rds.force_ssl` パラメータ確認、Connection String の `SslMode=Require` |
+| Backend 起動時 EF Core エラー | スキーマ未投入。Step 2 を再実行 |
+| `relation "..." does not exist` | スキーマファイルの投入順序ミス (01 → 02 → 03 → 04 の順) |
+
 ---
 
 ## 2. 初回セットアップ

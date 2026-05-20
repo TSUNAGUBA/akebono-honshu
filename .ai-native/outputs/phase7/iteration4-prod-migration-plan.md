@@ -44,13 +44,15 @@ flowchart LR
 
 | 項目 | 値 | 判定 |
 |---|---|---|
-| エンジン / バージョン | `__TODO__` (例: PostgreSQL 16.2 / MySQL 8.0 等) | PostgreSQL 16.x ならば再利用候補、他は新規必須 |
-| リージョン | `__TODO__` (例: ap-northeast-1) | architecture.md §1.1 で `ap-northeast-1` 確定、不一致なら新規 |
-| インスタンスクラス | `__TODO__` (例: db.t4g.small / db.t3.medium) | サイズ問わず PoC では OK。本番運用は db.t4g.small 以上推奨 |
-| Multi-AZ | `__TODO__` (Yes/No) | 本番は Yes 必須。No なら段階 C で切替 |
-| パブリックアクセス | `__TODO__` (Yes/No) | 本来は No (VPC 内部接続)。段階 A で開発接続が必要な場合は IP 制限で一時許可 |
-| 現在の利用状況 | `__TODO__` (他システム稼働中 / 空) | 稼働中なら **別データベース新規作成で論理分離**、空なら再利用可 |
-| **判定** | – | **再利用 / 新規作成** (オペレーター + Claude 協議で確定) |
+| エンジン / バージョン | **PostgreSQL 14.17** (2026-05-20 確認) | Phase 4 確定は 16 だが、本 MVP スキーマは PostgreSQL 14 互換 (使用機能: `GENERATED ALWAYS AS ... STORED` / Partial Index は 12+ で利用可) のため **段階 A〜C は 14.17 で進行**。本番運用前に 16 へアップグレード推奨 |
+| リージョン | **ap-northeast-1d** ✅ | Phase 4 確定 `ap-northeast-1` と一致 |
+| インスタンスクラス | **db.t4g.medium** | サイズ問題なし |
+| Multi-AZ | (要確認、ステータス画面で「ロール: インスタンス」だったため Single-AZ 可能性高い) | 本番運用前に Multi-AZ 化推奨 |
+| パブリックアクセス | (要確認、開発 PC からの 5432 接続を許可) | 段階 A では一時許可、段階 C で VPC 内部接続のみに変更 |
+| 現在の利用状況 | **他システム使用中** (2026-05-20 オペレーター回答) | **新規 DB `akebono-honshu` を作成して論理分離** |
+| エンドポイント | `akebono1.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com` | – |
+| マスターユーザ | `pguser` (パスワードはオペレーターローカル保管) | – |
+| **判定** | – | **再利用 (akebono1 インスタンス内に akebono-honshu DB を新規作成)** |
 
 ### 1.2 既存 S3
 
@@ -105,11 +107,15 @@ flowchart LR
 - `dotnet user-secrets set "ConnectionStrings:Postgres" "<元のローカル PostgreSQL>"` で接続先を戻す
 - AWS RDS のデータは保持 (削除しない)
 
-### 2.5 ヒアリング `__TODO__` リスト
+### 2.5 ヒアリング結果 (2026-05-20 確定)
 
-- [ ] §1.1 RDS の判定 (再利用 / 新規)
-- [ ] RDS エンドポイント / ポート / DB 名 / ユーザ名 (パスワードは別経路)
-- [ ] AWS RDS のセキュリティグループに開発 PC の IP を許可できるか
+- [x] §1.1 RDS 判定: **既存 `akebono1` インスタンス内に `akebono-honshu` DB を新規作成して論理分離**
+- [x] RDS エンドポイント: `akebono1.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com:5432`、ユーザ `pguser` (パスワードはオペレーターローカル保管、`dotnet user-secrets` で Claude に共有せず)
+- [x] 開発 PC からの 5432 接続: **許可済 (2026-05-20 オペレーター確認)**
+
+### 2.6 オペレーター実行コマンド (RUNBOOK §1.3 選択肢 C)
+
+詳細手順は `RUNBOOK.md` §1.3 選択肢 C に集約。一本道で記載されているため、コピー&ペーストで実行可能。`<rds-endpoint>` / `<your-password>` は手元の値に置換。
 
 ---
 
