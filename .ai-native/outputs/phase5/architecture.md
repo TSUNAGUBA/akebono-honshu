@@ -344,7 +344,13 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 | 関心事 | 実装 | 該当要件 | 実装ステータス |
 |---|---|---|---|
 | ログイン | Firebase Auth `signInWithEmailAndPassword` | AUTH-001 (UC-AUTH-01) | ✅ 段階 B 完了 |
-| 削除済ユーザ拒否 | Firebase Auth `disabled=true` + RDS `is_active=false` / `is_deleted=true` | AUTH-003 / SEC-12 / SEC-15 | ✅ 段階 B 完了 (OnTokenValidated で `!IsDeleted && IsActive` 引当 → 失敗時に第 2 段 `!IsDeleted` で users 行確認し `Auth.LoginRejected.Inactive` (actor_user_id 付き) または `Auth.UidUnboundProbe` (actor_user_id=null) で監査記録、5 分 atomic de-dup) |
+| 削除済ユーザ拒否 | Firebase Auth `disabled=true` + RDS `is_active=false` / `is_deleted=true` | AUTH-003 / SEC-12 / SEC-15 | ✅ 段階 B 完了 (OnTokenValidated で **単一 cache + タプル引当** により `(ActiveId, AnyId)` を atomic に取得し、`ActiveId` 有値 → Claim 付与、`ActiveId=null && AnyId` 有値 → `Auth.LoginRejected.Inactive` (actor_user_id 付き)、`AnyId=null` → `Auth.UidUnboundProbe` (actor_user_id=null)、いずれも 5 分 atomic de-dup) |
+
+> **soft-deleted (`IsDeleted=true`) ユーザの扱い (設計判断、4 周目レビュー反映):** OnTokenValidated の引当 WHERE は `!IsDeleted` のため、soft-deleted ユーザは第 2 段でも hit せず `Auth.UidUnboundProbe` (actor_user_id=null) として記録される。これは「Firebase Auth `disabled=true` 同期を SoT 防御の単一ポイント」とする設計判断による:
+> - 退職処理時は admin オペレータが Firebase Console で当該 user を `disabled=true` に設定 (P-12 admin UI 着手後は自動化)
+> - 以降は Firebase ID Token 発行段階で拒否されるため、Backend には到達しない (= 監査必要性低)
+> - 万一 Firebase 側設定漏れ + RDS 側 soft-delete のみのケースは `Auth.UidUnboundProbe` で偵察として記録される (個別追跡は `actor_firebase_uid` 列で行う設計、現状未実装は Post-MVP TODO)
+> 個別追跡を厳密化するなら第 2 段 WHERE に `IgnoreQueryFilters()` + `Auth.LoginRejected.Deleted` を追加するが、Firebase 側防御で十分という現運用前提で本設計を採択。
 | パスワードハッシュ | Firebase 標準 scrypt | SEC-04 | ✅ Firebase 標準 |
 | ブルートフォース | Firebase 標準レートリミット | SEC-06 | ✅ Firebase 標準 |
 | アイドル切断 8h | フロント `useIdle` + `signOut` | SEC-05 | ⏳ 段階 C 着手後実装 |

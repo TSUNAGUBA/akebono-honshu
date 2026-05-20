@@ -502,7 +502,7 @@
 | `actor_firebase_uid` | `VARCHAR(128) NULL` | Firebase UID（users テーブル削除済でも追跡可）|
 | `actor_ip` | `INET NULL` | 操作元 IP |
 | `actor_user_agent` | `VARCHAR(512) NULL` | UA |
-| `action` | `VARCHAR(64) NOT NULL` | 例: `Product.Create`, `Order.Submit`, `Login.Success`, `Login.Failure`, `Price.View`, `Excel.Export` |
+| `action` | `VARCHAR(64) NOT NULL` | 例: `Product.Create`, `Order.Submit`, `Login.Success`, `Auth.LoginRejected.Inactive`, `Auth.UidUnboundProbe`, `Price.View`, `Excel.Export`。認証拒否系は OnTokenValidated 側で記録される (`Login.Failure` という名称は使用しない、§Architecture §5.1 参照) |
 | `entity_type` | `VARCHAR(64) NULL` | 対象エンティティ（products, purchase_orders 等）|
 | `entity_id` | `BIGINT NULL` | 対象 ID |
 | `entity_business_key` | `VARCHAR(64) NULL` | 業務 ID（sku, mgmt_no, order_no 等）|
@@ -526,7 +526,7 @@
 
 > **記録対象（C-03 + SEC-13）:**
 > - 主要トランザクション: product / product_family / product_supplier_price / purchase_order / purchase_order_line の C/U/D
-> - 認証イベント: Login.Success / Login.Failure / Logout / PasswordReset
+> - 認証イベント: `Login.Success` (成功) / `Auth.LoginRejected.Inactive` (IsActive=false ユーザ拒否、`actor_user_id` 付き) / `Auth.UidUnboundProbe` (未紐付け Firebase UID 偵察、`actor_user_id=NULL`) / `Logout` / `PasswordReset`。OnTokenValidated 内で per-UID 5 分 atomic de-dup が掛かっているため、同一 UID の連続失敗試行は 5 分に 1 件のみ記録 (audit_logs DoS 増幅対策、`architecture.md §5.1` 参照)
 > - 機密データ閲覧: Price.View（商品詳細での仕入単価表示）
 > - エクスポート: Excel.Export, CSV.Export, Image.Download
 > - 管理操作: PermissionsChanged, MasterDataChanged
@@ -589,7 +589,7 @@
 | 商品マスタ・発注書 | 中 | RDS | 同上 | C/U/D を記録 |
 | 取引先・仕入先 | 中 | RDS | 同上 | マスタ変更を記録 |
 | ユーザ業務情報 | 軽微 | RDS | 同上 | 権限変更を記録 |
-| ユーザ認証情報 | 軽微 | Firebase Auth | Firebase 標準 | Login.Success / Failure / PasswordReset を記録 |
+| ユーザ認証情報 | 軽微 | Firebase Auth | Firebase 標準 | `Login.Success` / `Auth.LoginRejected.Inactive` / `Auth.UidUnboundProbe` / `PasswordReset` を記録 (`architecture.md §5.1` 参照) |
 | 商品画像 | 低-中 | S3 | SSE-S3 + Pre-signed URL | Image.Download を記録 |
 
 > **Phase 5 で再評価（Phase 4 #5 合意）:** pgcrypto / Envelope Encryption による `unit_price` のカラム単位暗号化採否を再評価。本ドラフトでは **A 案（KMS Storage Encryption + アクセス制御）** で設計、Phase 5 後半で監査結果に応じ判断。

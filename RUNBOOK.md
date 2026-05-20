@@ -50,6 +50,7 @@
    - `Auth.LoginRejected.Inactive` (result=1、actor_user_id 付き): inactive ユーザ拒否
    - `Auth.UidUnboundProbe` (result=1、actor_user_id=NULL): 未紐付け UID 偵察試行
    > **5 分 de-dup 注意:** 同一 UID の拒否は 5 分に 1 回しか記録されない (audit_logs DoS 増幅対策)。連続テスト時は **5 分待つか Backend を再起動** して cache を flush してください。
+   > **`is_active` 変更後の反映遅延:** ユーザを `is_active=false → true` (または逆) に切り替えた際、OnTokenValidated の `IMemoryCache` が最大 60 秒間古い状態を保持します (P-12 admin UI 着手後は自動 `cache.Remove` を呼ぶ前提)。即時反映が必要な場合は **Backend を再起動** してください。`fb_uid_resolve:{uid}` と `audit_logged:{uid}` の 2 種類の cache を同時に flush するのと等価です。
 
 > **Firebase config 設定 (レビュー指摘 SA P0-1 反映):**
 > - **Backend:** `appsettings.json:Firebase:ProjectId` は `__OVERRIDE_ME__` プレースホルダー。dev は `appsettings.Development.json` で `akebono-honshu` に上書き済。本番は環境変数 `Firebase__ProjectId=akebono-honshu-prod` 等で上書きする (起動時に Program.cs が値を検証し、プレースホルダーのままなら throw)

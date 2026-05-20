@@ -1,9 +1,10 @@
 using Akebono.Application.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Akebono.Application.Auth;
 
-public class AuthService(IAkebonoDbContext db, IAuditLogger audit)
+public class AuthService(IAkebonoDbContext db, IAuditLogger audit, ILogger<AuthService> logger)
 {
     /// <summary>
     /// Firebase Auth でログインに成功したフロントが最初に呼ぶ sync endpoint の実装。
@@ -23,8 +24,14 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit)
         if (user is null)
         {
             // OnTokenValidated を通過しているのに本メソッドで users 行が引けない極稀ケース
-            // (cache TTL 内に user が編集された等)。Claim 付与済を信用せず安全側に倒し 403。
-            // 拒否監査は OnTokenValidated で既に記録済 (Auth.LoginRejected.Inactive 等)。
+            // (cache TTL 内に user が IsActive=false / IsDeleted=true へ編集された race)。
+            // Claim 付与済を信用せず安全側に倒し 403。拒否監査は OnTokenValidated で既に
+            // 記録済のため audit は呼ばないが、CloudWatch から事象を観測できるよう warn ログを残す
+            // (4 周目 P2-2 反映: 旧実装で Login.Failure audit が拾っていた可観測性を log で確保)。
+            logger.LogWarning(
+                "SyncAsync: OnTokenValidated 通過後に users 行が引けず (uid={Uid})。" +
+                "cache TTL 内に user が編集された race の可能性",
+                firebaseUid);
             return null;
         }
 

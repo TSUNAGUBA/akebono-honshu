@@ -16,13 +16,6 @@ public static class AuthEndpoints
     public const string AkebonoUserIdClaim = "akebono_user_id";
 
     /// <summary>
-    /// Firebase Auth ログイン直後の業務情報同期 endpoint パス (絶対パス完全一致用)。
-    /// OnTokenValidated 内で「/auth/sync 経路は SyncAsync 側で監査するためここでは記録しない」
-    /// 判定に使う際、`EndsWith` ではなく `Equals` で照合するための定数。
-    /// </summary>
-    public const string SyncPath = "/api/v1/auth/sync";
-
-    /// <summary>
     /// Firebase ID Token の ClaimsPrincipal から Firebase UID を取得する。
     /// Firebase は `user_id` claim を発行するが、ASP.NET Core の JwtBearer ハンドラが
     /// 一部の claim を `ClaimTypes.NameIdentifier` にマップするケースに備え両方を試す。

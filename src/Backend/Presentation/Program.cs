@@ -41,20 +41,30 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
     // downloadExcel) で filename 抽出に使用 (Iter 3 O-06)。
     .WithExposedHeaders("Content-Disposition")));
 
-// Firebase Auth + JwtBearer 認証 (Iter 4 段階 B、3 周目レビュー反映の最終形)
+// Firebase Auth + JwtBearer 認証 (Iter 4 段階 B、4 周目レビュー反映の最終形)
 // - Firebase ID Token を JWKS で検証 (issuer/audience = projectId、ValidateIssuerSigningKey 明示)
-// - OnTokenValidated で users.firebase_uid → users.id を 2 段引当 (詳細は下記コメント)
-// - 第 1 段 `!IsDeleted && IsActive` で hit → Claim 付与で通常認証成立
-// - 第 1 段失敗時に第 2 段 `!IsDeleted` で再検索:
-//   - hit → `Auth.LoginRejected.Inactive` で actor_user_id 付き監査 (SEC-15、個別追跡可能)
-//   - hit せず → `Auth.UidUnboundProbe` で actor_user_id=null 監査 (偵察検知)
+// - OnTokenValidated で users.firebase_uid → users.id を **単一 cache + タプル引当** で取得
+//   - cache key `fb_uid_resolve:{uid}` (60s) に `(ActiveId, AnyId)` を atomic に格納
+//   - ActiveId: `!IsDeleted && IsActive` 引当結果 (null なら拒否対象)
+//   - AnyId:    `!IsDeleted` 引当結果 (null なら未紐付け、有値なら inactive ユーザを示す)
+//   - 4 周目レビューで指摘された 2 段 cache 乖離 (CR P1-1) を解消するため単一 cache に統合
+// - 判定分岐:
+//   - ActiveId 有値 → Claim 付与 (通常認証成立)
+//   - ActiveId=null かつ AnyId 有値 → `Auth.LoginRejected.Inactive` を actor_user_id 付き監査 (SEC-15)
+//   - ActiveId=null かつ AnyId=null → `Auth.UidUnboundProbe` を actor_user_id=null 監査 (偵察検知)
+// - 監査記録は `cache.GetOrCreateAsync($"audit_logged:{uid}", ...)` で per-UID 5 分 atomic de-dup
 // - DB 障害時は warn ログ + Claim 未付与で続行 (CLAUDE.md 原則 4 非ブロッキング)
-// - 監査記録は `cache.GetOrCreateAsync` で per-UID 5 分 atomic de-dup (TOCTOU レース防止 + DoS 増幅対策)
-// - cache 注意: user 編集 API (段階 C 着手後 P-12) で firebase_uid 変更 / 論理削除 / IsActive 変更した際は
-//   cache.Remove($"fb_uid:{uid}") と cache.Remove($"fb_uid_any:{uid}") を呼んで 60s 遅延を回避すること
+// - cache 無効化責務 (段階 C P-12 user 編集 API 着手後):
+//   firebase_uid 変更 / 論理削除 / IsActive 変更時は **2 つの cache を同時に Remove** すること
+//   1. `cache.Remove($"fb_uid_resolve:{uid}")` — 引当キャッシュ flush (60s 遅延回避)
+//   2. `cache.Remove($"audit_logged:{uid}")` — de-dup 解除 (復活後の新規拒否を即座に監査可能化)
 // - multi-instance 注意: 段階 C で App Runner を 2 instance 以上に水平拡張する場合 IMemoryCache は
 //   プロセスローカルかつ memory pressure で eviction される (de-dup の信頼性も低下)。架構判断は
 //   architecture.md §4.5 参照
+// - soft-deleted (`IsDeleted=true`) ユーザの扱い: 第 2 段 WHERE も `!IsDeleted` のため hit せず
+//   `Auth.UidUnboundProbe` 扱い (actor_user_id=null)。これは「Firebase Auth `disabled=true` 同期を
+//   SoT 防御の単一ポイント」とする設計判断 (architecture.md §5.1 参照)。退職者の不正試行は Firebase
+//   側で先に拒否される前提
 var firebaseProjectId = builder.Configuration["Firebase:ProjectId"];
 if (string.IsNullOrEmpty(firebaseProjectId) || firebaseProjectId == "__OVERRIDE_ME__")
 {
@@ -81,14 +91,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
         options.Events = new JwtBearerEvents
         {
-            // OnTokenValidated は 2 段 lookup + action 分離で SEC-12 / SEC-15 を満たす (3 周目レビュー P0-1 反映):
-            //   1. 第 1 段 `!IsDeleted && IsActive` → hit したら Claim 付与で通常認証成立
-            //   2. 第 1 段失敗時に第 2 段 `!IsDeleted` (IsActive 問わず) で users 行を再検索
-            //      - hit → `Auth.LoginRejected.Inactive` を actor_user_id 付きで監査 (個別追跡可能、SEC-15)
-            //      - hit せず → `Auth.UidUnboundProbe` を actor_user_id=null で監査 (未紐付け攻撃検知)
-            //   3. 監査記録は `cache.GetOrCreate` で per-UID 5 分 atomic de-dup (TOCTOU レース防止、P1-1)
-            // 1〜2 周目で SyncAsync 側に分散していた inactive Login.Failure は dead code 化したため
-            // AuthService.cs から削除済。/auth/sync 経路スキップロジック (2 周目導入) も撤廃 (de-dup で十分)。
+            // OnTokenValidated は **単一 cache + タプル引当** で SEC-12 / SEC-15 を満たす (4 周目 P1-1 反映):
+            // 旧実装の 2 段 cache (`fb_uid:{uid}` + `fb_uid_any:{uid}`) は独立 TTL のため、inactive→active
+            // 切替直後に「active ユーザを Auth.LoginRejected.Inactive で誤監査」する状態乖離が起きる。
+            // factory 内で 1 度の DB lookup から `(ActiveId, AnyId)` を atomic に算出することで乖離不能化。
+            // 監査記録は `cache.GetOrCreateAsync($"audit_logged:{uid}", ...)` で per-UID 5 分 atomic de-dup。
             OnTokenValidated = async ctx =>
             {
                 var firebaseUid = AuthEndpoints.GetFirebaseUid(ctx.Principal);
@@ -99,22 +106,30 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     .CreateLogger("JwtBearer.OnTokenValidated");
                 var cache = sp.GetRequiredService<IMemoryCache>();
 
-                long? activeActorId;
+                (long? ActiveId, long? AnyId) resolved;
                 try
                 {
-                    activeActorId = await cache.GetOrCreateAsync(
-                        $"fb_uid:{firebaseUid}",
+                    resolved = await cache.GetOrCreateAsync(
+                        $"fb_uid_resolve:{firebaseUid}",
                         async entry =>
                         {
                             // 60s キャッシュ: firebase_uid UNIQUE index 前提で安全。
-                            // ユーザ無効化・soft-delete の反映は最大 60s 遅延 (段階 C で
-                            // 編集 API 追加時に cache.Remove($"fb_uid:{uid}") を呼ぶ仕組みを入れる前提)。
+                            // ユーザ無効化・soft-delete の反映は最大 60s 遅延 (段階 C で編集 API 追加時に
+                            // cache.Remove を呼ぶ仕組みを入れる前提、Program.cs 上部コメント参照)。
                             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
                             var db = sp.GetRequiredService<IAkebonoDbContext>();
-                            return await db.Users
-                                .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted && u.IsActive)
-                                .Select(u => (long?)u.Id)
+                            // 1 度の DB クエリで (IsActive な行、!IsDeleted な行) の id を同時取得し、
+                            // ActiveId / AnyId のペアを atomic に確定させる。同じスナップショットから
+                            // 派生するため必ず整合する (ActiveId 有値 → AnyId も同値)。
+                            var row = await db.Users
+                                .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted)
+                                .Select(u => new { u.Id, u.IsActive })
                                 .FirstOrDefaultAsync(ctx.HttpContext.RequestAborted);
+                            if (row is null)
+                            {
+                                return ((long?)null, (long?)null);
+                            }
+                            return (row.IsActive ? (long?)row.Id : null, (long?)row.Id);
                         });
                 }
                 catch (Exception ex)
@@ -126,32 +141,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     return;
                 }
 
-                if (activeActorId is null)
+                if (resolved.ActiveId is null)
                 {
-                    // 第 1 段で hit せず → 第 2 段 (IsActive 問わず) で inactive/deleted の区別を行う
-                    long? inactiveActorId = null;
-                    try
-                    {
-                        inactiveActorId = await cache.GetOrCreateAsync(
-                            $"fb_uid_any:{firebaseUid}",
-                            async entry =>
-                            {
-                                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
-                                var db = sp.GetRequiredService<IAkebonoDbContext>();
-                                return await db.Users
-                                    .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted)
-                                    .Select(u => (long?)u.Id)
-                                    .FirstOrDefaultAsync(ctx.HttpContext.RequestAborted);
-                            });
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex,
-                            "Firebase UID {Uid} → 第 2 段 users 引当てで例外発生、監査記録スキップ", firebaseUid);
-                        return;
-                    }
-
-                    // 監査記録は cache.GetOrCreateAsync で atomic 化し TOCTOU レースを防止 (P1-1)。
+                    // 拒否経路: AnyId 有値なら inactive ユーザ、null なら未紐付け UID。
+                    // 監査記録は cache.GetOrCreateAsync で atomic 化し TOCTOU レースを防止。
                     // factory が呼ばれた = 新規 5 分窓、cache hit = de-dup 期間中。
                     var probeKey = $"audit_logged:{firebaseUid}";
                     await cache.GetOrCreateAsync(probeKey, async entry =>
@@ -167,18 +160,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                             var path = ctx.HttpContext.Request.Path.Value ?? string.Empty;
                             var note = $"uid={uidShort}, method={ctx.HttpContext.Request.Method}, path={path}";
 
-                            if (inactiveActorId is not null)
+                            if (resolved.AnyId is not null)
                             {
-                                // inactive (または soft-deleted ではないが IsActive=false) ユーザの拒否。
-                                // actor_user_id 付きで記録することで個別追跡可能 (SEC-12 / SEC-15)。
-                                await audit.LogAsync(inactiveActorId.Value, "Auth.LoginRejected.Inactive",
-                                    entityType: "User", entityId: inactiveActorId.Value,
+                                // IsActive=false ユーザの拒否。actor_user_id 付きで個別追跡可能 (SEC-15)。
+                                await audit.LogAsync(resolved.AnyId.Value, "Auth.LoginRejected.Inactive",
+                                    entityType: "User", entityId: resolved.AnyId.Value,
                                     note: note, success: false,
                                     cancellationToken: ctx.HttpContext.RequestAborted);
                             }
                             else
                             {
-                                // users 行自体が無い → 未紐付け Firebase UID による偵察試行。
+                                // users 行が無い (未紐付け or soft-deleted)。soft-deleted は Firebase Auth
+                                // 側 disabled=true で防御する設計のため、ここに到達するのは原則「未紐付け
+                                // 偵察試行」のみ (architecture.md §5.1 設計判断参照)。
                                 await audit.LogAsync(null, "Auth.UidUnboundProbe",
                                     note: note, success: false,
                                     cancellationToken: ctx.HttpContext.RequestAborted);
@@ -197,7 +191,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 {
                     identity.AddClaim(new System.Security.Claims.Claim(
                         AuthEndpoints.AkebonoUserIdClaim,
-                        activeActorId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                        resolved.ActiveId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
                 }
             },
         };
