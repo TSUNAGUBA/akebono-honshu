@@ -190,6 +190,36 @@
 
 **ゲート:** 全 6 機能完成 + 独立コードレビュアー (バルク登録のトランザクション境界 / S3 整合性 / 画像順序管理) + システム監査官 (画像 S3 アクセス制御 / Pre-signed URL TTL / KMS 暗号化) 指摘ゼロ
 
+#### Iteration 2 完了記録 (2026-05-20)
+
+**実装内容 (commit 範囲: `91b52c0` → `1698051`):**
+- 2.A: `db/init/03-products.sql` で商品関連 4 テーブル (product_families / products / product_images / product_supplier_prices) + Seed (1 企画 6 SKU + 単価 1 件)
+- 2.B: Domain (ProductFamily / Product / ProductImage / ProductSupplierPrice Entity + Sku Value Object で 11 桁品番組立)
+- 2.C: AkebonoDbContext 拡張 + ProductFamilyService (バルク登録 1 トランザクション) + ProductSupplierPriceService (BR-04 履歴管理)
+- 2.D: 商品 REST endpoint (バルク登録 / 一覧 / 詳細 / 更新 / 削除 / 単価追加 + 履歴 / 画像 CRUD) + Static Files で画像配信 (`wwwroot/uploads/product-images/`)
+- 2.E: Frontend 商品マスタ画面 (一覧テーブル/カード切替 + ウィザード + 詳細・修正 + 画像管理)
+- 2.E+: カード表示に代表画像追加 (Phase 5 `primary_image` 設計反映)、カードサイズ調整 (1:1 正方形 / lg 5 列)
+- 2.F: 権限制御は Iteration 1.F の `CheckMasterEditAsync` を `ProductEndpoints` に適用 (独立タスクなし)
+- 2.G: RUNBOOK + iteration-plan 更新
+
+**MIG-3 関連 (Iteration 2 中の判断):**
+既存生産管理システム CSV (1,288 SKU、138 列、SHIFT_JIS) の取込検討の結果、構造ギャップが大きく Iteration 4 MIG-3 へ送り。8 件の移行課題を §3 Iteration 4 セクションに記録。CSV 本体は機密情報含むため git 管理せず、オペレーター手元保管。
+
+**Iteration 2 で得た知見 (Iteration 3 以降に適用):**
+
+| # | 知見 | Iteration 3 以降の適用方針 |
+|---|---|---|
+| 1 | Phase 5 `primary_image` を Subquery `Where + OrderBy + Select.FirstOrDefault()` で取得すると N+1 を回避できる | 発注書一覧 (O-03) のように複数の集計 + 関連エンティティ参照がある場合も同パターンを踏襲 |
+| 2 | バルク登録の sequence_no 自動採番は同一トランザクション内の `Max(int.Parse(seq_no)) + 1` で簡素実装可能 (UNIQUE 制約があるため衝突しても DB 側で防止) | 発注書 `order_no` 採番も同パターン (初回 Excel 出力時の `order_no` 採番、O-06 詳細) |
+| 3 | C# Minimal API で `IFormFile` を扱う endpoint は `DisableAntiforgery()` 必須 (Bearer 認証は別途実施しているため CSRF 不要) | Excel 出力アップロード等の multipart endpoint でも同様 |
+| 4 | EF Core 8 の `Database.BeginTransactionAsync()` は `IDbContextTransaction` を返却。`await using` で disposal 確実、`tx.CommitAsync()` / `RollbackAsync()` で明示 | 発注書編集の snapshot 凍結 (O-06) も同パターン |
+| 5 | Tailwind `aspect-square` + `object-cover` で正方形画像カードがレスポンシブで安定 | 発注書一覧の出力済バッジ (F-10 解消) も同じ視覚パターンが応用可能 |
+| 6 | 画像のローカル保存 (`wwwroot/uploads/...`) → DB `s3_key` 相対パス → Static Files 配信 の構成は、Iteration 4 で `s3_key` を実際の S3 key に変更するだけで切替可能な I/F 設計 | Iteration 4 で `IImageStorageService` 抽象を導入し、`LocalImageStorage` / `S3ImageStorage` で切替実装 |
+| 7 | DTO の `decimal` `DateOnly` 型は Npgsql 8.0.x で透過マッピングされ、`numeric(12,2)` / `date` 型と整合 | 発注書の `unit_price_snapshot` / `delivery_date` も同型を採用 |
+
+**Iteration 3 着手前の整備事項 (なし):**
+発注書 (purchase_orders / purchase_order_lines) の FK 参照先 (product_families / products / suppliers / delivery_destinations / document_template_* / users) はすべて投入済み。
+
 ---
 
 ### Iteration 3: 発注書 + Excel 出力 (推奨期間: 3 週間、MVP のクリティカルパス)
@@ -271,8 +301,8 @@ CLAUDE.md 原則 9 / 方法論 SP-8 に従い、**各 Iteration 完了時に独�
 |---|---|---|---|---|
 | Iteration 0 | 1-2 週間 | – | ✅ 完了 (2026-05-19) | **ローカル開発環境のみ** (docker-compose / .NET 8 + Nuxt 4 スケルトン / ダミー認証 / ログイン + ユーザ一覧 1 画面表示) |
 | Iteration 1 | 2-3 週間 | 8 機能 | ✅ 完了 (2026-05-19) | C-01〜C-03 + M-01〜M-05 (ローカルダミー認証で動作)。C-02 は品番台帳権限のみ実装、他 3 権限は Iteration 2/3 で実需対応 |
-| Iteration 2 | 2-3 週間 | 6 機能 | 次 | P-01〜P-06 (ローカルダミー認証で動作) |
-| Iteration 3 | 3 週間 | 7 機能 | – | O-01〜O-07 (Excel 出力含む、ローカルダミー認証で動作) |
+| Iteration 2 | 2-3 週間 | 6 機能 | ✅ 完了 (2026-05-20) | P-01〜P-06 (ローカルダミー認証で動作)。画像管理はローカルファイル保存、Iter 4 で S3 移行。MIG-3 既存 CSV 取込は Iter 4 へ申し送り |
+| Iteration 3 | 3 週間 | 7 機能 | 次 | O-01〜O-07 (Excel 出力含む、ローカルダミー認証で動作) |
 | Iteration 4 | 2-3 週間 | – | – | Hardening + **AWS インフラ構築 + Firebase 本番認証切替** + CI/CD + UAT 準備 |
 | **合計** | **約 10-14 週間 (約 2.5-3.5 ヶ月)** | **21 機能** | | MVP リリース |
 

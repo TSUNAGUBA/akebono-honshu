@@ -220,6 +220,30 @@ pnpm dev
    ```
    期待結果: `Brand.Create`, `Brand.Update`, `Brand.Delete`, `Brand.Restore`, `Supplier.List` 等が記録
 
+### 3.2 Iteration 2 追加シナリオ (商品マスタ P-01〜P-06)
+
+> **前提:** `db/init/03-products.sql` を pgAdmin4 で実行して商品関連 4 テーブル + Seed 投入。Backend 再起動でローカル画像保存先 `wwwroot/uploads/product-images/` が自動作成される。
+
+1. **商品企画一覧 (P-04):** `http://localhost:3000/products` → デモ商品 春夏ベーシック が表示される
+   - テーブル / カード ボタンで切替 (lg 以上 5 列、md 3 列、sm 2 列)
+   - カード表示で代表画像 (`primary_image_s3_key`) が表示される (画像未登録時はプレースホルダー)
+2. **商品新規ウィザード (P-01〜P-03):** ナビ右上「+ 新規商品ウィザード」→ 4 セクションフォームで一括登録
+   - 1 トランザクションで family + 色×サイズ全 SKU + 仕入単価を登録
+   - 11 桁品番が自動生成される (例: NA1001A4010)
+3. **詳細・修正 (P-05):** 商品カードクリック → 企画情報・SKU 一覧・仕入単価・画像のフル詳細
+   - 「編集」ボタンで属性 (ブランド / 機能 / 商品群 / 素材 3 種 / 名称 / 状態) を変更
+   - 「+ 新単価追加」: 旧単価の `effective_to` が自動更新 (BR-04 履歴管理)
+4. **画像管理 (P-06):** 詳細画面「+ 画像追加」→ JPEG/PNG/WebP アップロード (5MB / 5 枚まで)
+   - Backend の `wwwroot/uploads/product-images/{familyId}/` にファイル保存
+   - DB の `s3_key` には相対パスを保存、Iteration 4 で S3 移行時に I/F 互換
+5. **権限制御:** planner / sales でログイン → 編集ボタン全て非表示、Swagger で直接 POST すると 403 Forbidden
+6. **監査ログ:**
+   ```sql
+   SELECT id, occurred_at, action, entity_type, entity_id, note
+   FROM audit_logs WHERE entity_type LIKE 'Product%' ORDER BY id DESC LIMIT 10;
+   ```
+   期待: `ProductFamily.Create` (note に SKU 件数 + 金額マスク "***" 含む), `ProductFamily.View`, `ProductSupplierPrice.Add` 等が記録
+
 ---
 
 ## 4. 想定エンドポイント
@@ -234,6 +258,17 @@ pnpm dev
 | GET | `/api/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
 | POST/PATCH/DELETE | `/api/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
 | POST | `/api/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission >= 1` |
+| GET | `/api/v1/products/families` | 商品企画一覧 (P-04) | Bearer | – |
+| GET | `/api/v1/products/families/{id}` | 商品企画詳細 (P-05) | Bearer | – |
+| POST | `/api/v1/products/families/complete` | バルク登録 (P-01〜P-03) | Bearer | `product_ledger_permission >= 1` |
+| PATCH | `/api/v1/products/families/{id}` | 企画更新 (P-05) | Bearer | `product_ledger_permission >= 1` |
+| DELETE | `/api/v1/products/families/{id}` | 企画論理削除 (配下 SKU 連動) | Bearer | `product_ledger_permission >= 1` |
+| GET | `/api/v1/products/families/{id}/supplier-prices` | 仕入単価履歴 | Bearer | – |
+| POST | `/api/v1/products/families/{id}/supplier-prices` | 新単価追加 (BR-04) | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission >= 1` |
+| PATCH | `/api/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
+| DELETE | `/api/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
+| GET | `/uploads/product-images/{familyId}/{filename}` | 画像配信 (Static Files、Iter 4 で S3 移行予定) | なし | – |
 
 `{master}` は: brands / sizes / functions / countries / suppliers / departments / product-types / product-seasons / product-groups / colors / materials / material-classifications / warehouses / delivery-destinations / document-template-purchases / document-template-confirmations / document-text-purchases
 
