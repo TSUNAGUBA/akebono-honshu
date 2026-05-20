@@ -232,7 +232,9 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
             var sb = new StringBuilder();
             sb.Append("INSERT INTO staging_legacy_products(").Append(cols).Append(") VALUES ");
 
-            var parameters = new List<object?>();
+            // ExecuteSqlRawAsync は IEnumerable<object> (non-nullable) を要求するため、
+            // null セルは DBNull.Value に変換 (SQL の NULL として送信)
+            var parameters = new List<object>();
             for (int r = 0; r < batch.Count; r++)
             {
                 if (r > 0) sb.Append(',');
@@ -241,7 +243,7 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
                 {
                     if (c > 0) sb.Append(',');
                     sb.Append('{').Append(parameters.Count).Append('}');
-                    parameters.Add(batch[r][c]);
+                    parameters.Add((object?)batch[r][c] ?? DBNull.Value);
                 }
                 sb.Append(')');
             }
