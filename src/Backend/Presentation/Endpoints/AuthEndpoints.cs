@@ -65,6 +65,31 @@ public static class AuthEndpoints
 
         return new(userId, null);
     }
+
+    /// <summary>
+    /// 発注書編集系操作 (O-01/O-04/O-05/O-06) に必要な権限チェック。
+    /// purchase_order_create_permission >= 1 を要求 (Phase 5 §3.18 + C-02)。
+    /// </summary>
+    internal static async Task<MasterEditAuth> CheckOrderEditAsync(
+        HttpContext http,
+        ITokenService tokens,
+        IAkebonoDbContext db,
+        CancellationToken ct)
+    {
+        if (!TryGetUserId(http, tokens, out var userId))
+            return new(null, Results.Problem(statusCode: 401, title: "Unauthorized"));
+
+        var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (actor is null || !actor.IsActive || actor.IsDeleted)
+            return new(null, Results.Problem(statusCode: 401, title: "Unauthorized",
+                detail: "ユーザが無効化されています"));
+
+        if (actor.PurchaseOrderCreatePermission < 1)
+            return new(null, Results.Problem(statusCode: 403, title: "Forbidden",
+                detail: "この操作には発注書作成権限 (更新可能) が必要です"));
+
+        return new(userId, null);
+    }
 }
 
 internal sealed record MasterEditAuth(long? ActorId, IResult? ErrorResult);

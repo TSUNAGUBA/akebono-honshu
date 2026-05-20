@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Akebono.Api.Endpoints;
 using Akebono.Infrastructure;
 using Microsoft.OpenApi.Models;
@@ -5,6 +6,14 @@ using Microsoft.OpenApi.Models;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddAkebonoInfrastructure(builder.Configuration);
+
+// Enum を JSON で文字列としてやりとり (Phase 5 EditReason "quantity" 等の仕様準拠、
+// camelCase: "Quantity" → "quantity")
+builder.Services.ConfigureHttpJsonOptions(opt =>
+{
+    opt.SerializerOptions.Converters.Add(
+        new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
+});
 
 builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
     .WithOrigins(builder.Configuration["Cors:Origins"]?.Split(',') ?? ["http://localhost:3000"])
@@ -74,5 +83,6 @@ app.MapAuthEndpoints();
 app.MapUserEndpoints();
 app.MapMasterEndpoints();
 app.MapProductEndpoints();
+app.MapOrderEndpoints();
 
 app.Run();
