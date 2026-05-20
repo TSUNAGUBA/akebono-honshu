@@ -1,6 +1,7 @@
 using Akebono.Application.Common;
 using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
+using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -29,6 +30,12 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<DocumentTemplatePurchase> DocumentTemplatePurchases => Set<DocumentTemplatePurchase>();
     public DbSet<DocumentTemplateConfirmation> DocumentTemplateConfirmations => Set<DocumentTemplateConfirmation>();
     public DbSet<DocumentTextPurchase> DocumentTextPurchases => Set<DocumentTextPurchase>();
+
+    // 商品関連 (Iteration 2)
+    public DbSet<ProductFamily> ProductFamilies => Set<ProductFamily>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<ProductImage> ProductImages => Set<ProductImage>();
+    public DbSet<ProductSupplierPrice> ProductSupplierPrices => Set<ProductSupplierPrice>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -138,6 +145,112 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
         {
             b.Property(x => x.Body).HasColumnName("body").IsRequired();
             b.Property(x => x.StandardPrintFlag).HasColumnName("standard_print_flag");
+        });
+
+        // 商品関連 (Iteration 2、Phase 5 §4)
+        modelBuilder.Entity<ProductFamily>(b =>
+        {
+            b.ToTable("product_families");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.PlannedYearCode).HasColumnName("planned_year_code").IsRequired().HasMaxLength(1).IsFixedLength();
+            b.Property(x => x.ProductTypeId).HasColumnName("product_type_id");
+            b.Property(x => x.ProductSeasonId).HasColumnName("product_season_id");
+            b.Property(x => x.SequenceNo).HasColumnName("sequence_no").IsRequired().HasMaxLength(3);
+            b.Property(x => x.FactorySupplierId).HasColumnName("factory_supplier_id");
+            b.Property(x => x.BrandId).HasColumnName("brand_id");
+            b.Property(x => x.FunctionId).HasColumnName("function_id");
+            b.Property(x => x.ProductGroupId).HasColumnName("product_group_id");
+            b.Property(x => x.UpperMaterialId).HasColumnName("upper_material_id");
+            b.Property(x => x.InsoleMaterialId).HasColumnName("insole_material_id");
+            b.Property(x => x.OutsoleMaterialId).HasColumnName("outsole_material_id");
+            b.Property(x => x.ProductName1).HasColumnName("product_name_1").IsRequired().HasMaxLength(255);
+            b.Property(x => x.ProductName2).HasColumnName("product_name_2").HasMaxLength(255);
+            b.Property(x => x.Status).HasColumnName("status");
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
+
+            b.HasOne(x => x.ProductType).WithMany().HasForeignKey(x => x.ProductTypeId);
+            b.HasOne(x => x.ProductSeason).WithMany().HasForeignKey(x => x.ProductSeasonId);
+            b.HasOne(x => x.FactorySupplier).WithMany().HasForeignKey(x => x.FactorySupplierId);
+            b.HasOne(x => x.Brand).WithMany().HasForeignKey(x => x.BrandId);
+            b.HasOne(x => x.Function).WithMany().HasForeignKey(x => x.FunctionId);
+            b.HasOne(x => x.ProductGroup).WithMany().HasForeignKey(x => x.ProductGroupId);
+            b.HasOne(x => x.UpperMaterial).WithMany().HasForeignKey(x => x.UpperMaterialId);
+            b.HasOne(x => x.InsoleMaterial).WithMany().HasForeignKey(x => x.InsoleMaterialId);
+            b.HasOne(x => x.OutsoleMaterial).WithMany().HasForeignKey(x => x.OutsoleMaterialId);
+
+            b.HasMany(x => x.Products).WithOne(p => p.ProductFamily!).HasForeignKey(p => p.ProductFamilyId);
+            b.HasMany(x => x.Images).WithOne(i => i.ProductFamily!).HasForeignKey(i => i.ProductFamilyId);
+            b.HasMany(x => x.SupplierPrices).WithOne(p => p.ProductFamily!).HasForeignKey(p => p.ProductFamilyId);
+        });
+
+        modelBuilder.Entity<Product>(b =>
+        {
+            b.ToTable("products");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.ColorId).HasColumnName("color_id");
+            b.Property(x => x.SizeId).HasColumnName("size_id");
+            b.Property(x => x.Sku).HasColumnName("sku").IsRequired().HasMaxLength(11);
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
+
+            b.HasOne(x => x.Color).WithMany().HasForeignKey(x => x.ColorId);
+            b.HasOne(x => x.Size).WithMany().HasForeignKey(x => x.SizeId);
+            b.HasIndex(x => x.Sku).IsUnique();
+        });
+
+        modelBuilder.Entity<ProductImage>(b =>
+        {
+            b.ToTable("product_images");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.S3Key).HasColumnName("s3_key").IsRequired().HasMaxLength(512);
+            b.Property(x => x.ThumbS3Key).HasColumnName("thumb_s3_key").HasMaxLength(512);
+            b.Property(x => x.OrderNo).HasColumnName("order_no");
+            b.Property(x => x.MimeType).HasColumnName("mime_type").IsRequired().HasMaxLength(64);
+            b.Property(x => x.FileSizeBytes).HasColumnName("file_size_bytes");
+            b.Property(x => x.WidthPx).HasColumnName("width_px");
+            b.Property(x => x.HeightPx).HasColumnName("height_px");
+            b.Property(x => x.OriginalFilename).HasColumnName("original_filename").HasMaxLength(255);
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+        });
+
+        modelBuilder.Entity<ProductSupplierPrice>(b =>
+        {
+            b.ToTable("product_supplier_prices");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.SupplierId).HasColumnName("supplier_id");
+            b.Property(x => x.UnitPrice).HasColumnName("unit_price").HasColumnType("numeric(12,2)");
+            b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
+            b.Property(x => x.ExchangeRate).HasColumnName("exchange_rate").HasColumnType("numeric(10,4)");
+            b.Property(x => x.EffectiveFrom).HasColumnName("effective_from");
+            b.Property(x => x.EffectiveTo).HasColumnName("effective_to");
+            b.Property(x => x.DecidedAt).HasColumnName("decided_at");
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId);
         });
     }
 

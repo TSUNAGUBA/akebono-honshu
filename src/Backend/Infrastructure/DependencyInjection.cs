@@ -1,6 +1,7 @@
 using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Application.Masters;
+using Akebono.Application.Products;
 using Akebono.Application.Users;
 using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
@@ -50,6 +51,10 @@ public static class DependencyInjection
 
         // M-04 仕入先 (F-22 official_name 帳票準備のため個別 Service)
         services.AddScoped<SupplierService>();
+
+        // 商品関連 (Iteration 2、Phase 5 §4)
+        services.AddScoped<ProductFamilyService>();
+        services.AddScoped<ProductSupplierPriceService>();
 
         return services;
     }

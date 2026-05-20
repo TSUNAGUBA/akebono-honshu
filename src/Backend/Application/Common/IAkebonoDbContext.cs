@@ -1,4 +1,5 @@
 using Akebono.Domain.Entities;
+using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 
 namespace Akebono.Application.Common;
@@ -27,8 +28,17 @@ public interface IAkebonoDbContext
     DbSet<DocumentTemplateConfirmation> DocumentTemplateConfirmations { get; }
     DbSet<DocumentTextPurchase> DocumentTextPurchases { get; }
 
+    // 商品関連 (Iteration 2、Phase 5 §4)
+    DbSet<ProductFamily> ProductFamilies { get; }
+    DbSet<Product> Products { get; }
+    DbSet<ProductImage> ProductImages { get; }
+    DbSet<ProductSupplierPrice> ProductSupplierPrices { get; }
+
     /// <summary>ジェネリック DbSet 取得 (MasterService&lt;TEntity&gt; 用)。DbContext.Set&lt;T&gt;() の暗黙実装。</summary>
     DbSet<T> Set<T>() where T : class;
+
+    /// <summary>EF Core Database ファサード (トランザクション制御等で使用)。</summary>
+    Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade Database { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
