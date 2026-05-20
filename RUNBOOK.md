@@ -244,6 +244,35 @@ pnpm dev
    ```
    期待: `ProductFamily.Create` (note に SKU 件数 + 金額マスク "***" 含む), `ProductFamily.View`, `ProductSupplierPrice.Add` 等が記録
 
+### 3.3 Iteration 3 追加シナリオ (発注書 O-01〜O-07、Excel 出力 = MVP クリティカルパス)
+
+> **前提:** `db/init/04-orders.sql` を pgAdmin4 で実行して発注関連 3 テーブル + Seed 投入。Backend 再起動で ClosedXML 0.105.0 が NuGet 復元される。
+
+1. **発注書一覧 (O-03):** `http://localhost:3000/orders` → Seed `26-00001` が「未出力」バッジで表示
+2. **新規発注書 (O-01):** ナビ「発注書」→「+ 新規発注書」→ ヘッダ + 明細 + 連絡文章テンプレ複写 (O-07) → 登録で `mgmt_no` 自動採番
+3. **詳細・編集 (O-04、F-16):** 行クリック → 詳細画面で「編集」→ 数量/単価変更 → **編集理由 5 値 select 必須** + メモ任意 → 保存で `audit_logs.note` に `edit_reason=quantity` 記録
+4. **Excel ダウンロード (O-06、MVP クリティカルパス):**
+   - 「📥 Excel ダウンロード」→ ファイル名 `PO_S00001_YYYYMMDD_HHmmss.xlsx`
+   - 初回出力で `order_no` 採番 (S00001) + 3 件 snapshot 凍結 (F-22):
+     - `supplier_official_name_snapshot` = "DEPARTURES"
+     - `supplier_code_snapshot` = "336"
+     - `customer_name_snapshot` = "しまむら"
+   - Excel を開くと「**DEPARTURES 御中 336**」宛名 (F-22 帳票表記) + 明細表 + 合計
+5. **中止 (O-05):** 「中止」→ 中止理由必須入力 → 詳細画面が Cancelled (オレンジ)、編集ボタン消失。**Excel ダウンロードは引き続き可能** (Phase 6 F-11 仕様)
+6. **権限制御:** planner / sales でログイン → 編集ボタン全て非表示、Swagger で直接 POST すると 403 (`purchase_order_create_permission` 必須)
+7. **監査ログ:**
+   ```sql
+   SELECT id, occurred_at, action, entity_type, entity_id, note
+   FROM audit_logs WHERE entity_type = 'PurchaseOrder' ORDER BY id DESC LIMIT 10;
+   ```
+   期待: `PurchaseOrder.Create / Update (edit_reason 含む) / Cancel / Export (単価 ***)`
+8. **Excel 出力履歴:**
+   ```sql
+   SELECT purchase_order_id, exported_at, is_first_export, excel_template_version
+   FROM purchase_order_export_logs ORDER BY id DESC LIMIT 10;
+   ```
+   期待: 初回出力は `is_first_export=true`、テンプレ版 `iter3-v1`
+
 ---
 
 ## 4. 想定エンドポイント
@@ -269,6 +298,13 @@ pnpm dev
 | PATCH | `/api/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
 | DELETE | `/api/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
 | GET | `/uploads/product-images/{familyId}/{filename}` | 画像配信 (Static Files、Iter 4 で S3 移行予定) | なし | – |
+| GET | `/api/v1/orders` | 発注書一覧 (O-03) | Bearer | – |
+| GET | `/api/v1/orders/{id}` | 発注書詳細 (O-04) | Bearer | – |
+| POST | `/api/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |
+| PATCH | `/api/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission >= 1` |
+| GET | `/api/v1/orders/{id}/export.xlsx` | Excel 出力 (O-06、初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
+| GET | `/api/v1/orders/communication-suggestions` | 連絡文章テンプレ (O-07) | Bearer | – |
 
 `{master}` は: brands / sizes / functions / countries / suppliers / departments / product-types / product-seasons / product-groups / colors / materials / material-classifications / warehouses / delivery-destinations / document-template-purchases / document-template-confirmations / document-text-purchases
 

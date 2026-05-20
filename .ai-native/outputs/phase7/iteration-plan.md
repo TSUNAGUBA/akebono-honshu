@@ -244,6 +244,38 @@
 
 **ゲート:** 全 7 機能完成 + Excel 体裁が既存帳票と完全一致 (オペレーター検収) + 独立コードレビュアー (snapshot 凍結トランザクション / Idempotency-Key 二重採番防止 / ClosedXML 性能) + システム監査官 (audit_logs 改竄防止 / Excel ファイル一時保存セキュリティ) 指摘ゼロ
 
+#### Iteration 3 完了記録 (2026-05-20、暫定完了)
+
+**実装内容 (commit 範囲: `0dfbd00` → `19ab08f`):**
+- 3.A: `db/init/04-orders.sql` で発注関連 3 テーブル (purchase_orders / purchase_order_lines / purchase_order_export_logs) + Seed (発注書 1 件、明細 3 件 合計 495,000 円)
+- 3.B: Domain (PurchaseOrder / PurchaseOrderLine / PurchaseOrderExportLog Entity + OrderStatus / EditReason Enum)
+- 3.C: ClosedXML 0.105.0 統合 (Akebono.Infrastructure) + AkebonoDbContext 拡張 (Subtotal を HasComputedColumnSql で DB GENERATED 列マッピング) + PurchaseOrderService + IPurchaseOrderExcelService 抽象 + 実装
+- 3.D: Presentation 全 7 endpoint + Excel ダウンロード + EditReason 文字列 JSON 変換 + AuthEndpoints.CheckOrderEditAsync
+- 3.E: Frontend (一覧/新規/詳細/編集/中止/Excel ダウンロード)、`📥 Excel ダウンロード` ボタンで Blob 取得 + a タグ download
+- 3.E+: CORS で `Content-Disposition` ヘッダを expose 修正 (ファイル名抽出失敗対応)
+- 3.F: 権限制御は 3.D で `CheckOrderEditAsync` を `OrderEndpoints` に適用済 (独立タスクなし)
+- 3.G: RUNBOOK + iteration-plan 更新
+
+**「暫定完了」の理由 (Iteration 4 で正式完了予定):**
+- Excel テンプレートは仮テンプレ (ClosedXML 動的生成、TemplateVersion=`iter3-v1`)
+- 本テンプレ (`templates/purchase-order-domestic.xlsx`、業務担当者提供) + セルマッピング版への置換は Iteration 4 Hardening でオペレーター検収と同時に実施
+- それ以外の機能 (O-01〜O-07 ロジック、snapshot 凍結 F-22、order_no 採番、editReason 必須 F-16、status 2 値 F-10/F-11、中止後 Excel 出力 F-11、連絡文章テンプレ O-07) は **全件動作確認済**
+
+**Iteration 3 で得た知見 (Iteration 4 以降に適用):**
+
+| # | 知見 | Iteration 4 以降の適用方針 |
+|---|---|---|
+| 1 | EF Core 8 で DB の `GENERATED ALWAYS AS ... STORED` 計算列は `HasComputedColumnSql("...", stored: true)` + `ValueGeneratedOnAddOrUpdate()` でマッピング | Phase 5 §6.2 で計算列導入時 (例: 集計サマリ) は同パターン |
+| 2 | C# `enum` (例: EditReason) を JSON で文字列としてやりとりするには `JsonStringEnumConverter(JsonNamingPolicy.CamelCase)` を `ConfigureHttpJsonOptions` で **グローバル登録**。属性指定は API スペック乱立を招く | 今後追加する Enum (例: Iter 4 通知種別) も同パターン |
+| 3 | `Content-Disposition` ヘッダはブラウザの CORS で **simple response header に含まれない**。Frontend の `response.headers.get('content-disposition')` で取得するには Backend の CORS ポリシーに `WithExposedHeaders("Content-Disposition")` 明示が必須 | Iter 4 でファイルダウンロード追加時 (例: PDF レポート) も同設定。`Content-Length` / `X-Total-Count` も状況に応じ追加 |
+| 4 | Phase 5 設計の「初回出力時に snapshot 凍結 + order_no 採番」を 1 トランザクションでまとめて実装。`BeginTransactionAsync` + try/catch/Rollback で整合性保証 | Iter 4 で snapshot 関連の追加 (例: 価格 snapshot の再計算) も同パターン |
+| 5 | ClosedXML 動的生成 (`XLWorkbook` + `Cell().Value = ...`) は MVP 仮テンプレに最適。本テンプレ (`.xlsx` テンプレファイル + セルマッピング) は `wb.Worksheets.Add()` ではなく `new XLWorkbook(templatePath)` で読み込み + `ws.Cell("B5").Value = ...` パターンに切替可能 (I/F は同じ) | Iter 4 で本テンプレ版に置換時、`IPurchaseOrderExcelService` の実装クラスのみ差替 |
+| 6 | F-22 帳票宛名「`<official_name>` 御中 `<supplier_code>`」は snapshot 凍結 (`supplier_official_name_snapshot` + `supplier_code_snapshot`) で過去発注書の表示変化を防止。Frontend 詳細画面で snapshot 表示すると凍結効果が視覚化される | 取引先名変更時の影響範囲テスト (Iter 4) で snapshot 動作を必ず検証 |
+| 7 | 発注書 status 簡素化 (Phase 6 F-10/F-11): Active/Cancelled の 2 値 + Excel 出力は status と独立。中止後も Excel 出力可能、改訂概念廃止 | この簡素モデルは Phase 7 後半 (請求書、検収書) でも同じ「シンプル状態 + イベントログ」パターンを採用 |
+
+**Iteration 4 着手前の整備事項 (なし):**
+Iteration 4 (Hardening) のスコープ (本番認証 / AWS インフラ / CI/CD / MIG-3 / Excel 本テンプレ) はすべて MVP 機能完成後の作業。Iteration 3 完了時点で機能側のブロッカーなし。
+
 ---
 
 ### Iteration 4: Hardening + 本番化 (推奨期間: 2-3 週間)
@@ -302,8 +334,8 @@ CLAUDE.md 原則 9 / 方法論 SP-8 に従い、**各 Iteration 完了時に独�
 | Iteration 0 | 1-2 週間 | – | ✅ 完了 (2026-05-19) | **ローカル開発環境のみ** (docker-compose / .NET 8 + Nuxt 4 スケルトン / ダミー認証 / ログイン + ユーザ一覧 1 画面表示) |
 | Iteration 1 | 2-3 週間 | 8 機能 | ✅ 完了 (2026-05-19) | C-01〜C-03 + M-01〜M-05 (ローカルダミー認証で動作)。C-02 は品番台帳権限のみ実装、他 3 権限は Iteration 2/3 で実需対応 |
 | Iteration 2 | 2-3 週間 | 6 機能 | ✅ 完了 (2026-05-20) | P-01〜P-06 (ローカルダミー認証で動作)。画像管理はローカルファイル保存、Iter 4 で S3 移行。MIG-3 既存 CSV 取込は Iter 4 へ申し送り |
-| Iteration 3 | 3 週間 | 7 機能 | 次 | O-01〜O-07 (Excel 出力含む、ローカルダミー認証で動作) |
-| Iteration 4 | 2-3 週間 | – | – | Hardening + **AWS インフラ構築 + Firebase 本番認証切替** + CI/CD + UAT 準備 |
+| Iteration 3 | 3 週間 | 7 機能 | ✅ 暫定完了 (2026-05-20) | O-01〜O-07 (Excel 出力含む、ローカルダミー認証で動作)。Excel テンプレは仮 (iter3-v1)、本テンプレ + セルマッピングは Iter 4 で正式完了 |
+| Iteration 4 | 2-3 週間 | – | 次 | Hardening + **AWS インフラ構築 + Firebase 本番認証切替** + CI/CD + UAT 準備 + MIG-3 + Excel 本テンプレ |
 | **合計** | **約 10-14 週間 (約 2.5-3.5 ヶ月)** | **21 機能** | | MVP リリース |
 
 ---
