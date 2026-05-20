@@ -11,4 +11,19 @@
   <ItemGroup>
     <ProjectReference Include="..\Domain\Akebono.Domain.csproj" />
   </ItemGroup>
+  <!-- MIG-3 既存 CSV 取込 SQL を埋込リソース化 (db/migration が SoT、画面取込で実行) -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\db\migration\mig-3-pre-patch.sql">
+      <LogicalName>Akebono.Application.Migration.Sql.pre-patch.sql</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\..\db\migration\mig-3-step-01-master-fill.sql">
+      <LogicalName>Akebono.Application.Migration.Sql.step-01-master-fill.sql</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\..\db\migration\mig-3-step-02-staging.sql">
+      <LogicalName>Akebono.Application.Migration.Sql.step-02-staging.sql</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\..\db\migration\mig-3-step-03-import.sql">
+      <LogicalName>Akebono.Application.Migration.Sql.step-03-import.sql</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>

@@ -1,6 +1,7 @@
 using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Application.Masters;
+using Akebono.Application.Migration;
 using Akebono.Application.Orders;
 using Akebono.Application.Products;
 using Akebono.Application.Users;
@@ -61,6 +62,9 @@ public static class DependencyInjection
         // 発注関連 (Iteration 3、Phase 5 §5)
         services.AddScoped<PurchaseOrderService>();
         services.AddScoped<IPurchaseOrderExcelService, PurchaseOrderExcelService>();
+
+        // MIG-3 既存 CSV 取込 (Iteration 4 Hardening)
+        services.AddScoped<LegacyImportService>();
 
         return services;
     }

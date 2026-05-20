@@ -43,6 +43,14 @@ const onLogout = async () => {
           >
             発注書
           </NuxtLink>
+          <NuxtLink
+            v-if="user?.processRecordPermission === 1"
+            to="/admin/legacy-import"
+            class="rounded-md px-3 py-1.5 text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+            active-class="bg-blue-100 font-semibold text-blue-700"
+          >
+            データ移行
+          </NuxtLink>
         </div>
       </div>
       <div class="flex items-center gap-3">

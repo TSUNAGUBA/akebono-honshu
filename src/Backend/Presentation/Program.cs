@@ -1,7 +1,12 @@
+using System.Text;
 using System.Text.Json.Serialization;
 using Akebono.Api.Endpoints;
 using Akebono.Infrastructure;
 using Microsoft.OpenApi.Models;
+
+// MIG-3 CSV 取込で Shift_JIS (CP932) を読込むため、CodePagesEncodingProvider を登録。
+// .NET Core / .NET 5+ は既定で限定的なエンコーディングのみ対応のため必須。
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -88,5 +93,6 @@ app.MapUserEndpoints();
 app.MapMasterEndpoints();
 app.MapProductEndpoints();
 app.MapOrderEndpoints();
+app.MapLegacyImportEndpoints();
 
 app.Run();
