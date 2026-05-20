@@ -166,61 +166,53 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       </table>
     </section>
 
-    <!-- カード表示 (画像メイン) -->
-    <section v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <!-- カード表示 (画像メイン、コンパクト) -->
+    <section v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
       <NuxtLink
         v-for="i in filtered"
         :key="i.id"
         :to="`/products/${i.id}`"
-        class="group flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition hover:border-blue-500 hover:shadow-md"
+        class="group flex flex-col overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm transition hover:border-blue-500 hover:shadow-md"
       >
-        <!-- 画像エリア (アスペクト比 1:1) -->
-        <div class="relative aspect-square w-full overflow-hidden bg-gray-100">
+        <!-- 画像エリア (アスペクト 4:3、横長で高さ抑制) -->
+        <div class="relative aspect-[4/3] w-full overflow-hidden bg-gray-100">
           <img
             v-if="i.primaryImageS3Key"
             :src="imageUrl(i.primaryImageS3Key)"
             :alt="i.productName1"
             class="h-full w-full object-cover transition group-hover:scale-105"
           />
-          <div v-else class="flex h-full w-full items-center justify-center text-gray-400">
-            <div class="text-center">
-              <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              <div class="mt-2 text-xs">画像なし</div>
-            </div>
+          <div v-else class="flex h-full w-full items-center justify-center text-gray-300">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
           </div>
-          <!-- 状態バッジ (右上) -->
           <span :class="statusBadge(i.status).cls"
-                class="absolute right-2 top-2 inline-block rounded-full px-2 py-0.5 text-xs shadow-sm">
+                class="absolute right-1.5 top-1.5 inline-block rounded-full px-1.5 py-0.5 text-[10px] shadow-sm">
             {{ statusBadge(i.status).label }}
           </span>
-          <!-- 画像枚数バッジ (左下) -->
           <span v-if="i.imageCount > 0"
-                class="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs text-white">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                class="absolute bottom-1.5 left-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
             {{ i.imageCount }}
           </span>
         </div>
-        <!-- カード下部 (テキスト情報) -->
-        <div class="flex flex-1 flex-col p-3">
-          <div class="font-mono text-xs text-gray-500">{{ i.sku9Digit }}</div>
-          <div class="mt-1 line-clamp-2 font-semibold text-gray-900" :title="i.productName1">
+        <!-- カード下部 (コンパクト) -->
+        <div class="flex flex-1 flex-col p-2">
+          <div class="font-mono text-[10px] text-gray-500">{{ i.sku9Digit }}</div>
+          <div class="mt-0.5 line-clamp-2 text-sm font-semibold text-gray-900" :title="i.productName1">
             {{ i.productName1 }}
           </div>
-          <div v-if="i.productName2" class="line-clamp-1 text-sm text-gray-500" :title="i.productName2">
+          <div v-if="i.productName2" class="line-clamp-1 text-xs text-gray-500" :title="i.productName2">
             {{ i.productName2 }}
           </div>
-          <div class="mt-2 flex items-center justify-between text-xs text-gray-600">
-            <span>{{ i.brandName }}</span>
-            <span class="font-mono">SKU {{ i.skuVariationCount }}</span>
+          <div class="mt-1 flex items-center justify-between text-[11px] text-gray-600">
+            <span class="truncate">{{ i.brandName }}</span>
+            <span class="font-mono whitespace-nowrap">SKU {{ i.skuVariationCount }}</span>
           </div>
-          <div class="mt-1 text-xs text-gray-500">
-            {{ i.productTypeName }} / {{ i.productSeasonName }}
-          </div>
-          <div class="mt-2 border-t border-gray-100 pt-2 font-mono text-sm font-semibold text-gray-900">
+          <div class="mt-1 border-t border-gray-100 pt-1 font-mono text-xs font-semibold text-gray-900">
             {{ formatPriceRange(i.currentMinPrice, i.currentMaxPrice, i.currencyCode) }}
           </div>
         </div>
