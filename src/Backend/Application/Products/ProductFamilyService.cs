@@ -200,18 +200,38 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
     }
 
     /// <summary>
-    /// 品番 7 桁・他品番 6 桁・互換用 9 桁文字列を組み立てる。
-    /// 構成: planned_year(1) + type(1) + season(1) + sequence_no(3) + factory(1) = 7 桁、
-    /// 他品番は工場 CD を除いた前 6 桁。互換目的で旧名 sku9Digit (= 品番 7 桁と同値) も返す。
+    /// 品番 7 桁・他品番 6 桁・互換用 sku9Digit を組み立てる。
+    /// - 新規企画品 (legacy_id == null):
+    ///     他品番 = planned_year(1) + type(1) + season(1) + sequence_no(3)
+    ///     品番   = 他品番 + factory(1)
+    /// - 既存品 (legacy_id != null、MIG-3 取込済):
+    ///     他品番 = legacy_id (= 旧 legacy_family_code、例: FA2071)
+    ///     品番   = legacy_id + factory.item_conversion_code (例: FA2071F)
+    ///   ※ MIG-3 で factory_supplier がフォールバック解決された family では
+    ///      工場 CD が実値と異なる可能性あり (暫定許容、本実装で products.legacy_id 前 7 桁採用に切替予定)。
+    /// sku9Digit は下位互換のため常に「planned_year + type + season + seq + factory」を返す。
     /// </summary>
     private static (string ItemNumber, string ItemFamilyNumber, string Sku9Digit) BuildItemNumbers(ProductFamily family)
     {
         var typeCode = family.ProductType?.ItemConversionCode ?? "?";
         var seasonCode = family.ProductSeason?.ItemConversionCode ?? "?";
         var factoryCode = family.FactorySupplier?.ItemConversionCode ?? "?";
-        var familyNumber = $"{family.PlannedYearCode}{typeCode}{seasonCode}{family.SequenceNo}";
-        var itemNumber = $"{familyNumber}{factoryCode}";
-        return (itemNumber, familyNumber, itemNumber);
+
+        string itemFamilyNumber;
+        string itemNumber;
+        if (!string.IsNullOrEmpty(family.LegacyId))
+        {
+            itemFamilyNumber = family.LegacyId;
+            itemNumber = $"{family.LegacyId}{factoryCode}";
+        }
+        else
+        {
+            itemFamilyNumber = $"{family.PlannedYearCode}{typeCode}{seasonCode}{family.SequenceNo}";
+            itemNumber = $"{itemFamilyNumber}{factoryCode}";
+        }
+
+        var sku9Digit = $"{family.PlannedYearCode}{typeCode}{seasonCode}{family.SequenceNo}{factoryCode}";
+        return (itemNumber, itemFamilyNumber, sku9Digit);
     }
 
     /// <summary>商品企画詳細 (P-05)。1 リクエストで family + products + images + 現在有効単価を返却。</summary>

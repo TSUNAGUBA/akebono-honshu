@@ -218,15 +218,9 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <div class="text-xs text-gray-500">
             <NuxtLink to="/products" class="hover:underline">商品管理</NuxtLink>
             <span class="mx-1">/</span>
-            <span class="font-mono">
-              品番 {{ detail.family.legacyId ?? detail.family.itemNumber }}
-            </span>
+            <span class="font-mono">品番 {{ detail.family.itemNumber }}</span>
             <span class="mx-1 text-gray-400">·</span>
-            <span class="font-mono">
-              他品番 {{ detail.family.legacyId && detail.family.legacyId.length >= 6
-                ? detail.family.legacyId.slice(0, detail.family.legacyId.length - 1)
-                : detail.family.itemFamilyNumber }}
-            </span>
+            <span class="font-mono">他品番 {{ detail.family.itemFamilyNumber }}</span>
           </div>
           <h1 class="text-2xl font-bold">{{ detail.family.productName1 }}</h1>
           <p v-if="detail.family.productName2" class="text-sm text-gray-500">{{ detail.family.productName2 }}</p>
