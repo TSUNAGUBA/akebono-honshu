@@ -7,31 +7,24 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit)
 {
     /// <summary>
     /// Firebase Auth でログインに成功したフロントが最初に呼ぶ sync endpoint の実装。
-    /// JwtBearer ミドルウェアが Firebase ID Token を検証済、ClaimsPrincipal から取得した
-    /// Firebase UID で users.firebase_uid → 業務ユーザ情報 (権限含む) を引当てて返す。
-    /// 未紐付け UID は null を返し、呼び出し側で 403 / 業務エラーに変換する。
+    /// JwtBearer ミドルウェアの OnTokenValidated が ID Token 検証 + users 引当 (!IsDeleted && IsActive) +
+    /// Claim 付与まで済ませているため、本メソッドが [Authorize] を通って到達した時点で
+    /// users 行は確実に有効 (active かつ非削除)。
+    /// 未紐付け / inactive / soft-deleted ユーザは OnTokenValidated 段で Claim 未付与となり
+    /// [Authorize] の 401 で SyncAsync に到達しない (拒否監査は OnTokenValidated 内で
+    /// Auth.LoginRejected.Inactive / Auth.UidUnboundProbe として 5 分 de-dup で記録)。
     /// </summary>
     public async Task<SyncResponse?> SyncAsync(string firebaseUid, CancellationToken ct = default)
     {
         var user = await db.Users
-            .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted)
+            .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted && u.IsActive)
             .FirstOrDefaultAsync(ct);
 
         if (user is null)
         {
-            await audit.LogAsync(null, "Login.Failure",
-                note: $"Firebase UID not bound to users.firebase_uid: {firebaseUid}",
-                success: false, cancellationToken: ct);
-            return null;
-        }
-
-        if (!user.IsActive)
-        {
-            // 通常は OnTokenValidated の引当条件 (`!IsDeleted && IsActive`) で弾かれて到達しないが、
-            // OnTokenValidated 例外時の Claim 未付与経路で /auth/sync が叩かれた場合の防御深層化として残置。
-            await audit.LogAsync(user.Id, "Login.Failure",
-                note: $"User is inactive: {user.LoginId}",
-                success: false, cancellationToken: ct);
+            // OnTokenValidated を通過しているのに本メソッドで users 行が引けない極稀ケース
+            // (cache TTL 内に user が編集された等)。Claim 付与済を信用せず安全側に倒し 403。
+            // 拒否監査は OnTokenValidated で既に記録済 (Auth.LoginRejected.Inactive 等)。
             return null;
         }
 

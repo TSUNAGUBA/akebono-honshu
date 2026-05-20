@@ -39,7 +39,17 @@
 6. **Frontend:** `cd src/Frontend && pnpm install` (`firebase 12.13.0` が追加) → `cp .env.example .env` (Firebase config を含む)
 7. 通常通り Backend (`dotnet run --project Presentation`) + Frontend (`pnpm dev`) を起動
 8. <http://localhost:3000> → メール + パスワードでログイン → ユーザ一覧表示
-9. 検証: `SELECT occurred_at, actor_user_id, action, result FROM audit_logs WHERE action LIKE 'Login.%' OR action='Auth.UidUnboundProbe' ORDER BY occurred_at DESC LIMIT 5;` で `Login.Success` (result=0) が記録される
+9. 検証: 以下 SQL で `Login.Success` (result=0) が記録される
+   ```sql
+   SELECT occurred_at, actor_user_id, action, result
+   FROM audit_logs
+   WHERE action LIKE 'Login.%' OR action LIKE 'Auth.%'
+   ORDER BY occurred_at DESC LIMIT 10;
+   ```
+   - `Login.Success` (result=0、actor_user_id 付き): 認証成功
+   - `Auth.LoginRejected.Inactive` (result=1、actor_user_id 付き): inactive ユーザ拒否
+   - `Auth.UidUnboundProbe` (result=1、actor_user_id=NULL): 未紐付け UID 偵察試行
+   > **5 分 de-dup 注意:** 同一 UID の拒否は 5 分に 1 回しか記録されない (audit_logs DoS 増幅対策)。連続テスト時は **5 分待つか Backend を再起動** して cache を flush してください。
 
 > **Firebase config 設定 (レビュー指摘 SA P0-1 反映):**
 > - **Backend:** `appsettings.json:Firebase:ProjectId` は `__OVERRIDE_ME__` プレースホルダー。dev は `appsettings.Development.json` で `akebono-honshu` に上書き済。本番は環境変数 `Firebase__ProjectId=akebono-honshu-prod` 等で上書きする (起動時に Program.cs が値を検証し、プレースホルダーのままなら throw)
@@ -501,7 +511,7 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 | Frontend で `Failed to fetch http://localhost:5000` | Backend が起動していない / CORS 不整合 / Connection String が DB に届いていない (`appsettings.Development.json` で上書き確認) |
 | `audit_logs` が記録されない | Backend が DB に接続できていない。`appsettings.json` または `appsettings.Development.json` の `ConnectionStrings:Postgres` を確認、pgAdmin4 で対象ロールが該当 DB へのアクセス権限を持つか確認 |
 | `pnpm install` で `EACCES` | Node のパーミッション問題。Volta or nvm 経由で Node を入れ直す |
-| ログイン失敗 (Iter 4 段階 B 以降) | Firebase Console のテストユーザ Email + パスワードを使う。`users.firebase_uid` が紐付け済か確認 (`SELECT firebase_uid FROM users WHERE login_id='owner'`)。未紐付けは 403 で `Auth.UidUnboundProbe` が audit_logs に記録される |
+| ログイン失敗 (Iter 4 段階 B 以降) | Firebase Console のテストユーザ Email + パスワードを使う。`users.firebase_uid` が紐付け済か確認 (`SELECT firebase_uid, is_active, is_deleted FROM users WHERE login_id='owner'`)。失敗時の audit 記録は: 未紐付け UID → `Auth.UidUnboundProbe` (actor_user_id=NULL)、inactive ユーザ → `Auth.LoginRejected.Inactive` (actor_user_id 付き)。**いずれも 5 分に 1 回しか記録されない**ので連続テスト時は Backend 再起動で cache flush。 |
 | `pnpm dev` でポート 3000 衝突 | 別アプリ使用中、`pnpm dev --port 3001` で代替 (`.env` の NUXT_PUBLIC_API_BASE は変更不要) |
 
 ---
