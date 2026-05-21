@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Akebono.Api.Endpoints;
 using Akebono.Application.Common;
 using Akebono.Infrastructure;
+using Akebono.Infrastructure.Secrets;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -19,6 +20,23 @@ Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 // 残すと将来 timestamptz 追加時の silent conversion bug の温床になる (レビュー指摘)。
 
 var builder = WebApplication.CreateBuilder(args);
+
+// AWS Secrets Manager 経由で秘密情報 (DB 接続文字列等) を IConfiguration に注入 (Iter 4 段階 C-2)。
+// - dev/test/CI: `Secrets:Provider=Environment` (default) → 何もしない。環境変数 / User Secrets /
+//   appsettings.Development.json で値が解決される (既存挙動)。
+// - prod (App Runner): 環境変数 `Secrets__Provider=AwsSecretsManager` + `Secrets__AwsPrefix=akebono/prod/`
+//   で有効化。`ConnectionStrings:Postgres` 等が Secrets Manager 経由で上書きされる。
+// SecretMappings の対象 Secret 群 (`db-connection`, `firebase-sa-key` ほか) は事前定義されている
+// (Infrastructure/Secrets/SecretMappings.cs)。
+var secretsProvider = builder.Configuration["Secrets:Provider"] ?? "Environment";
+if (string.Equals(secretsProvider, "AwsSecretsManager", StringComparison.OrdinalIgnoreCase))
+{
+    var prefix = builder.Configuration["Secrets:AwsPrefix"]
+        ?? throw new InvalidOperationException(
+            "Secrets:Provider=AwsSecretsManager のとき Secrets:AwsPrefix は必須です (例: akebono/prod/)。");
+    var region = builder.Configuration["AWS:Region"];
+    builder.Configuration.AddAkebonoAwsSecretsManager(prefix, regionName: region);
+}
 
 builder.Services.AddAkebonoInfrastructure(builder.Configuration);
 builder.Services.AddMemoryCache();

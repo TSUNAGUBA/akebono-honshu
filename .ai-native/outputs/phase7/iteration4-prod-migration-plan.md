@@ -204,9 +204,17 @@ flowchart LR
 
 | 主体 | 作業 |
 |---|---|
-| **オペレーター** | KMS CMK 作成 (例: `akebono-honshu-prod-cmk`) |
-| **オペレーター** | Secrets Manager に投入 | `akebono/prod/db-connection` (DB 接続文字列)、`akebono/prod/firebase-sa-key` (Firebase Service Account 鍵 JSON) |
-| **Claude** | `AwsSecretsManagerProvider` 実装 (AWS SDK で取得、Backend 起動時に環境変数注入) |
+| **オペレーター** | KMS CMK 作成 (例: `akebono-honshu-prod-cmk`、自動ローテーション有効、`Region=ap-northeast-1` で RDS / App Runner と同居) |
+| **オペレーター** | Secrets Manager に投入 (CMK で暗号化、prefix は `akebono/prod/` 固定): <br/>① `akebono/prod/db-connection` (RDS 接続文字列 `Host=...;Port=5432;Database=akebono_honshu;Username=...;Password=...`、SecretString 形式) <br/>② `akebono/prod/firebase-sa-key` (Firebase Service Account 鍵 JSON 全文、SecretString 形式、§4.2.2bis で本番 project の鍵を投入) |
+| **Claude** | `AwsSecretsManagerConfigurationSource` / `Provider` 実装 (`AWSSDK.SecretsManager` で起動時に同期取得 → `IConfiguration` に注入)。Source は `IConfigurationBuilder.AddAkebonoAwsSecretsManager()` 拡張メソッドから組み込む |
+| **Claude** | Secret 名 → IConfiguration key の 1:1 マッピング表を `Infrastructure/Secrets/SecretMappings.cs` に静的定義 (現状: `db-connection`→`ConnectionStrings:Postgres`、`firebase-sa-key`→`Firebase:ServiceAccountKey` (Optional))。マッピング追加時はここに行を増やす |
+| **Claude** | Program.cs に切替分岐を追加 (`Secrets:Provider=AwsSecretsManager` のとき `builder.Configuration.AddAkebonoAwsSecretsManager(prefix, region)` を呼び、それ以外は環境変数 / User Secrets / appsettings 経由で値が解決される既存挙動) |
+| **オペレーター** | IAM Role (App Runner Task Role) に `secretsmanager:GetSecretValue` と `kms:Decrypt` の最小権限を付与 (対象 Resource は `arn:aws:secretsmanager:ap-northeast-1:<account>:secret:akebono/prod/*` と CMK ARN のみ。`*` 全許可は禁止) |
+| **オペレーター** | App Runner 環境変数設定: `Secrets__Provider=AwsSecretsManager`、`Secrets__AwsPrefix=akebono/prod/`、`AWS__Region=ap-northeast-1` (`ConnectionStrings__Postgres` は **設定しない** — Secrets Manager 経由で注入されるため。誤って環境変数で設定するとプロバイダ優先順位により Secrets Manager の値が上書きされる可能性があるので注意) |
+| **オペレーター** | 起動ログで Secrets Manager 取得が成功していることを確認 (失敗時は Program.cs / Provider が起動時に throw → App Runner ヘルスチェック失敗 → 自動ロールバック)。`Secrets__AwsPrefix` が `__OVERRIDE_ME__` のまま起動した場合も拡張メソッドで fail-fast |
+| **オペレーター** | Secret rotation 時の運用: 本実装は起動時 1 回取得 (TTL refresh 未対応)。rotation 後は App Runner のサービス再デプロイ (新リビジョン作成 → 自動切替) で新値を反映する。継続トラフィックがある場合は rolling deployment で最小ダウンタイム |
+
+> **C-2 ロールバック注意:** Secrets Manager 経路を revert する場合は **必ず App Runner 環境変数の `Secrets__Provider` を `Environment` に戻す + `ConnectionStrings__Postgres` を環境変数で再注入** すること。コード revert だけでは prod の DB 接続が解決できず起動失敗する。
 
 #### 4.2.2bis Prod Firebase project 切替 (dev/prod 取り違え防止、段階 B レビュー指摘 SA P0-1)
 
