@@ -27,8 +27,8 @@ public sealed class AwsSecretsManagerConfigurationSource : IConfigurationSource
 
     /// <summary>
     /// AWS region (例: `ap-northeast-1`)。null のときは AWS SDK の default resolution chain
-    /// (環境変数 `AWS_REGION` / IMDS) に委ねる。App Runner では Task Role + 同 region 配置なので
-    /// `AWS:Region` から渡せば十分。
+    /// (環境変数 `AWS_REGION` / IMDS) に委ねる。App Runner では Instance Role + 同 region 配置なので
+    /// `AWS:Region` から渡せば十分 (P1-2 監査指摘で migration-plan と用語統一)。
     /// </summary>
     public string? RegionName { get; init; }
 

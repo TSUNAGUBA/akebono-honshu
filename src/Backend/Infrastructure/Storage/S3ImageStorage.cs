@@ -8,7 +8,7 @@ namespace Akebono.Infrastructure.Storage;
 
 /// <summary>
 /// 本番環境用 (prod): AWS S3 に PutObject、配信は Pre-signed URL (TTL 15min)。
-/// IAM 認証は App Runner の Task Role で行う (環境変数不要、AWS SDK の default credentials chain)。
+/// IAM 認証は App Runner の Instance Role で行う (環境変数不要、AWS SDK の default credentials chain)。
 /// `S3:BucketName` を appsettings から、region は `AWS:Region` から (`config.GetAWSOptions()` 経由)。
 ///
 /// **フェイルファスト (段階 B Firebase ProjectId と同規約、Iter 4 段階 C-1 reviewer 指摘 C2):**
