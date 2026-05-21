@@ -26,8 +26,10 @@ export interface FamilyListItem {
   primaryImageS3Key: string | null
   /**
    * 代表画像の配信用 URL (Iter 4 段階 C 追加)。
-   * Local 時は absolute URL、S3 時は Pre-signed URL (TTL 15min)。画像未登録時は null。
-   * `img.src` に直接渡す (URL 組立て規則は Frontend では意識しない)。
+   * Local 時は absolute URL、S3 時は Pre-signed URL (TTL 15min)。
+   * 画像未登録時 / URL 取得失敗時 (S3 throttling 等) は null。
+   * `img.src` に直接渡す。null の場合は `v-if` でプレースホルダーにフォールバックする
+   * (Iter 4 段階 C-1 reviewer 指摘 M3/M6 対応、原則 4 非ブロッキング)。
    */
   primaryImageUrl: string | null
   currentMinPrice: number | null
@@ -59,10 +61,11 @@ export interface ImageSummary {
   /**
    * 画像配信用 URL (Iter 4 段階 C 追加)。
    * Local 時は `${apiOrigin}/uploads/...` の absolute URL、S3 時は Pre-signed URL (TTL 15min)。
-   * `img.src` に直接渡せる形式で Backend が生成・返却する (URL 組立て規則は Frontend では意識しない)。
+   * URL 取得失敗時 (S3 throttling 等) は null、`v-if` でプレースホルダーにフォールバック
+   * (Iter 4 段階 C-1 reviewer 指摘 M3/M6、原則 4 非ブロッキング)。
    * Pre-signed URL は実行ごとに署名が変わるため long-term cache 不可。
    */
-  url: string
+  url: string | null
 }
 
 export interface CurrentSupplierPrice {

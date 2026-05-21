@@ -2,6 +2,7 @@ using Akebono.Application.Common;
 using Akebono.Domain.Common;
 using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Akebono.Application.Products;
 
@@ -9,8 +10,26 @@ namespace Akebono.Application.Products;
 /// 商品企画 (product_families) 関連の Application サービス。
 /// バルク登録 (P-01〜P-03) は 1 トランザクション、F-06 ロールバック対応。
 /// </summary>
-public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit, IImageStorageService imageStorage)
+public class ProductFamilyService(
+    IAkebonoDbContext db,
+    IAuditLogger audit,
+    IImageStorageService imageStorage,
+    ILogger<ProductFamilyService> logger)
 {
+    /// <summary>
+    /// URL 取得失敗を非ブロッキング化 (Iter 4 段階 C-1 reviewer 指摘 M6 / 原則 4)。
+    /// S3 throttling / IAM 一時失効等で 1 枚の URL 発行が失敗しても一覧/詳細全体は 200 で返す。
+    /// </summary>
+    private async Task<string?> SafeGetUrlAsync(string key, CancellationToken ct)
+    {
+        try { return await imageStorage.GetUrlAsync(key, ct); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "画像 URL 取得失敗 (key={Key}) - placeholder で fallback", key);
+            return null;
+        }
+    }
+
     /// <summary>
     /// バルク登録 (POST /api/v1/products/families/complete)。
     /// family + products (色×サイズ全組合せ) + supplier_prices を 1 トランザクション。
@@ -184,14 +203,17 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit, IIma
             entityType: "ProductFamily", note: $"count={items.Count}", cancellationToken: ct);
 
         // 代表画像 URL を IImageStorageService で生成 (Local: absolute URL / S3: Pre-signed URL)。
-        // N=families.Count 個の URL を発行するが、署名は純計算で軽量 (N=100 でも数ミリ秒)。
+        // N 件分の Pre-signed URL 発行を Task.WhenAll で並列化 (reviewer 指摘 C3、S3 throttling
+        // 影響を最小化)。署名生成は純計算だが、AssumeRole credential resolution の初回 RTT を吸収する。
+        // 失敗時は SafeGetUrlAsync が null を返し、原則 4 (非ブロッキング) を維持する。
+        var primaryUrls = await Task.WhenAll(items.Select(x =>
+            x.PrimaryImageS3Key is not null ? SafeGetUrlAsync(x.PrimaryImageS3Key, ct) : Task.FromResult<string?>(null)));
+
         var result = new List<FamilyListItem>(items.Count);
-        foreach (var x in items)
+        for (var idx = 0; idx < items.Count; idx++)
         {
+            var x = items[idx];
             var (itemNumber, itemFamilyNumber, sku9Digit) = BuildItemNumbers(x.Family, x.LegacyProductSku);
-            var primaryUrl = x.PrimaryImageS3Key is not null
-                ? await imageStorage.GetUrlAsync(x.PrimaryImageS3Key, ct)
-                : null;
             result.Add(new FamilyListItem(
                 x.Family.Id,
                 sku9Digit,
@@ -208,7 +230,7 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit, IIma
                 x.SkuCount,
                 x.ImageCount,
                 x.PrimaryImageS3Key,
-                primaryUrl,
+                primaryUrls[idx],
                 x.MinPrice, x.MaxPrice, x.Currency,
                 x.Family.UpdatedAt));
         }
@@ -293,13 +315,14 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit, IIma
         var (itemNumber, itemFamilyNumber, _) = BuildItemNumbers(family, legacyProductSku);
 
         // 画像 URL を IImageStorageService で生成 (Local: absolute URL / S3: Pre-signed URL)。
-        // 画像点数は最大 5 枚 (BR-10) のため直列発行で十分。
+        // 画像点数は最大 5 枚 (BR-10)、SafeGetUrlAsync で原則 4 (非ブロッキング) 維持。
+        var imageUrls = await Task.WhenAll(images.Select(i => SafeGetUrlAsync(i.S3Key, ct)));
         var imageSummaries = new List<ImageSummary>(images.Count);
-        foreach (var i in images)
+        for (var idx = 0; idx < images.Count; idx++)
         {
-            var url = await imageStorage.GetUrlAsync(i.S3Key, ct);
+            var i = images[idx];
             imageSummaries.Add(new ImageSummary(i.Id, i.OrderNo, i.S3Key, i.ThumbS3Key,
-                i.MimeType, i.FileSizeBytes, i.OriginalFilename, url));
+                i.MimeType, i.FileSizeBytes, i.OriginalFilename, imageUrls[idx]));
         }
 
         return new FamilyDetail(

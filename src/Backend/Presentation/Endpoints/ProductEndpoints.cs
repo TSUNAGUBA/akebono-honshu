@@ -157,6 +157,9 @@ public static class ProductEndpoints
                 await imageStorage.SaveAsync(s3Key, stream, file.ContentType, ct);
             }
 
+            // ストレージ書込後 → DB save の順。DB save 失敗時は S3 孤児を best-effort 削除する
+            // (reviewer 指摘 M5、CLAUDE.md 原則 4 非ブロッキング・原則 6 SoT 一貫性)。
+            // 削除失敗は logger に記録のみで主要フローに伝播させない。
             var now = SystemTime.Now;
             var image = new ProductImage
             {
@@ -170,7 +173,21 @@ public static class ProductEndpoints
                 CreatedByUserId = auth.ActorId!.Value, UpdatedByUserId = auth.ActorId!.Value,
             };
             db.ProductImages.Add(image);
-            await db.SaveChangesAsync(ct);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch
+            {
+                try { await imageStorage.DeleteAsync(s3Key, CancellationToken.None); }
+                catch (Exception cleanupEx)
+                {
+                    var cleanupLogger = http.RequestServices.GetRequiredService<ILogger<ProductImage>>();
+                    cleanupLogger.LogError(cleanupEx,
+                        "DB save 失敗後の S3 孤児削除に失敗 (key={Key}) - 手動削除が必要", s3Key);
+                }
+                throw;
+            }
 
             var url = await imageStorage.GetUrlAsync(s3Key, ct);
             return Results.Created($"/api/v1/products/families/{id}/images/{image.Id}",

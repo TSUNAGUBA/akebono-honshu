@@ -381,8 +381,10 @@ pnpm dev
    - 「編集」ボタンで属性 (ブランド / 機能 / 商品群 / 素材 3 種 / 名称 / 状態) を変更
    - 「+ 新単価追加」: 旧単価の `effective_to` が自動更新 (BR-04 履歴管理)
 4. **画像管理 (P-06):** 詳細画面「+ 画像追加」→ JPEG/PNG/WebP アップロード (5MB / 5 枚まで)
-   - Backend の `wwwroot/uploads/product-images/{familyId}/` にファイル保存
-   - DB の `s3_key` には相対パスを保存、Iteration 4 で S3 移行時に I/F 互換
+   - Iter 4 段階 C-1 で `IImageStorageService` 抽象化済 (appsettings `ImageStorage:Provider` で切替)
+   - **Local モード (dev default):** Backend の `wwwroot/uploads/product-images/{familyId}/` にファイル保存
+   - **S3 モード (prod):** AWS S3 PutObject + Pre-signed URL (TTL 15min) で配信
+   - DB の `s3_key` は両モード共通 (相対パス形式)、`ImageSummary.url` フィールドで配信 URL を Backend が組立てて返す (Frontend に URL 組立てロジック無し)
 5. **権限制御:** planner / sales でログイン → 編集ボタン全て非表示、Swagger で直接 POST すると 403 Forbidden
 6. **監査ログ:**
    ```sql
@@ -444,7 +446,7 @@ pnpm dev
 | POST | `/api/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission >= 1` |
 | PATCH | `/api/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
 | DELETE | `/api/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
-| GET | `/uploads/product-images/{familyId}/{filename}` | 画像配信 (Static Files、Iter 4 で S3 移行予定) | なし | – |
+| GET | `/uploads/product-images/{familyId}/{filename}` | 画像配信 (Local モード時のみ。S3 モード時は Pre-signed URL 経由で `https://<bucket>.s3.<region>.amazonaws.com/...` から直接配信) | なし | – |
 | GET | `/api/v1/orders` | 発注書一覧 (O-03) | Bearer | – |
 | GET | `/api/v1/orders/{id}` | 発注書詳細 (O-04) | Bearer | – |
 | POST | `/api/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |

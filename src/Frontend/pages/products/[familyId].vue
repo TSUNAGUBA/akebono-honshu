@@ -455,8 +455,12 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             :key="img.id"
             class="group relative overflow-hidden rounded-md border border-gray-200"
           >
-            <img :src="img.url" :alt="img.originalFilename ?? `image-${img.orderNo}`"
+            <img v-if="img.url" :src="img.url" :alt="img.originalFilename ?? `image-${img.orderNo}`"
                  class="aspect-square w-full object-cover" />
+            <div v-else
+                 class="flex aspect-square w-full items-center justify-center bg-gray-100 text-xs text-gray-400">
+              画像読込失敗
+            </div>
             <div class="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white">
               #{{ img.orderNo }}
             </div>

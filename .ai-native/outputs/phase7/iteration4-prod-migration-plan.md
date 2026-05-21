@@ -193,6 +193,12 @@ flowchart LR
 | **Claude** | `IImageStorageService` 抽象作成 + `LocalImageStorage` (現状の `wwwroot/uploads`) + `S3ImageStorage` (Pre-signed URL 配信) 2 実装 |
 | **Claude** | DI 登録を環境変数で切替 (`ImageStorage:Provider` = `Local` / `S3`) |
 | **オペレーター** | IAM Role 作成 (App Runner 用、S3 read/write 最小権限) |
+| **オペレーター** | App Runner 環境変数設定: `ImageStorage__Provider=S3`、`S3__BucketName=akebono-honshu-images-prod`、`AWS__Region=ap-northeast-1` (RDS/Secrets Manager と同 region) |
+| **オペレーター** | **既存 dev 画像の S3 同期** (reviewer 指摘 C1): `product_images` テーブルに既存レコードがある場合、dev サーバの `src/Backend/Presentation/wwwroot/uploads/product-images/` を `aws s3 sync ./uploads/ s3://akebono-honshu-images-prod/uploads/ --sse AES256` で本番バケットにコピー。コピー件数と `SELECT COUNT(*) FROM product_images WHERE NOT is_deleted` の値が一致することを必ず突合する。MIG-3 では画像は取り込まないため、本番初期は通常 0 件で skip 可 |
+| **オペレーター** | 起動ログで `S3:BucketName` が `__OVERRIDE_ME__` でないことを確認 (Backend は constructor で fail-fast するため、誤設定なら App Runner ヘルスチェック失敗 → 自動ロールバックされる) |
+| **オペレーター** | §4.2.5 動作確認の前段で「画像 1 枚をアップロード → 詳細画面で表示」を実施し、Pre-signed URL 経由の GET が 200 を返すことを確認 |
+
+> **C-1 ロールバック注意 (reviewer 指摘 M4):** Backend (App Runner) と Frontend (Firebase Hosting) は別系統デプロイのため、C-1 を revert する場合は **必ず両方ペアで** ロールバックする。Backend だけ revert すると、Frontend は `ImageSummary.url` フィールドを期待しているため画像が表示されなくなる。
 
 #### 4.2.2 Secrets Manager
 
@@ -362,7 +368,12 @@ ORDER BY occurred_at DESC LIMIT 20;
 | Frontend が真っ白 | ブラウザ DevTools Console / Network タブ | Firebase config 不一致、CORS エラー、Backend 503 |
 | ログイン失敗 | Backend ログ (CloudWatch) / Firebase Authentication console | JWKS 検証エラー、users テーブル未登録 |
 | 商品一覧空 | Backend → RDS 接続 | Security Group、VPC コネクタ、`audit_logs` の権限エラー |
-| 画像 404 | S3 Pre-signed URL の TTL | TTL 切れなら再取得、Bucket Policy で再生成 |
+| 画像 404 | S3 Pre-signed URL の TTL (15min) | TTL 切れなら画面リロードで再取得。一覧/詳細画面を 15min 以上開きっぱなしにすると Pre-signed URL が失効するため、運用上は一覧→詳細遷移ごとに再取得される設計。長時間滞在する画面が増えた場合は SPA 側で interval refetch を検討 (reviewer 指摘 M1) |
+| 画像 NoSuchKey 403 | DB の `s3_key` に対応する S3 オブジェクト不在 | §4.2.1 のオペレーター作業「既存 dev 画像の S3 同期」が漏れている可能性。`aws s3 ls s3://<bucket>/uploads/product-images/{familyId}/` で対応 key の存在確認、不在なら dev 環境から再 sync |
+| 画像 API のみ 500 (他は正常) | `S3:BucketName=__OVERRIDE_ME__` のまま起動 | 本来は constructor fail-fast で App Runner ヘルスチェックが落ちる設計だが、起動順序の race で通過した場合に発生。環境変数 `S3__BucketName` を確認し再デプロイ |
+| 画像表示が「画像読込失敗」 placeholder | Backend の `IImageStorageService.GetUrlAsync` 失敗 (`ImageSummary.url=null`) | Backend ログで warning `画像 URL 取得失敗` を grep、S3 throttling / IAM 一時失効を確認。一覧/詳細 API 自体は 200 で返る (原則 4 非ブロッキング) |
+
+> **Pre-signed URL 漏洩リスク (reviewer 指摘 M3):** Pre-signed URL は 15 分間 認可なしで誰でも開ける。Slack / メール等への URL 直貼りは社内ポリシーで禁止すること。商品画像は社内向け参考画像のため業務上は許容範囲だが、本ルールを運用ドキュメントに明記する。
 | Excel ダウンロード失敗 | CORS `Content-Disposition` expose (Iter 3 知見 #3) | App Runner の CORS 設定確認 |
 
 ---

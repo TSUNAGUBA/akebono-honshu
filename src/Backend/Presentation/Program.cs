@@ -247,11 +247,16 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-// wwwroot/uploads/product-images/ ディレクトリを起動時に確保 (Iteration 2 ローカルファイル保存)
-// Iteration 4 で S3 + Pre-signed URL に置換予定
-var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
-var uploadDir = Path.Combine(webRoot, "uploads", "product-images");
-Directory.CreateDirectory(uploadDir);
+// wwwroot/uploads/product-images/ ディレクトリを起動時に確保 (LocalImageStorage 使用時のみ)。
+// Iter 4 段階 C-1 で `ImageStorage:Provider` 切替を導入したため、S3 モード時は無関係のディレクトリ
+// を作らないようガード (reviewer 指摘 auditor m3)。
+var imageProvider = builder.Configuration["ImageStorage:Provider"] ?? "Local";
+if (!string.Equals(imageProvider, "S3", StringComparison.OrdinalIgnoreCase))
+{
+    var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+    var uploadDir = Path.Combine(webRoot, "uploads", "product-images");
+    Directory.CreateDirectory(uploadDir);
+}
 
 app.UseCors();
 

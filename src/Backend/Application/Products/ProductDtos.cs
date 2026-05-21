@@ -66,7 +66,9 @@ public record FamilyListItem(
     string? PrimaryImageS3Key,
     /// <summary>
     /// 代表画像の配信用 URL (Iter 4 段階 C 追加)。Local 時は absolute URL、S3 時は Pre-signed URL (TTL 15min)。
-    /// 画像未登録時は null。Frontend は本フィールドを直接 `img.src` に渡す。
+    /// 画像未登録時 / URL 取得失敗時 (S3 throttling / IAM 一時失効等) は null。
+    /// Frontend は `v-if` でガードしてプレースホルダーを表示する (Iter 4 段階 C-1 reviewer 指摘 M3/M6 対応、
+    /// CLAUDE.md 原則 4 非ブロッキングなエラーハンドリング)。
     /// </summary>
     string? PrimaryImageUrl,
     decimal? CurrentMinPrice,
@@ -141,9 +143,11 @@ public record ImageSummary(
     /// <summary>
     /// 画像配信用 URL (Iter 4 段階 C で追加)。
     /// Local 時は absolute URL (`${apiOrigin}/uploads/...`)、S3 時は Pre-signed URL (TTL 15min)。
-    /// Frontend は本フィールドを直接 `img.src` に渡す (URL 組立て規則を意識しない)。
+    /// URL 取得失敗時 (S3 throttling 等) は null (Iter 4 段階 C-1 reviewer 指摘 M3/M6、
+    /// CLAUDE.md 原則 4 非ブロッキングなエラーハンドリング)。Frontend は `v-if` で
+    /// ガードしてプレースホルダーを表示する。
     /// </summary>
-    string Url);
+    string? Url);
 
 public record CurrentSupplierPrice(
     long Id,
