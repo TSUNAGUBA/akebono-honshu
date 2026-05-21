@@ -29,9 +29,11 @@ public static class AuthEndpoints
         var group = app.MapGroup("/api/v1/auth");
 
         // フロントが Firebase Auth ログイン直後に呼ぶ。ClaimsPrincipal から Firebase UID を取得し、
-        // users.firebase_uid 引当 + 業務情報返却 + audit log。
-        // 未紐付け UID は 403、inactive ユーザは 403 + Login.Failure 監査記録を返し
-        // 「Firebase は通ったが業務ユーザが利用不可」を区別する。
+        // users.firebase_uid 引当 + 業務情報返却 + audit log (Login.Success のみ)。
+        // 未紐付け / inactive / soft-deleted ユーザは OnTokenValidated 段で Claim 未付与となり、
+        // [Authorize] の 401 で本 endpoint に到達しない (拒否監査は OnTokenValidated 内で
+        // Auth.LoginRejected.Inactive / Auth.UidUnboundProbe として 5 分 de-dup で記録)。
+        // 通過後に user 編集 race で users 行が引けない極稀ケースのみ 403。
         group.MapPost("/sync", [Authorize] async (HttpContext http, AuthService svc, CancellationToken ct) =>
         {
             var firebaseUid = GetFirebaseUid(http.User);

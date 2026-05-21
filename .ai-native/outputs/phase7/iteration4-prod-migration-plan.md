@@ -306,6 +306,55 @@ flowchart LR
 
 ---
 
+## 5.6 退職処理オペレーション手順 (SEC-12 SoT 単一ポイント運用、5 周目レビュー反映)
+
+`architecture.md §5.1` の設計判断「Firebase Auth `disabled=true` 同期を SoT 防御の単一ポイント」を運用面で担保するため、退職/異動でユーザを無効化する手順は **必ず以下の順序** で実施する。`P-12 admin UI` 実装後は本手順を UI で自動化するが、それまでは admin オペレータが手動で行う。
+
+### 5.6.1 通常退職 (再雇用無し)
+
+1. **Firebase Console** で当該ユーザの認証を無効化:
+   - `Authentication → Users → 該当 UID → 三点メニュー → "Disable account"`
+   - これにより Firebase ID Token 発行段階で拒否されるため、Backend には到達しなくなる
+2. **RDS users テーブル** で論理削除フラグを立てる:
+   ```sql
+   UPDATE users SET is_deleted = true, is_active = false, updated_at = NOW()
+   WHERE login_id = '<対象ユーザ>';
+   ```
+3. **App Runner Backend** (本番では multi-instance) を rolling restart して `IMemoryCache` を flush:
+   - `aws apprunner start-deployment --service-arn <ARN>` で新リビジョンを配備
+   - これにより `fb_uid_resolve:{uid}` と `audit_logged:{uid}` が即時 flush され、60s 反映遅延を回避
+
+### 5.6.2 一時無効化 (休職等、再有効化前提)
+
+1. **Firebase Console** で disabled=true (5.6.1 と同手順)
+2. **RDS users テーブル**: `is_active=false` のみ (is_deleted は触らない):
+   ```sql
+   UPDATE users SET is_active = false, updated_at = NOW()
+   WHERE login_id = '<対象ユーザ>';
+   ```
+3. **App Runner 再起動** (5.6.1 と同手順)
+4. 復職時は逆順 (`is_active=true` → Firebase disabled=false → Backend 再起動)
+
+### 5.6.3 順序の根拠
+
+- **Firebase → RDS の順**: 逆順だと「RDS は inactive だが Firebase は通る → Backend 到達 → `Auth.LoginRejected.Inactive` が actor_user_id 付きで大量記録される」状態を経由する (cache TTL 60s 内に複数試行で 5 分 de-dup の効き始めまで)。Firebase を先に止めれば Backend に到達しない
+- **Backend 再起動を最後**: cache flush は副次的、SoT (Firebase + RDS) が確定してから cache を整理する順序
+
+### 5.6.4 監査ログ確認
+
+退職処理後、想定外のアクセス試行が無いことを確認:
+```sql
+SELECT occurred_at, actor_user_id, action, note
+FROM audit_logs
+WHERE action IN ('Auth.LoginRejected.Inactive', 'Auth.UidUnboundProbe')
+  AND occurred_at > '<処理日時>'
+ORDER BY occurred_at DESC LIMIT 20;
+```
+- `Auth.UidUnboundProbe` が 0 件 = Firebase 側で確実に拒否されている
+- 件数が出ている場合は手順 1 (Firebase disabled) が反映されていない可能性、Firebase Console を再確認
+
+---
+
 ## 6. 段階横断: 障害時の切り分け手順
 
 | 症状 | 確認ポイント | 対処 |

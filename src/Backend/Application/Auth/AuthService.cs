@@ -27,11 +27,16 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit, ILogger<AuthS
             // (cache TTL 内に user が IsActive=false / IsDeleted=true へ編集された race)。
             // Claim 付与済を信用せず安全側に倒し 403。拒否監査は OnTokenValidated で既に
             // 記録済のため audit は呼ばないが、CloudWatch から事象を観測できるよう warn ログを残す
-            // (4 周目 P2-2 反映: 旧実装で Login.Failure audit が拾っていた可観測性を log で確保)。
+            // (旧実装で Login.Failure audit が拾っていた可観測性を log で確保)。
+            // CloudWatch Logs への UID 露出を最小化するため、OnTokenValidated 側と同じく
+            // 先頭 8 文字に短縮して記録 (audit_logs.note との整合性、5 周目 P2-NEW-2 反映)。
+            var uidShort = firebaseUid.Length > 8
+                ? firebaseUid.Substring(0, 8) + "..."
+                : firebaseUid;
             logger.LogWarning(
-                "SyncAsync: OnTokenValidated 通過後に users 行が引けず (uid={Uid})。" +
+                "SyncAsync: OnTokenValidated 通過後に users 行が引けず (uid={UidShort})。" +
                 "cache TTL 内に user が編集された race の可能性",
-                firebaseUid);
+                uidShort);
             return null;
         }
 
