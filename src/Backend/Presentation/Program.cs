@@ -136,8 +136,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 {
                     // RDS 断・コネクションプール枯渇等で認証全体をブロックしないよう、
                     // Claim 未付与で処理続行。各 endpoint は 401 を返すが、500 propagate は防ぐ。
+                    // CloudWatch Logs への UID 露出最小化のため uidShort 化 (audit_logs.note と整合)。
+                    var uidShortForLog = firebaseUid.Length > 8
+                        ? firebaseUid.Substring(0, 8) + "..."
+                        : firebaseUid;
                     logger.LogWarning(ex,
-                        "Firebase UID {Uid} → users 引当てで例外発生、Claim 未付与で処理続行", firebaseUid);
+                        "Firebase UID {UidShort} → users 引当てで例外発生、Claim 未付与で処理続行",
+                        uidShortForLog);
                     return;
                 }
 
