@@ -182,7 +182,11 @@ public static class ProductEndpoints
                 try { await imageStorage.DeleteAsync(s3Key, CancellationToken.None); }
                 catch (Exception cleanupEx)
                 {
-                    var cleanupLogger = http.RequestServices.GetRequiredService<ILogger<ProductImage>>();
+                    // domain entity を category にしないよう、ILoggerFactory で文字列 category を指定
+                    // (reviewer 2 周目指摘 M-NEW-1 対応)。Endpoints 側は static class のため
+                    // `ILogger<ProductEndpoints>` は使用できず、ILoggerFactory.CreateLogger 経由が慣例。
+                    var cleanupLogger = http.RequestServices.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("Akebono.Api.Endpoints.ProductEndpoints.ImageUpload");
                     cleanupLogger.LogError(cleanupEx,
                         "DB save 失敗後の S3 孤児削除に失敗 (key={Key}) - 手動削除が必要", s3Key);
                 }

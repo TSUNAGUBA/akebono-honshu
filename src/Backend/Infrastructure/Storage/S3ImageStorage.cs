@@ -51,10 +51,12 @@ public sealed class S3ImageStorage : IImageStorageService
         await _s3.PutObjectAsync(req, ct);
     }
 
-    public Task<string> GetUrlAsync(string key, CancellationToken ct)
+    public async Task<string> GetUrlAsync(string key, CancellationToken ct)
     {
         ValidateKey(key);
-        _ = ct; // SDK の Pre-signed URL 生成は純計算で I/O 無 (= ct 非対応)。引数は抽象互換のため受領のみ。
+        _ = ct; // SDK v4 の `GetPreSignedURLAsync(request)` は CancellationToken 引数版が未提供。
+                // 引数は抽象互換のため受領のみ。署名計算自体は CPU bound だが、初回 credential
+                // resolution (IMDS / AssumeRole) で I/O を伴う可能性があるため真の async を使用。
         var req = new GetPreSignedUrlRequest
         {
             BucketName = _bucket,
@@ -62,7 +64,7 @@ public sealed class S3ImageStorage : IImageStorageService
             Expires = DateTime.UtcNow.Add(PreSignedUrlTtl),
             Verb = HttpVerb.GET,
         };
-        return Task.FromResult(_s3.GetPreSignedURL(req));
+        return await _s3.GetPreSignedURLAsync(req);
     }
 
     public async Task DeleteAsync(string key, CancellationToken ct)
@@ -87,7 +89,11 @@ public sealed class S3ImageStorage : IImageStorageService
         // path traversal 防御 (Iter 4 段階 C-1 reviewer 指摘 M5)。
         // S3 は OS path とは異なり ".." を含む key を物理的に格納可能だが、
         // 本実装では信頼境界外からの値を受け取らない設計のため不正値を早期検知する。
-        if (string.IsNullOrEmpty(key) || key.Contains("..", StringComparison.Ordinal))
-            throw new ArgumentException($"不正な S3 key (空 または '..' を含む): '{key}'", nameof(key));
+        // `..` はセグメント単位 (`/` 区切り) で完全一致を判定 (ファイル名 `my..file.jpg` は許可、
+        // reviewer 2 周目指摘 m-NEW-2 対応で false positive を排除)。
+        if (string.IsNullOrEmpty(key))
+            throw new ArgumentException("S3 key が空です", nameof(key));
+        if (key.Split('/').Any(s => s == ".."))
+            throw new ArgumentException($"S3 key に '..' セグメントは含められません: '{key}'", nameof(key));
     }
 }

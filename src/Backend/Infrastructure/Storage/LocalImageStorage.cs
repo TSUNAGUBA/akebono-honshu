@@ -69,19 +69,27 @@ public sealed class LocalImageStorage : IImageStorageService
 
     /// <summary>
     /// path traversal 防御 (Iter 4 段階 C-1 reviewer 指摘 M5)。
-    /// key に `..` を含むか rooted path だと `webRoot` 外への書込が可能になるため早期 throw。
+    /// key に `..` セグメントを含むか rooted path だと `webRoot` 外への書込が可能になるため早期 throw。
+    /// `..` はセグメント単位 (`/` 区切り) で完全一致を判定 (ファイル名 `my..file.jpg` は許可、
+    /// reviewer 2 周目指摘 m-NEW-2 対応で false positive を排除)。
     /// 加えて canonical path で webRoot prefix 検証を `ResolveAbsolutePath` で行う。
     /// </summary>
     private static void ValidateKey(string key)
     {
         if (string.IsNullOrEmpty(key))
             throw new ArgumentException("key が空です", nameof(key));
-        if (key.Contains("..", StringComparison.Ordinal))
-            throw new ArgumentException($"key に '..' は含められません: '{key}'", nameof(key));
+        if (key.Split('/').Any(s => s == ".."))
+            throw new ArgumentException($"key に '..' セグメントは含められません: '{key}'", nameof(key));
         if (Path.IsPathRooted(key))
             throw new ArgumentException($"key は相対パスである必要があります: '{key}'", nameof(key));
     }
 
+    /// <summary>
+    /// 本番は Linux App Runner、dev は通常 Linux/macOS を想定。Windows dev も
+    /// `Path.GetFullPath` で動作するが、UNC パス・長パス (260 char) は未テスト
+    /// (reviewer 2 周目指摘 m-NEW-3)。本サービスの key は `Guid.NewGuid()` ベースで
+    /// 短く、本番 Linux 環境では問題なし。Windows ユースケースが発生したら追加検証する。
+    /// </summary>
     private static string ResolveAbsolutePath(string webRoot, string key)
     {
         var combined = Path.Combine(webRoot, key.Replace('/', Path.DirectorySeparatorChar));
