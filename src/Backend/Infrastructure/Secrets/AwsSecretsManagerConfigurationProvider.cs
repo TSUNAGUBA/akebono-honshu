@@ -16,9 +16,11 @@ namespace Akebono.Infrastructure.Secrets;
 /// - **マッピング:** 1 Secret = 1 IConfiguration key (`SecretMapping.SecretName` → `ConfigKey`)。
 ///   JSON 構造 Secret は未対応 (`SecretString` を生文字列としてそのまま注入)。
 /// - **ConfigurationSource 優先順位 (SA-P0-3 監査指摘):**
-///   `WebApplication.CreateBuilder` の default Source 追加順は JsonFile → User Secrets (Dev)
+///   `WebApplication.CreateBuilder` の default Source 追加順は JsonFile → User Secrets (Dev 環境のみ)
 ///   → EnvironmentVariables → CommandLine。本 Source は **その後** に追加されるため、
 ///   Secrets Manager 経路の値が環境変数 / appsettings を **上書き** する (最後勝ち)。
+///   本番 (Production) では User Secrets Source は挟まらないため Source は 3 段 (JsonFile /
+///   EnvironmentVariables / CommandLine) + Secrets Manager の 4 段構成 (P2-3 監査指摘整合)。
 ///   緊急時に環境変数で Secrets Manager の値を override したい場合は
 ///   `Secrets:Provider=Environment` に切り戻すこと (環境変数で直接 override は不可)。
 ///
@@ -51,11 +53,14 @@ namespace Akebono.Infrastructure.Secrets;
 /// 都度生成 + 破棄するパターンは採らずクラスフィールドで保持する。Provider 自身が `IDisposable`
 /// を実装し、Host 終了時に解放する (`IConfigurationRoot.Dispose()` 経由で連鎖)。
 ///
-/// **ロガー (CR-M1 reviewer 指摘):**
+/// **ロガー (CR-M1 reviewer 指摘 / P1-1 監査指摘):**
 /// ConfigurationProvider は config build 段階で実行されるため DI コンテナの `ILogger` を注入できない。
-/// 本クラスは Bootstrap LoggerFactory を constructor で生成し、構造化ログを出す (`AddSimpleConsole`)。
-/// App Runner では stdout/stderr とも CloudWatch Logs に拾われるため CloudWatch Logs Insights で
-/// grep 可能 (本プロジェクト唯一の `Console.Error.WriteLine` 経路は廃止、構造化ログに統一)。
+/// 本クラスは Bootstrap LoggerFactory を constructor で生成し、`AddSimpleConsole` で
+/// **プレーンテキスト 1 行 / イベント** 形式で出力する (構造化 JSON 出力ではない)。
+/// CloudWatch Logs Insights での検索は `filter @message like /AwsSecretsManager: loaded/`
+/// のような **@message 部分一致 grep** で行う (個別フィールドアクセスは不可)。本プロジェクトは
+/// 1 vCPU/2GB の小型 App Runner 構成で本番ログボリュームが小さいため、JsonConsole への切替は
+/// 段階 D 以降で検討する。本実装で `Console.Error.WriteLine` 経路は完全撤去済。
 /// </summary>
 public sealed class AwsSecretsManagerConfigurationProvider : ConfigurationProvider, IDisposable
 {
@@ -71,18 +76,26 @@ public sealed class AwsSecretsManagerConfigurationProvider : ConfigurationProvid
         ArgumentNullException.ThrowIfNull(source);
         _source = source;
         // Bootstrap LoggerFactory: ConfigurationProvider は DI 経由で ILogger を受け取れない。
-        // SimpleConsole + SingleLine で 1 行 1 イベント、CloudWatch Logs Insights の `fields @message`
-        // で構造化検索可能。
+        // SimpleConsole + SingleLine で 1 行 1 イベント (プレーンテキスト)、CloudWatch では
+        // `filter @message like /.../` の部分一致 grep で検索する。
+        // TimestampFormat はローカル実行 (テストハーネス) で日次跨ぎログを追えるよう日付付き
+        // (P2-5 監査指摘)。CloudWatch は別途行ヘッダにタイムスタンプを付与するため本番では冗長だが
+        // 害は無い。
         _loggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole(opts =>
         {
             opts.SingleLine = true;
-            opts.TimestampFormat = "HH:mm:ss ";
+            opts.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
         }));
         _logger = _loggerFactory.CreateLogger<AwsSecretsManagerConfigurationProvider>();
     }
 
     public override void Load()
     {
+        // Dispose 後の再呼出を防御 (M-NEW-1 / P2-4 reviewer/auditor 指摘)。
+        // 通常 Configuration provider の Dispose は Host 終了時のみだが、IDisposable 導入の副作用として
+        // disposed LoggerFactory への書込み / client リーク経路を閉じておく。
+        if (_disposed) return;
+
         // 冪等性ガード (CR-M2): 起動時 1 回のみを意図、Reload() 経由の再呼出は no-op 化。
         if (_loaded)
         {
@@ -91,7 +104,9 @@ public sealed class AwsSecretsManagerConfigurationProvider : ConfigurationProvid
             return;
         }
 
-        var prefix = _source.Prefix.TrimEnd('/');
+        // Source.Prefix は SecretsConfigurationExtensions.AddAkebonoAwsSecretsManager 内で
+        // 既に Trim + TrimEnd('/') + 検証済 (N-NEW-1 reviewer 指摘の SSoT)。本クラスでは再正規化しない。
+        var prefix = _source.Prefix;
         // OrdinalIgnoreCase は IConfiguration の section key 大文字小文字無視規約と整合させるため (m-3/P2-6)。
         var data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 

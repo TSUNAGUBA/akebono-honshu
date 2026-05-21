@@ -204,18 +204,20 @@ flowchart LR
 
 | 主体 | 作業 |
 |---|---|
-| **オペレーター** | KMS CMK 作成 (例: `akebono-honshu-prod-cmk`、`Region=ap-northeast-1` で RDS / App Runner と同居)。**自動ローテーションは段階 C-2 では無効** (本実装は起動時 1 回取得のため、Lambda 自動ローテーション中の旧値キャッシュ vs 新値 DB 接続の不整合を避ける、SA-P1-6) |
+| **オペレーター** | KMS CMK 作成 (例: `akebono-honshu-prod-cmk`、`Region=ap-northeast-1` で RDS / App Runner と同居)。**Secrets Manager の自動ローテーションは段階 C-2 では無効** (本実装は起動時 1 回取得のため、Lambda 自動ローテーション中の旧値キャッシュ vs 新値 DB 接続の不整合を避ける、SA-P1-6)。**RDS Console 側のマスターパスワード自動ローテーションも有効化しないこと** (P1-4 監査指摘): RDS が自動生成する新パスワードは AWS が管理する別 Secret (RDS-managed) に格納されるが、本実装は operator-managed Secret `akebono/prod/db-connection` を読むため値が同期せず認証エラーになる。将来 RDS managed Secret に切替える場合は本実装の `_loaded` フラグ設計 (Load() 起動時 1 回化) を再検討する。KMS CMK 自体の年次自動キーローテーションは復号互換のため有効化可 (新旧鍵で過去暗号文も復号可能) |
 | **オペレーター** | Secrets Manager に投入 (CMK で暗号化、prefix は `akebono/prod/` 固定): <br/>① `akebono/prod/db-connection` (RDS 接続文字列 `Host=...;Port=5432;Database=akebono_honshu;Username=...;Password=...`、SecretString 形式) <br/>② `akebono/prod/firebase-sa-key` (Firebase Service Account 鍵 JSON 全文、SecretString 形式、§4.2.2bis で本番 project の鍵を投入) |
 | **オペレーター** | 投入後の **マッピングドリフト検知** (SA-P1-4): `aws secretsmanager list-secrets --filters Key=name,Values=akebono/prod/ --query 'SecretList[].Name'` の出力と、リポジトリ内 `src/Backend/Infrastructure/Secrets/SecretMappings.cs` の `Default` 配列の `SecretName` 列 (現状 `db-connection`, `firebase-sa-key`) を **目視突合** し、欠落 / typo が無いことを確認 |
 | **Claude** | `AwsSecretsManagerConfigurationSource` / `Provider` 実装 (`AWSSDK.SecretsManager` で起動時 1 回 同期取得 → `IConfiguration` に注入)。Source は `IConfigurationBuilder.AddAkebonoAwsSecretsManager()` 拡張メソッドから組み込む |
 | **Claude** | Secret 名 → IConfiguration key の 1:1 マッピング表を `Infrastructure/Secrets/SecretMappings.cs` に静的定義 (現状: `db-connection`→`ConnectionStrings:Postgres`、`firebase-sa-key`→`Firebase:ServiceAccountKey` (Optional))。マッピング追加時はここに行を増やす |
 | **Claude** | Program.cs に切替分岐を追加 (`Secrets:Provider=AwsSecretsManager` のとき `builder.Configuration.AddAkebonoAwsSecretsManager(prefix, region)` を呼び、それ以外は環境変数 / User Secrets / appsettings 経由で値が解決される既存挙動)。fail-fast は extension に集約 (二重 fail-fast 排除、SA-P0-1) |
-| **オペレーター** | IAM Role (App Runner Task Role) に **下記サンプル相当の最小権限** を付与。`*` 全許可は禁止。`kms:Decrypt` は `kms:ViaService` 条件で Secrets Manager 経由のみに限定 (AWS KMS Developer Guide ベストプラクティス、SA-P2-1) |
-| **オペレーター** | App Runner 環境変数設定: `Secrets__Provider=AwsSecretsManager`、`Secrets__AwsPrefix=akebono/prod/`、`AWS__Region=ap-northeast-1`、`ASPNETCORE_ENVIRONMENT=Production` (`UseDeveloperExceptionPage` 経路を遮断、SA-P0-2)。`ConnectionStrings__Postgres` 環境変数は **設定しない** — Secrets Manager Source は default Source 群 (JsonFile / EnvironmentVariables / CommandLine) の **後** に追加されるため Secrets Manager 側が優先される (環境変数で上書きしようとしても効かない、SA-P0-3)。緊急時に環境変数で override したい場合は `Secrets__Provider=Environment` に切り戻す |
+| **オペレーター** | App Runner **Instance Role** (`InstanceConfiguration.InstanceRoleArn` で指定する IAM Role、P1-2 監査指摘で用語統一) に **下記サンプル相当の最小権限** を付与。`*` 全許可は禁止。`kms:Decrypt` は `kms:ViaService` 条件で Secrets Manager 経由のみに限定 (AWS KMS Developer Guide ベストプラクティス、SA-P2-1) |
+| **オペレーター** | App Runner 環境変数設定: `Secrets__Provider=AwsSecretsManager`、`Secrets__AwsPrefix=akebono/prod/`、`AWS__Region=ap-northeast-1`、`ASPNETCORE_ENVIRONMENT=Production` (`UseDeveloperExceptionPage` 経路を遮断、SA-P0-2)。`ConnectionStrings__Postgres` 環境変数は **設定しない** — Secrets Manager Source は default Source 群 (本番では JsonFile / EnvironmentVariables / CommandLine の 3 段、dev のみ User Secrets を含む 4 段、P2-3 監査指摘) の **後** に追加されるため Secrets Manager 側が優先される (環境変数で上書きしようとしても効かない、SA-P0-3)。緊急時に環境変数で override したい場合は `Secrets__Provider=Environment` に切り戻す |
 | **オペレーター** | 起動ログで Secrets Manager 取得成功を確認: CloudWatch Logs Insights で `fields @message \| filter @message like /AwsSecretsManager: loaded/` を実行し `loaded N/M secrets from prefix=akebono/prod` の N==M (Optional 欠落分を除く) を確認 (SA-P1-3)。失敗時は Provider が起動時に throw → App Runner ヘルスチェック失敗 → 自動ロールバック。`Secrets__AwsPrefix` が `__OVERRIDE_ME__` のまま起動した場合も extension で fail-fast |
 | **オペレーター** | Secret rotation 時の運用: 本実装は起動時 1 回取得 (TTL refresh 未対応、SA-P1-6)。手動切替フロー: ① Secrets Manager Console で新版 Secret を投入 → ② App Runner サービスを「サービスを再デプロイ」(新リビジョン作成 → rolling deployment で自動切替、継続トラフィック維持)。RDS パスワード rotation の場合は同タイミングで RDS 側パスワード変更も実施し、`db-connection` Secret と同期させる |
 
-**IAM ポリシー JSON サンプル (App Runner Task Role 用、SA-P2-1):**
+**IAM ポリシー JSON サンプル (App Runner Instance Role 用、SA-P2-1 / P1-2):**
+
+> **コピペ注意 (P2-1 監査指摘):** 下記 JSON の `<account-id>` (12 桁 AWS アカウント ID、AWS Console → 右上アカウント名から確認) と `<cmk-uuid>` (KMS Key の `KeyId`、AWS Console → KMS → 該当 CMK → "Key ID" から確認) を **必ず実値に置換** してから `aws iam put-role-policy` で投入すること。placeholder のまま投入すると `kms:Decrypt` が常時失敗し、Backend 起動時に `AWS Secrets Manager からの Secret 取得に失敗しました ... exception=AccessDeniedException` で fail-fast する。
 
 ```json
 {
@@ -242,7 +244,7 @@ flowchart LR
 
 > **手順順序の前提 (SA-P1-5):** §4.2.3 で App Runner サービスを実際に作成する前段で、本節の IAM Role / Secret 投入 / list-secrets 突合は完了している必要がある。Secrets Manager は App Runner からパブリック AWS endpoint 経由で到達するため VPC コネクタ + SM 用 VPC エンドポイントは不要 (VPC コネクタは RDS 専用)。
 
-> **新規 Secret 追加フロー (将来開発者向け):** ① `SecretMappings.Default` に行追加 → ② 本表 (§4.2.2) の Secret 投入対象に行追加 → ③ オペレーターが Secrets Manager に投入 → ④ list-secrets 突合 → ⑤ デプロイ。SecretMappings.cs のクラス XML コメントを SoT とする。
+> **新規 Secret 追加フロー (将来開発者向け、SoT 統一 P1-3 / M-NEW-2):** 詳細手順は `src/Backend/Infrastructure/Secrets/SecretMappings.cs` のクラス XML コメント (`5 ステップ`) を SoT とする。本ドキュメントから記述を写経しない (二重管理による齟齬防止)。要約: ① コード `Default` 行追加 → ② 本表行追加 → ③ Secrets Manager 投入 → ④ `aws secretsmanager list-secrets` 突合 → ⑤ App Runner 再デプロイ + 起動ログ `loaded N/M secrets` 確認。
 
 > **C-2 ロールバック注意:** Secrets Manager 経路を revert する場合は **必ず App Runner 環境変数の `Secrets__Provider` を `Environment` に戻す + `ConnectionStrings__Postgres` を環境変数で再注入** すること。コード revert だけでは prod の DB 接続が解決できず起動失敗する。
 
@@ -264,17 +266,21 @@ flowchart LR
 
 #### 4.2.3 App Runner (Backend)
 
-> **前提順序 (SA-P1-5):** §4.2.1 (S3 + IAM Role) と §4.2.2 (Secrets Manager + IAM Role + KMS) を完了してから本節に着手する。Task Role に S3 / Secrets Manager / KMS の最小権限が揃っている前提。
+> **前提順序 (SA-P1-5):** §4.2.1 (S3 + IAM Role) と §4.2.2 (Secrets Manager + IAM Role + KMS) を完了してから本節に着手する。App Runner Instance Role に S3 / Secrets Manager / KMS の最小権限が揃っている前提。
 
 | 主体 | 作業 |
 |---|---|
 | **Claude** | `Dockerfile` 作成 (Backend、multi-stage build) |
 | **オペレーター** | ECR リポジトリ作成 (例: `akebono-honshu-backend`) |
 | **オペレーター** | ローカルから初回 `docker build` + `docker push <ecr-uri>` (Claude が手順書化) |
-| **オペレーター** | App Runner サービス作成 (ECR 連携、1 vCPU / 2GB、min=1 max=2)。**Instance Role** に §4.2.1 + §4.2.2 で作成した Task Role (S3 + Secrets Manager + KMS 権限統合) を指定 |
+| **オペレーター** | App Runner サービス作成 (ECR 連携、1 vCPU / 2GB、min=1 max=2)。`InstanceConfiguration.InstanceRoleArn` に §4.2.1 + §4.2.2 で作成した IAM Role (S3 + Secrets Manager + KMS 権限統合) を指定 (P1-2 監査指摘で用語統一: App Runner では "Instance Role" が正式呼称、ECS/Fargate の "Task Role" 用語は使わない) |
 | **オペレーター** | App Runner 環境変数設定 (集約版): `ASPNETCORE_ENVIRONMENT=Production` (SA-P0-2 必須、DeveloperExceptionPage 経路を遮断)、`AWS__Region=ap-northeast-1`、`Cors__Origins=<本番 Frontend オリジン>`、`Firebase__ProjectId=akebono-honshu-prod` (§4.2.2bis)、`ImageStorage__Provider=S3` + `S3__BucketName=akebono-honshu-images-prod` (§4.2.1)、`Secrets__Provider=AwsSecretsManager` + `Secrets__AwsPrefix=akebono/prod/` (§4.2.2)。**`ConnectionStrings__Postgres` は設定しない** (Secrets Manager 経由で注入される、§4.2.2 参照) |
 | **オペレーター** | VPC コネクタ作成 (App Runner → **RDS のみ**)。Secrets Manager / KMS / S3 はパブリック AWS endpoint 経由で到達するため VPC コネクタ不要 (誤って SM 用 VPC エンドポイントを作る必要は無い) |
 | **オペレーター** | RDS セキュリティグループに App Runner VPC コネクタからの接続 (port 5432) を許可 |
+
+> **C-2 範囲外の本番セキュリティ TODO (段階 D 以降で対応、P1-5 / P2-2 監査指摘):**
+> - **Swagger UI の本番露出:** 現状 `Program.cs` は `IsDevelopment()` ガード無しで `app.UseSwagger()` / `app.UseSwaggerUI()` を登録するため、`ASPNETCORE_ENVIRONMENT=Production` でも `/swagger` が公開される。API スキーマ漏洩のリスクがあるため、段階 D で `if (!app.Environment.IsProduction())` ガードを追加するか、CloudFront / WAF / Authorization で `/swagger*` パスを保護する。
+> - **Logging レベル本番チューニング:** 現状 `appsettings.json` で `Logging:LogLevel:Default=Information` のため、本番でも EF Core クエリログ・詳細トレースが CloudWatch Logs に流れる (PII / SQL 値漏洩リスク + コスト増)。段階 D で `Logging__LogLevel__Default=Warning`、`Logging__LogLevel__Akebono=Information`、`Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command=Warning` を App Runner 環境変数で追加する。
 
 #### 4.2.4 Firebase Hosting (Frontend)
 

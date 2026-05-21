@@ -15,7 +15,9 @@ namespace Akebono.Infrastructure.Secrets;
 public sealed class AwsSecretsManagerConfigurationSource : IConfigurationSource
 {
     /// <summary>
-    /// Secret 名の prefix (例: `akebono/prod/`)。末尾スラッシュは内部で trim する。
+    /// Secret 名の prefix (例: `akebono/prod`)。
+    /// `SecretsConfigurationExtensions.AddAkebonoAwsSecretsManager` 内で Trim + TrimEnd('/') 済の
+    /// **正規化された値** が格納される (N-NEW-1 reviewer 指摘の SoT)。Provider 側で再正規化しないこと。
     /// 環境変数 `Secrets__AwsPrefix` で上書き必須。`__OVERRIDE_ME__` のままだと拡張メソッドで throw。
     /// </summary>
     public required string Prefix { get; init; }
