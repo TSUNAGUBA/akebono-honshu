@@ -28,12 +28,13 @@ var builder = WebApplication.CreateBuilder(args);
 //   で有効化。`ConnectionStrings:Postgres` 等が Secrets Manager 経由で上書きされる。
 // SecretMappings の対象 Secret 群 (`db-connection`, `firebase-sa-key` ほか) は事前定義されている
 // (Infrastructure/Secrets/SecretMappings.cs)。
-var secretsProvider = builder.Configuration["Secrets:Provider"] ?? "Environment";
-if (string.Equals(secretsProvider, "AwsSecretsManager", StringComparison.OrdinalIgnoreCase))
+// **fail-fast SoT (SA-P0-1):** prefix の null / placeholder 検証は AddAkebonoAwsSecretsManager 拡張に
+// 集約。ここでは null/empty もそのまま渡し、拡張内で 1 箇所だけ throw する (二重 fail-fast はメッセージ
+// 齟齬の温床)。
+var secretsProvider = builder.Configuration["Secrets:Provider"] ?? SecretsProviders.Environment;
+if (string.Equals(secretsProvider, SecretsProviders.AwsSecretsManager, StringComparison.OrdinalIgnoreCase))
 {
-    var prefix = builder.Configuration["Secrets:AwsPrefix"]
-        ?? throw new InvalidOperationException(
-            "Secrets:Provider=AwsSecretsManager のとき Secrets:AwsPrefix は必須です (例: akebono/prod/)。");
+    var prefix = builder.Configuration["Secrets:AwsPrefix"];
     var region = builder.Configuration["AWS:Region"];
     builder.Configuration.AddAkebonoAwsSecretsManager(prefix, regionName: region);
 }

@@ -204,15 +204,45 @@ flowchart LR
 
 | 主体 | 作業 |
 |---|---|
-| **オペレーター** | KMS CMK 作成 (例: `akebono-honshu-prod-cmk`、自動ローテーション有効、`Region=ap-northeast-1` で RDS / App Runner と同居) |
+| **オペレーター** | KMS CMK 作成 (例: `akebono-honshu-prod-cmk`、`Region=ap-northeast-1` で RDS / App Runner と同居)。**自動ローテーションは段階 C-2 では無効** (本実装は起動時 1 回取得のため、Lambda 自動ローテーション中の旧値キャッシュ vs 新値 DB 接続の不整合を避ける、SA-P1-6) |
 | **オペレーター** | Secrets Manager に投入 (CMK で暗号化、prefix は `akebono/prod/` 固定): <br/>① `akebono/prod/db-connection` (RDS 接続文字列 `Host=...;Port=5432;Database=akebono_honshu;Username=...;Password=...`、SecretString 形式) <br/>② `akebono/prod/firebase-sa-key` (Firebase Service Account 鍵 JSON 全文、SecretString 形式、§4.2.2bis で本番 project の鍵を投入) |
-| **Claude** | `AwsSecretsManagerConfigurationSource` / `Provider` 実装 (`AWSSDK.SecretsManager` で起動時に同期取得 → `IConfiguration` に注入)。Source は `IConfigurationBuilder.AddAkebonoAwsSecretsManager()` 拡張メソッドから組み込む |
+| **オペレーター** | 投入後の **マッピングドリフト検知** (SA-P1-4): `aws secretsmanager list-secrets --filters Key=name,Values=akebono/prod/ --query 'SecretList[].Name'` の出力と、リポジトリ内 `src/Backend/Infrastructure/Secrets/SecretMappings.cs` の `Default` 配列の `SecretName` 列 (現状 `db-connection`, `firebase-sa-key`) を **目視突合** し、欠落 / typo が無いことを確認 |
+| **Claude** | `AwsSecretsManagerConfigurationSource` / `Provider` 実装 (`AWSSDK.SecretsManager` で起動時 1 回 同期取得 → `IConfiguration` に注入)。Source は `IConfigurationBuilder.AddAkebonoAwsSecretsManager()` 拡張メソッドから組み込む |
 | **Claude** | Secret 名 → IConfiguration key の 1:1 マッピング表を `Infrastructure/Secrets/SecretMappings.cs` に静的定義 (現状: `db-connection`→`ConnectionStrings:Postgres`、`firebase-sa-key`→`Firebase:ServiceAccountKey` (Optional))。マッピング追加時はここに行を増やす |
-| **Claude** | Program.cs に切替分岐を追加 (`Secrets:Provider=AwsSecretsManager` のとき `builder.Configuration.AddAkebonoAwsSecretsManager(prefix, region)` を呼び、それ以外は環境変数 / User Secrets / appsettings 経由で値が解決される既存挙動) |
-| **オペレーター** | IAM Role (App Runner Task Role) に `secretsmanager:GetSecretValue` と `kms:Decrypt` の最小権限を付与 (対象 Resource は `arn:aws:secretsmanager:ap-northeast-1:<account>:secret:akebono/prod/*` と CMK ARN のみ。`*` 全許可は禁止) |
-| **オペレーター** | App Runner 環境変数設定: `Secrets__Provider=AwsSecretsManager`、`Secrets__AwsPrefix=akebono/prod/`、`AWS__Region=ap-northeast-1` (`ConnectionStrings__Postgres` は **設定しない** — Secrets Manager 経由で注入されるため。誤って環境変数で設定するとプロバイダ優先順位により Secrets Manager の値が上書きされる可能性があるので注意) |
-| **オペレーター** | 起動ログで Secrets Manager 取得が成功していることを確認 (失敗時は Program.cs / Provider が起動時に throw → App Runner ヘルスチェック失敗 → 自動ロールバック)。`Secrets__AwsPrefix` が `__OVERRIDE_ME__` のまま起動した場合も拡張メソッドで fail-fast |
-| **オペレーター** | Secret rotation 時の運用: 本実装は起動時 1 回取得 (TTL refresh 未対応)。rotation 後は App Runner のサービス再デプロイ (新リビジョン作成 → 自動切替) で新値を反映する。継続トラフィックがある場合は rolling deployment で最小ダウンタイム |
+| **Claude** | Program.cs に切替分岐を追加 (`Secrets:Provider=AwsSecretsManager` のとき `builder.Configuration.AddAkebonoAwsSecretsManager(prefix, region)` を呼び、それ以外は環境変数 / User Secrets / appsettings 経由で値が解決される既存挙動)。fail-fast は extension に集約 (二重 fail-fast 排除、SA-P0-1) |
+| **オペレーター** | IAM Role (App Runner Task Role) に **下記サンプル相当の最小権限** を付与。`*` 全許可は禁止。`kms:Decrypt` は `kms:ViaService` 条件で Secrets Manager 経由のみに限定 (AWS KMS Developer Guide ベストプラクティス、SA-P2-1) |
+| **オペレーター** | App Runner 環境変数設定: `Secrets__Provider=AwsSecretsManager`、`Secrets__AwsPrefix=akebono/prod/`、`AWS__Region=ap-northeast-1`、`ASPNETCORE_ENVIRONMENT=Production` (`UseDeveloperExceptionPage` 経路を遮断、SA-P0-2)。`ConnectionStrings__Postgres` 環境変数は **設定しない** — Secrets Manager Source は default Source 群 (JsonFile / EnvironmentVariables / CommandLine) の **後** に追加されるため Secrets Manager 側が優先される (環境変数で上書きしようとしても効かない、SA-P0-3)。緊急時に環境変数で override したい場合は `Secrets__Provider=Environment` に切り戻す |
+| **オペレーター** | 起動ログで Secrets Manager 取得成功を確認: CloudWatch Logs Insights で `fields @message \| filter @message like /AwsSecretsManager: loaded/` を実行し `loaded N/M secrets from prefix=akebono/prod` の N==M (Optional 欠落分を除く) を確認 (SA-P1-3)。失敗時は Provider が起動時に throw → App Runner ヘルスチェック失敗 → 自動ロールバック。`Secrets__AwsPrefix` が `__OVERRIDE_ME__` のまま起動した場合も extension で fail-fast |
+| **オペレーター** | Secret rotation 時の運用: 本実装は起動時 1 回取得 (TTL refresh 未対応、SA-P1-6)。手動切替フロー: ① Secrets Manager Console で新版 Secret を投入 → ② App Runner サービスを「サービスを再デプロイ」(新リビジョン作成 → rolling deployment で自動切替、継続トラフィック維持)。RDS パスワード rotation の場合は同タイミングで RDS 側パスワード変更も実施し、`db-connection` Secret と同期させる |
+
+**IAM ポリシー JSON サンプル (App Runner Task Role 用、SA-P2-1):**
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSecretsManagerGetSecretValuePrefixed",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:ap-northeast-1:<account-id>:secret:akebono/prod/*"
+    },
+    {
+      "Sid": "AllowKmsDecryptViaSecretsManagerOnly",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:ap-northeast-1:<account-id>:key/<cmk-uuid>",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "secretsmanager.ap-northeast-1.amazonaws.com" }
+      }
+    }
+  ]
+}
+```
+
+> **手順順序の前提 (SA-P1-5):** §4.2.3 で App Runner サービスを実際に作成する前段で、本節の IAM Role / Secret 投入 / list-secrets 突合は完了している必要がある。Secrets Manager は App Runner からパブリック AWS endpoint 経由で到達するため VPC コネクタ + SM 用 VPC エンドポイントは不要 (VPC コネクタは RDS 専用)。
+
+> **新規 Secret 追加フロー (将来開発者向け):** ① `SecretMappings.Default` に行追加 → ② 本表 (§4.2.2) の Secret 投入対象に行追加 → ③ オペレーターが Secrets Manager に投入 → ④ list-secrets 突合 → ⑤ デプロイ。SecretMappings.cs のクラス XML コメントを SoT とする。
 
 > **C-2 ロールバック注意:** Secrets Manager 経路を revert する場合は **必ず App Runner 環境変数の `Secrets__Provider` を `Environment` に戻す + `ConnectionStrings__Postgres` を環境変数で再注入** すること。コード revert だけでは prod の DB 接続が解決できず起動失敗する。
 
@@ -234,15 +264,17 @@ flowchart LR
 
 #### 4.2.3 App Runner (Backend)
 
+> **前提順序 (SA-P1-5):** §4.2.1 (S3 + IAM Role) と §4.2.2 (Secrets Manager + IAM Role + KMS) を完了してから本節に着手する。Task Role に S3 / Secrets Manager / KMS の最小権限が揃っている前提。
+
 | 主体 | 作業 |
 |---|---|
 | **Claude** | `Dockerfile` 作成 (Backend、multi-stage build) |
 | **オペレーター** | ECR リポジトリ作成 (例: `akebono-honshu-backend`) |
 | **オペレーター** | ローカルから初回 `docker build` + `docker push <ecr-uri>` (Claude が手順書化) |
-| **オペレーター** | App Runner サービス作成 (ECR 連携、1 vCPU / 2GB、min=1 max=2) |
-| **オペレーター** | App Runner 環境変数 / Secrets 連携 |
-| **オペレーター** | VPC コネクタ作成 (App Runner → RDS / Secrets Manager) |
-| **オペレーター** | RDS セキュリティグループに App Runner VPC コネクタからの接続を許可 |
+| **オペレーター** | App Runner サービス作成 (ECR 連携、1 vCPU / 2GB、min=1 max=2)。**Instance Role** に §4.2.1 + §4.2.2 で作成した Task Role (S3 + Secrets Manager + KMS 権限統合) を指定 |
+| **オペレーター** | App Runner 環境変数設定 (集約版): `ASPNETCORE_ENVIRONMENT=Production` (SA-P0-2 必須、DeveloperExceptionPage 経路を遮断)、`AWS__Region=ap-northeast-1`、`Cors__Origins=<本番 Frontend オリジン>`、`Firebase__ProjectId=akebono-honshu-prod` (§4.2.2bis)、`ImageStorage__Provider=S3` + `S3__BucketName=akebono-honshu-images-prod` (§4.2.1)、`Secrets__Provider=AwsSecretsManager` + `Secrets__AwsPrefix=akebono/prod/` (§4.2.2)。**`ConnectionStrings__Postgres` は設定しない** (Secrets Manager 経由で注入される、§4.2.2 参照) |
+| **オペレーター** | VPC コネクタ作成 (App Runner → **RDS のみ**)。Secrets Manager / KMS / S3 はパブリック AWS endpoint 経由で到達するため VPC コネクタ不要 (誤って SM 用 VPC エンドポイントを作る必要は無い) |
+| **オペレーター** | RDS セキュリティグループに App Runner VPC コネクタからの接続 (port 5432) を許可 |
 
 #### 4.2.4 Firebase Hosting (Frontend)
 

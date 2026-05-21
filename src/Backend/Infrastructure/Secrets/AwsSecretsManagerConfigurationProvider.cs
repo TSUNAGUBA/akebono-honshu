@@ -2,6 +2,7 @@ using Amazon;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Akebono.Infrastructure.Secrets;
 
@@ -9,78 +10,172 @@ namespace Akebono.Infrastructure.Secrets;
 /// AWS Secrets Manager から Secret を取得して IConfiguration に注入する Provider (Iter 4 段階 C-2)。
 ///
 /// 設計判断 (ヒアリング A/A/A 案):
-/// - **取得タイミング:** `Load()` は起動時 1 回のみ呼ばれる。TTL refresh や hot-reload は実装しない
-///   (rotation 時は App Runner 再デプロイで対応する設計選択)。
+/// - **取得タイミング:** `Load()` は起動時 1 回のみ実行を意図。冪等性ガードとして `_loaded` フラグで
+///   2 回目以降の呼出を no-op 化 (`IConfigurationRoot.Reload()` が誤発火しても AWS API を無駄に叩かない、
+///   CR-M2 reviewer 指摘)。rotation 時の値再取得は App Runner 再デプロイで対応する設計選択。
 /// - **マッピング:** 1 Secret = 1 IConfiguration key (`SecretMapping.SecretName` → `ConfigKey`)。
 ///   JSON 構造 Secret は未対応 (`SecretString` を生文字列としてそのまま注入)。
-/// - **エラー処理:**
-///   - Optional=false の Secret が `ResourceNotFoundException` or 取得失敗 → 例外を throw。
-///     `WebApplication.CreateBuilder` 〜 `Build()` の間で発生するため起動失敗となり、
-///     App Runner ヘルスチェック失敗 → 自動ロールバック (段階 C-1 S3ImageStorage と同規約)。
-///   - Optional=true の Secret は ResourceNotFound 時のみ欠落容認、AccessDenied 等の権限系は throw。
+/// - **ConfigurationSource 優先順位 (SA-P0-3 監査指摘):**
+///   `WebApplication.CreateBuilder` の default Source 追加順は JsonFile → User Secrets (Dev)
+///   → EnvironmentVariables → CommandLine。本 Source は **その後** に追加されるため、
+///   Secrets Manager 経路の値が環境変数 / appsettings を **上書き** する (最後勝ち)。
+///   緊急時に環境変数で Secrets Manager の値を override したい場合は
+///   `Secrets:Provider=Environment` に切り戻すこと (環境変数で直接 override は不可)。
 ///
-/// 設計上の制限:
+/// **エラー処理:**
+/// - Optional=false の Secret 欠落 / 取得失敗 → `InvalidOperationException` でラップして throw
+///   (`secretId` を含む、ただし SecretString 値は **絶対に** 含めない、CR-C2 reviewer 指摘)。
+///   `WebApplication.CreateBuilder` 〜 `Build()` の間で発生するため起動失敗 →
+///   App Runner ヘルスチェック失敗 → 自動ロールバック (段階 C-1 S3ImageStorage と同規約)。
+/// - Optional=true の Secret は `ResourceNotFoundException` 時のみ欠落容認。
+///   AccessDenied / Throttling 等の運用系例外は Optional であっても throw する (権限不足を黙殺しない、
+///   CR-M4 / SA-P1-4 指摘の typo 検知性向上)。
+///
+/// **秘密情報露出に関する防御規約 (SA-P0-2 / SA-P1-1 監査指摘):**
+/// - 例外メッセージ・ログ出力には `SecretId` (Secret 名) のみを含め、`SecretString` (値) は
+///   **絶対に** 含めないこと。本ファイル内で `response.SecretString` を引数に取る `ILogger.Log*` /
+///   `Exception` コンストラクタ呼出は **禁止**。将来改修時も死守する。
+/// - 本番は `ASPNETCORE_ENVIRONMENT=Production` を必須とする (`UseDeveloperExceptionPage` 等で
+///   `IConfiguration.GetDebugView()` 相当の値が漏れる経路を遮断、migration-plan §4.2.3 で App Runner
+///   環境変数の必須項目として明記)。
+///
+/// **設計上の制限:**
 /// - `Load()` は同期 API。AWS SDK の async メソッドを `GetAwaiter().GetResult()` で呼ぶが、
-///   起動時 1 回のみ実行されかつ ASP.NET Core の Host build 段階は HTTP 要求のための
-///   SynchronizationContext が無いためデッドロックの懸念は無い。
+///   起動時 1 回のみ実行 + Host build 段階は SynchronizationContext が無いためデッドロックの懸念は無い。
 /// - SecretBinary は未対応 (`SecretString` のみ)。本プロジェクトの Secret はすべて文字列前提。
+/// - 取得対象 Secret 数 N が増えた場合 (N>=5 目安) は AWS SDK v4 の `BatchGetSecretValueAsync`
+///   への切替を検討すること (KMS Decrypt 課金最適化、コールドスタート短縮、SA-P1-2 指摘)。
+///
+/// **AWS SDK lifecycle (CR-C1 reviewer 指摘):**
+/// `IAmazonSecretsManager` は内部に `HttpClient` を保持しており再利用前提のため、`using var` で
+/// 都度生成 + 破棄するパターンは採らずクラスフィールドで保持する。Provider 自身が `IDisposable`
+/// を実装し、Host 終了時に解放する (`IConfigurationRoot.Dispose()` 経由で連鎖)。
+///
+/// **ロガー (CR-M1 reviewer 指摘):**
+/// ConfigurationProvider は config build 段階で実行されるため DI コンテナの `ILogger` を注入できない。
+/// 本クラスは Bootstrap LoggerFactory を constructor で生成し、構造化ログを出す (`AddSimpleConsole`)。
+/// App Runner では stdout/stderr とも CloudWatch Logs に拾われるため CloudWatch Logs Insights で
+/// grep 可能 (本プロジェクト唯一の `Console.Error.WriteLine` 経路は廃止、構造化ログに統一)。
 /// </summary>
-public sealed class AwsSecretsManagerConfigurationProvider : ConfigurationProvider
+public sealed class AwsSecretsManagerConfigurationProvider : ConfigurationProvider, IDisposable
 {
     private readonly AwsSecretsManagerConfigurationSource _source;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger _logger;
+    private IAmazonSecretsManager? _client;
+    private bool _loaded;
+    private bool _disposed;
 
     public AwsSecretsManagerConfigurationProvider(AwsSecretsManagerConfigurationSource source)
     {
+        ArgumentNullException.ThrowIfNull(source);
         _source = source;
+        // Bootstrap LoggerFactory: ConfigurationProvider は DI 経由で ILogger を受け取れない。
+        // SimpleConsole + SingleLine で 1 行 1 イベント、CloudWatch Logs Insights の `fields @message`
+        // で構造化検索可能。
+        _loggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole(opts =>
+        {
+            opts.SingleLine = true;
+            opts.TimestampFormat = "HH:mm:ss ";
+        }));
+        _logger = _loggerFactory.CreateLogger<AwsSecretsManagerConfigurationProvider>();
     }
 
     public override void Load()
     {
+        // 冪等性ガード (CR-M2): 起動時 1 回のみを意図、Reload() 経由の再呼出は no-op 化。
+        if (_loaded)
+        {
+            _logger.LogDebug(
+                "AwsSecretsManager.Load() を 2 回目以降呼ばれたためスキップ (rotation 非対応設計)。");
+            return;
+        }
+
         var prefix = _source.Prefix.TrimEnd('/');
+        // OrdinalIgnoreCase は IConfiguration の section key 大文字小文字無視規約と整合させるため (m-3/P2-6)。
         var data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
-        using var client = CreateClient();
+        _client ??= CreateClient();
+        var regionDesc = string.IsNullOrEmpty(_source.RegionName) ? "sdk-default" : _source.RegionName!;
+        _logger.LogInformation(
+            "AwsSecretsManager 取得開始: prefix={Prefix}, region={Region}, mappings={Count}",
+            prefix, regionDesc, _source.Mappings.Count);
 
+        int loadedCount = 0;
         foreach (var mapping in _source.Mappings)
         {
             var secretId = $"{prefix}/{mapping.SecretName}";
             try
             {
-                var response = client.GetSecretValueAsync(new GetSecretValueRequest
+                // ConfigureAwait(false) は ASP.NET Core host build 段階では SynchronizationContext
+                // が無いため厳密には不要だが、テストハーネスで直接 Load() を呼んだ際の安全策。
+                var response = _client.GetSecretValueAsync(new GetSecretValueRequest
                 {
                     SecretId = secretId,
-                }).GetAwaiter().GetResult();
+                }).ConfigureAwait(false).GetAwaiter().GetResult();
 
                 if (response.SecretString is null)
                 {
+                    // 防御規約: SecretString 値は例外メッセージに含めない (SecretBinary 未対応の旨のみ)。
                     throw new InvalidOperationException(
                         $"Secret '{secretId}' は SecretString が null です " +
                         "(SecretBinary は本実装で未対応)。");
                 }
 
                 data[mapping.ConfigKey] = response.SecretString;
+                loadedCount++;
             }
             catch (ResourceNotFoundException) when (mapping.Optional)
             {
-                // Optional Secret の欠落は許容。将来 Secret 投入時に自動で picked up される。
-                // 認識性のため stderr に診断行を 1 行 (ASP.NET Logger は config build 前で未利用化)。
-                Console.Error.WriteLine(
-                    $"[AwsSecretsManager] Optional secret '{secretId}' が未投入のためスキップ " +
-                    $"(IConfiguration key '{mapping.ConfigKey}' は未注入)。");
+                // Optional Secret の不在は許容。将来 Secret 投入時に自動 picked up。
+                // 防御規約: secretId のみログ、SecretString は元々 null なので漏洩リスク無し。
+                _logger.LogWarning(
+                    "Optional secret '{SecretId}' が未投入のためスキップ " +
+                    "(IConfiguration key '{ConfigKey}' は未注入)。",
+                    secretId, mapping.ConfigKey);
+            }
+            catch (Exception ex) when (ex is not InvalidOperationException)
+            {
+                // 非 ResourceNotFound 例外 (AccessDenied / Throttling / DecryptionFailure / ネットワーク断 等)。
+                // CR-C2: secretId を含む InvalidOperationException でラップして起動失敗させる
+                // (App Runner ヘルスチェック失敗 → 自動ロールバック)。
+                // 防御規約: 例外原因は inner exception で保持。AWS SDK 例外は secretId / 権限情報のみ含み
+                // SecretString 値は内包しない (AWS SDK 公式仕様)。
+                throw new InvalidOperationException(
+                    $"AWS Secrets Manager からの Secret 取得に失敗しました " +
+                    $"(secretId='{secretId}', exception={ex.GetType().Name}): {ex.Message}",
+                    ex);
             }
         }
 
         Data = data;
+        _loaded = true;
+
+        // 成功サマリ (SA-P1-3 / CR-M3): オペレーターが CloudWatch で
+        // `AwsSecretsManager: loaded N/M secrets` を grep して Secrets Manager 経路が
+        // 動作したことを後追い確認するため。N != M (Optional 欠落) も検知可能。
+        _logger.LogInformation(
+            "AwsSecretsManager: loaded {Loaded}/{Expected} secrets from prefix={Prefix}",
+            loadedCount, _source.Mappings.Count, prefix);
     }
 
+    /// <summary>region 明示時は RegionEndpoint で client を作成、null のときは AWS SDK default chain に委譲。</summary>
     private IAmazonSecretsManager CreateClient()
     {
-        // RegionName 明示時は RegionEndpoint を作成。null のときは AWS SDK の resolution chain に委ねる。
         if (!string.IsNullOrEmpty(_source.RegionName))
         {
             return new AmazonSecretsManagerClient(
                 RegionEndpoint.GetBySystemName(_source.RegionName));
         }
         return new AmazonSecretsManagerClient();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _client?.Dispose();
+        _client = null;
+        _loggerFactory.Dispose();
     }
 }
