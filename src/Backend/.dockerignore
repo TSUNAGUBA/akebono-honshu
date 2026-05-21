@@ -5,6 +5,11 @@
 **/bin
 **/obj
 
+# Visual Studio ソリューションファイル / エディタ設定 (build には不要、build context 転送サイズ最小化、
+# reviewer 指摘 m-2)
+Akebono.sln
+.editorconfig
+
 # IDE / エディタ
 **/.vs
 **/.vscode

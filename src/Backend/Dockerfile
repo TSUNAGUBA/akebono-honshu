@@ -64,8 +64,11 @@ EXPOSE 8080
 
 # HEALTHCHECK は docker-compose / `docker run` 用。App Runner では無視されるため
 # App Runner サービス側でも `/health` を Health check path に設定すること (migration-plan §4.2.3)。
-# `--start-period=15s` は .NET 起動 + IConfiguration Build (Secrets Manager 取得) の余裕。
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+# `--start-period=30s` は本番相当 (Secrets:Provider=AwsSecretsManager) ローカル検証時の
+# IConfiguration Build (Secrets Manager 取得: TLS + SDK 初期化 + .NET JIT) を含めた cold start
+# 余裕 (reviewer 指摘 m-1)。ローカル dev (Provider=Environment) では 15s でも足りるが、
+# 統一値として 30s。`--start-period` 中の unhealthy は HEALTHCHECK の retry カウントに含まれない。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl --fail --silent --max-time 4 http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["dotnet", "Akebono.Api.dll"]
