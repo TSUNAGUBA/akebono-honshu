@@ -61,10 +61,10 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
 // - multi-instance 注意: 段階 C で App Runner を 2 instance 以上に水平拡張する場合 IMemoryCache は
 //   プロセスローカルかつ memory pressure で eviction される (de-dup の信頼性も低下)。架構判断は
 //   architecture.md §4.5 参照
-// - soft-deleted (`IsDeleted=true`) ユーザの扱い: 第 2 段 WHERE も `!IsDeleted` のため hit せず
-//   `Auth.UidUnboundProbe` 扱い (actor_user_id=null)。これは「Firebase Auth `disabled=true` 同期を
-//   SoT 防御の単一ポイント」とする設計判断 (architecture.md §5.1 参照)。退職者の不正試行は Firebase
-//   側で先に拒否される前提
+// - soft-deleted (`IsDeleted=true`) ユーザの扱い: 引当 WHERE が `!IsDeleted` のため hit せず
+//   `(ActiveId=null, AnyId=null)` 組合せで `Auth.UidUnboundProbe` 扱い (actor_user_id=null)。
+//   これは「Firebase Auth `disabled=true` 同期を SoT 防御の単一ポイント」とする設計判断
+//   (architecture.md §5.1 参照)。退職者の不正試行は Firebase 側で先に拒否される前提
 var firebaseProjectId = builder.Configuration["Firebase:ProjectId"];
 if (string.IsNullOrEmpty(firebaseProjectId) || firebaseProjectId == "__OVERRIDE_ME__")
 {
@@ -180,7 +180,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                         }
                         catch (Exception ex)
                         {
-                            logger.LogWarning(ex, "Auth.* audit 記録失敗 (uid={Uid})", firebaseUid);
+                            // CloudWatch Logs への UID 露出最小化のため、try 内と同じ短縮ルールを再適用
+                            // (try スコープの uidShort 変数は catch から見えないため再算出)。
+                            var uidShortForLog = firebaseUid.Length > 8
+                                ? firebaseUid.Substring(0, 8) + "..."
+                                : firebaseUid;
+                            logger.LogWarning(ex, "Auth.* audit 記録失敗 (uid={UidShort})", uidShortForLog);
                         }
                         return true;
                     });
