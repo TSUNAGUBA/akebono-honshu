@@ -117,14 +117,15 @@ public static class ProductEndpoints
         });
 
         // ── P-06 画像管理 ─────────────────────────────────
-        // 画像アップロード (IFormFile + メタ登録、Iteration 4 で S3 Pre-signed URL に置換)
+        // 画像アップロード: IFormFile を IImageStorageService 経由で保存 + メタ DB 登録。
+        // 保存先は Local (wwwroot) / S3 を appsettings.ImageStorage:Provider で切替 (Iter 4 段階 C)。
         families.MapPost("/{id:long}/images", async (HttpContext http, IAkebonoDbContext db,
-                                                       IWebHostEnvironment env, long id, IFormFile file, CancellationToken ct) =>
+                                                       IImageStorageService imageStorage,
+                                                       long id, IFormFile file, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
-            // バリデーション
             if (file is null || file.Length == 0)
                 return Results.Problem(statusCode: 422, title: "Validation error", detail: "ファイルが空です");
             if (file.Length > MaxImageBytes)
@@ -132,21 +133,13 @@ public static class ProductEndpoints
             if (!AllowedMimeTypes.Contains(file.ContentType))
                 return Results.Problem(statusCode: 422, title: "Validation error", detail: "対応形式は JPEG / PNG / WebP のみ");
 
-            // 企画の存在確認
             var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == id && !pf.IsDeleted, ct);
             if (family is null) return Results.NotFound();
 
-            // 既存有効枚数チェック (BR-10 最大 5 枚)
             var currentCount = await db.ProductImages.CountAsync(i => i.ProductFamilyId == id && !i.IsDeleted, ct);
             if (currentCount >= 5)
                 return Results.Problem(statusCode: 409, title: "Conflict", detail: "画像は最大 5 枚までです (BR-10)");
 
-            // 保存先ディレクトリ作成
-            var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
-            var dirAbs = Path.Combine(webRoot, ImageUploadDirRelative, id.ToString());
-            Directory.CreateDirectory(dirAbs);
-
-            // ファイル名 = GUID + 元の拡張子
             var ext = Path.GetExtension(file.FileName);
             if (string.IsNullOrEmpty(ext))
                 ext = file.ContentType switch
@@ -157,12 +150,11 @@ public static class ProductEndpoints
                     _ => ".bin",
                 };
             var fileName = $"{Guid.NewGuid():N}{ext}";
-            var absPath = Path.Combine(dirAbs, fileName);
             var s3Key = $"{ImageUploadDirRelative}/{id}/{fileName}";
 
-            await using (var stream = new FileStream(absPath, FileMode.CreateNew))
+            await using (var stream = file.OpenReadStream())
             {
-                await file.CopyToAsync(stream, ct);
+                await imageStorage.SaveAsync(s3Key, stream, file.ContentType, ct);
             }
 
             var now = SystemTime.Now;
@@ -180,9 +172,10 @@ public static class ProductEndpoints
             db.ProductImages.Add(image);
             await db.SaveChangesAsync(ct);
 
+            var url = await imageStorage.GetUrlAsync(s3Key, ct);
             return Results.Created($"/api/v1/products/families/{id}/images/{image.Id}",
                 new ImageSummary(image.Id, image.OrderNo, image.S3Key, image.ThumbS3Key,
-                    image.MimeType, image.FileSizeBytes, image.OriginalFilename));
+                    image.MimeType, image.FileSizeBytes, image.OriginalFilename, url));
         }).DisableAntiforgery();
 
         // 並び順変更

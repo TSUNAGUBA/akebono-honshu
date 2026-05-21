@@ -10,6 +10,9 @@ using Akebono.Domain.Entities;
 using Akebono.Infrastructure.Excel;
 using Akebono.Infrastructure.Audit;
 using Akebono.Infrastructure.Persistence;
+using Akebono.Infrastructure.Storage;
+using Amazon.Extensions.NETCore.Setup;
+using Amazon.S3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -63,6 +66,23 @@ public static class DependencyInjection
 
         // MIG-3 既存 CSV 取込 (Iteration 4 Hardening)
         services.AddScoped<LegacyImportService>();
+
+        // 画像ストレージ抽象 (Iter 4 段階 C)
+        // ImageStorage:Provider = "S3" → 本番 S3 + Pre-signed URL、それ以外は dev 用 wwwroot 直保存。
+        // LocalImageStorage は IHttpContextAccessor を使って absolute URL を組み立てるため
+        // AddHttpContextAccessor() も必要 (default では未登録)。
+        services.AddHttpContextAccessor();
+        var imageProvider = config["ImageStorage:Provider"] ?? "Local";
+        if (string.Equals(imageProvider, "S3", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddDefaultAWSOptions(config.GetAWSOptions());
+            services.AddAWSService<IAmazonS3>();
+            services.AddSingleton<IImageStorageService, S3ImageStorage>();
+        }
+        else
+        {
+            services.AddSingleton<IImageStorageService, LocalImageStorage>();
+        }
 
         return services;
     }

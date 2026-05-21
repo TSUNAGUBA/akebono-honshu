@@ -9,7 +9,7 @@ namespace Akebono.Application.Products;
 /// 商品企画 (product_families) 関連の Application サービス。
 /// バルク登録 (P-01〜P-03) は 1 トランザクション、F-06 ロールバック対応。
 /// </summary>
-public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
+public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit, IImageStorageService imageStorage)
 {
     /// <summary>
     /// バルク登録 (POST /api/v1/products/families/complete)。
@@ -183,10 +183,16 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         await audit.LogAsync(actorUserId, "ProductFamily.List",
             entityType: "ProductFamily", note: $"count={items.Count}", cancellationToken: ct);
 
-        return items.Select(x =>
+        // 代表画像 URL を IImageStorageService で生成 (Local: absolute URL / S3: Pre-signed URL)。
+        // N=families.Count 個の URL を発行するが、署名は純計算で軽量 (N=100 でも数ミリ秒)。
+        var result = new List<FamilyListItem>(items.Count);
+        foreach (var x in items)
         {
             var (itemNumber, itemFamilyNumber, sku9Digit) = BuildItemNumbers(x.Family, x.LegacyProductSku);
-            return new FamilyListItem(
+            var primaryUrl = x.PrimaryImageS3Key is not null
+                ? await imageStorage.GetUrlAsync(x.PrimaryImageS3Key, ct)
+                : null;
+            result.Add(new FamilyListItem(
                 x.Family.Id,
                 sku9Digit,
                 itemNumber,
@@ -202,9 +208,11 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
                 x.SkuCount,
                 x.ImageCount,
                 x.PrimaryImageS3Key,
+                primaryUrl,
                 x.MinPrice, x.MaxPrice, x.Currency,
-                x.Family.UpdatedAt);
-        }).ToList();
+                x.Family.UpdatedAt));
+        }
+        return result;
     }
 
     /// <summary>
@@ -284,6 +292,16 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
         var legacyProductSku = products.FirstOrDefault(p => p.LegacyId != null)?.LegacyId;
         var (itemNumber, itemFamilyNumber, _) = BuildItemNumbers(family, legacyProductSku);
 
+        // 画像 URL を IImageStorageService で生成 (Local: absolute URL / S3: Pre-signed URL)。
+        // 画像点数は最大 5 枚 (BR-10) のため直列発行で十分。
+        var imageSummaries = new List<ImageSummary>(images.Count);
+        foreach (var i in images)
+        {
+            var url = await imageStorage.GetUrlAsync(i.S3Key, ct);
+            imageSummaries.Add(new ImageSummary(i.Id, i.OrderNo, i.S3Key, i.ThumbS3Key,
+                i.MimeType, i.FileSizeBytes, i.OriginalFilename, url));
+        }
+
         return new FamilyDetail(
             new FamilyFullInfo(
                 family.Id, family.PlannedYearCode, family.SequenceNo,
@@ -303,8 +321,7 @@ public class ProductFamilyService(IAkebonoDbContext db, IAuditLogger audit)
             products.Select(p => new SkuSummary(
                 p.Id, p.Sku, p.ColorId, p.Color?.Code ?? "?", p.Color?.Name ?? "?",
                 p.SizeId, p.Size?.Code ?? "?", p.Size?.Name ?? "?", p.IsDeleted)).ToList(),
-            images.Select(i => new ImageSummary(i.Id, i.OrderNo, i.S3Key, i.ThumbS3Key,
-                i.MimeType, i.FileSizeBytes, i.OriginalFilename)).ToList(),
+            imageSummaries,
             currentPrices.Select(p => new CurrentSupplierPrice(
                 p.Id, p.SupplierId, p.Supplier?.Code ?? "?", p.Supplier?.Name ?? "?",
                 p.UnitPrice, p.CurrencyCode, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt)).ToList());

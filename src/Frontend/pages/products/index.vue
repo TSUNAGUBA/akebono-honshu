@@ -2,7 +2,7 @@
 import { productStatusLabel } from '~/composables/useProducts'
 import type { FamilyListItem } from '~/composables/useProducts'
 
-const { listFamilies, imageUrl } = useProducts()
+const { listFamilies } = useProducts()
 const { canEditMaster } = useAuth()
 
 const items = ref<FamilyListItem[]>([])
@@ -181,8 +181,8 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
         <!-- 画像エリア (アスペクト 1:1 正方形) -->
         <div class="relative aspect-square w-full overflow-hidden bg-gray-100">
           <img
-            v-if="i.primaryImageS3Key"
-            :src="imageUrl(i.primaryImageS3Key)"
+            v-if="i.primaryImageUrl"
+            :src="i.primaryImageUrl"
             :alt="i.productName1"
             class="h-full w-full object-cover transition group-hover:scale-105"
           />

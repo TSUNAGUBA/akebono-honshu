@@ -64,6 +64,11 @@ public record FamilyListItem(
     int ImageCount,
     /// <summary>代表画像 (order_no が最小の有効画像) の s3_key。画像未登録時は null</summary>
     string? PrimaryImageS3Key,
+    /// <summary>
+    /// 代表画像の配信用 URL (Iter 4 段階 C 追加)。Local 時は absolute URL、S3 時は Pre-signed URL (TTL 15min)。
+    /// 画像未登録時は null。Frontend は本フィールドを直接 `img.src` に渡す。
+    /// </summary>
+    string? PrimaryImageUrl,
     decimal? CurrentMinPrice,
     decimal? CurrentMaxPrice,
     string CurrencyCode,
@@ -132,7 +137,13 @@ public record ImageSummary(
     string? ThumbS3Key,
     string MimeType,
     int FileSizeBytes,
-    string? OriginalFilename);
+    string? OriginalFilename,
+    /// <summary>
+    /// 画像配信用 URL (Iter 4 段階 C で追加)。
+    /// Local 時は absolute URL (`${apiOrigin}/uploads/...`)、S3 時は Pre-signed URL (TTL 15min)。
+    /// Frontend は本フィールドを直接 `img.src` に渡す (URL 組立て規則を意識しない)。
+    /// </summary>
+    string Url);
 
 public record CurrentSupplierPrice(
     long Id,

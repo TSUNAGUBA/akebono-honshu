@@ -24,6 +24,12 @@ export interface FamilyListItem {
   imageCount: number
   /** 代表画像 (order_no=1 の有効画像) の s3_key。画像未登録時は null */
   primaryImageS3Key: string | null
+  /**
+   * 代表画像の配信用 URL (Iter 4 段階 C 追加)。
+   * Local 時は absolute URL、S3 時は Pre-signed URL (TTL 15min)。画像未登録時は null。
+   * `img.src` に直接渡す (URL 組立て規則は Frontend では意識しない)。
+   */
+  primaryImageUrl: string | null
   currentMinPrice: number | null
   currentMaxPrice: number | null
   currencyCode: string
@@ -50,6 +56,13 @@ export interface ImageSummary {
   mimeType: string
   fileSizeBytes: number
   originalFilename: string | null
+  /**
+   * 画像配信用 URL (Iter 4 段階 C 追加)。
+   * Local 時は `${apiOrigin}/uploads/...` の absolute URL、S3 時は Pre-signed URL (TTL 15min)。
+   * `img.src` に直接渡せる形式で Backend が生成・返却する (URL 組立て規則は Frontend では意識しない)。
+   * Pre-signed URL は実行ごとに署名が変わるため long-term cache 不可。
+   */
+  url: string
 }
 
 export interface CurrentSupplierPrice {
@@ -147,11 +160,6 @@ export const productStatusLabel = (status: number): string => {
 
 export const useProducts = () => {
   const { apiFetch } = useApi()
-  const config = useRuntimeConfig()
-  const apiOrigin = new URL(config.public.apiBase).origin
-
-  /** 画像の絶対 URL を生成。s3_key (相対パス) を Backend オリジン配下に展開。 */
-  const imageUrl = (s3Key: string): string => `${apiOrigin}/${s3Key}`
 
   const listFamilies = async (includeDeleted = false): Promise<FamilyListItem[]> => {
     const res = await apiFetch<{ data: FamilyListItem[] }>(
@@ -240,7 +248,6 @@ export const useProducts = () => {
   }
 
   return {
-    imageUrl,
     listFamilies,
     getFamily,
     createComplete,

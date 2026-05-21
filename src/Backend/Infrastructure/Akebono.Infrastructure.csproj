@@ -12,6 +12,8 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
     <PackageReference Include="ClosedXML" Version="0.105.0" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.23.3" />
+    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.3.40" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Application\Akebono.Application.csproj" />

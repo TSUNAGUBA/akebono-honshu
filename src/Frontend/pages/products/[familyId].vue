@@ -8,7 +8,7 @@ const familyId = computed(() => Number(route.params.familyId))
 const { canEditMaster } = useAuth()
 const {
   getFamily, updateFamily, deleteFamily,
-  addSupplierPrice, uploadImage, deleteImage, imageUrl,
+  addSupplierPrice, uploadImage, deleteImage,
 } = useProducts()
 const { list } = useMasters()
 
@@ -455,7 +455,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             :key="img.id"
             class="group relative overflow-hidden rounded-md border border-gray-200"
           >
-            <img :src="imageUrl(img.s3Key)" :alt="img.originalFilename ?? `image-${img.orderNo}`"
+            <img :src="img.url" :alt="img.originalFilename ?? `image-${img.orderNo}`"
                  class="aspect-square w-full object-cover" />
             <div class="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white">
               #{{ img.orderNo }}
