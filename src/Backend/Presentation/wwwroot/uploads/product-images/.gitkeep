@@ -1,0 +1,4 @@
+商品画像のローカルファイル保存先 (Iteration 2)。
+Iteration 4 Hardening で S3 + Pre-signed URL に置換予定。
+
+このディレクトリ内のファイルは git で管理しない (.gitignore で除外推奨)。

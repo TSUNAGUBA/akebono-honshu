@@ -1,0 +1,41 @@
+# Iter 4 段階 C-3: Backend Docker build context 最小化。
+# build context は src/Backend/。本ファイルで除外したパスは COPY . . でも image に焼き込まれない。
+
+# .NET ビルド出力 (build stage で生成し直すため不要)
+**/bin
+**/obj
+
+# Visual Studio ソリューションファイル / エディタ設定 (build には不要、build context 転送サイズ最小化、
+# reviewer 指摘 m-2)
+Akebono.sln
+.editorconfig
+
+# IDE / エディタ
+**/.vs
+**/.vscode
+**/.idea
+**/*.user
+**/*.suo
+
+# User Secrets (絶対に image に焼き込まない、Iter 4 段階 A 以降の運用)
+**/secrets.json
+
+# ローカル開発で蓄積された画像 (Iter 4 段階 C-1 で S3 移行済、image に残骸を含めない)
+**/wwwroot/uploads
+
+# Docker 関連 (build context に含めない)
+Dockerfile
+.dockerignore
+
+# git
+**/.git
+**/.gitignore
+**/.gitkeep
+
+# テスト出力
+**/TestResults
+**/coverage.cobertura.xml
+
+# OS
+.DS_Store
+Thumbs.db

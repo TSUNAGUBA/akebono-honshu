@@ -131,7 +131,9 @@ UI を実装・変更する際は、**モバイル表示を前提としたレス
 - DI コンテナ: Scoped / Transient / Singleton のライフタイム不一致によるキャプチャードスコープ問題
 - Entity Framework: N+1 クエリ、遅延読み込み vs 明示的読み込み。マイグレーションの適用順序
 - Middleware パイプライン: 実行順序が登録順に依存。認証→認可→エンドポイントの順序を確認
-- appsettings.json: 環境別設定（Development / Production）のオーバーライド順序
+- appsettings.json: 環境別設定（Development / Production）のオーバーライド順序。**個人固有の機密値 (DB パスワード等) は `dotnet user-secrets` で管理し、appsettings.* には書かない**
+- **class library (`Microsoft.NET.Sdk`) の `ImplicitUsings`:** `System.*` 系のみ自動 using、`Microsoft.Extensions.*` (Configuration / DependencyInjection / Logging / Options) は **明示 `using` が必須**。ASP.NET Core プロジェクト (`Microsoft.NET.Sdk.Web`) は implicit に含むため気づきにくい (Phase 7 Iteration 0 で実証 2026-05-19)
+- **NuGet パッケージのバージョン指定:** 訓練データから推測すると `NU1605` / 不存在バージョンで失敗するケースあり。新規パッケージ追加前に WebFetch で nuget.org の最新版を確認 (npm の `ERR_PNPM_NO_MATCHING_VERSION` と同根)
 
 ## 未知の問題に当たった場合
 

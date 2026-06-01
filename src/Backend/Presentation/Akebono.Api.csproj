@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Akebono.Api</AssemblyName>
+    <RootNamespace>Akebono.Api</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UserSecretsId>akebono-honshu-iter0-dev-secrets</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.27" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Infrastructure\Akebono.Infrastructure.csproj" />
+  </ItemGroup>
+  <!--
+    Iter 4 段階 C-3 (reviewer 指摘 M-1):
+    `dotnet publish` 既定では `appsettings.Development.json` も publish 出力に含まれるが、
+    本番 image (App Runner) で `ASPNETCORE_ENVIRONMENT=Production` 起動時には読まれない。
+    dev DB 接続文字列 (`localdev` placeholder)・dev Firebase ProjectId が image layer に残ると
+    `docker image inspect` / レジストリ閲覧で覗き見可能になるため、publish 出力から明示除外する。
+    dev/CI の `dotnet run` 時は `appsettings.Development.json` を直読みするため影響なし。
+  -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json">
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

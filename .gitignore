@@ -1,0 +1,42 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Node.js / Nuxt
+node_modules/
+.nuxt/
+.output/
+.data/
+.cache/
+dist/
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Docker
+.docker/
+
+# Misc
+*.tmp
+*.bak
+
+# Iteration 2: 商品画像ローカル保存 (Iter 4 で S3 移行時に廃止)
+src/Backend/Presentation/wwwroot/uploads/product-images/*
+!src/Backend/Presentation/wwwroot/uploads/product-images/.gitkeep

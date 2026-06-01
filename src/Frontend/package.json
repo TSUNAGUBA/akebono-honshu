@@ -1,0 +1,27 @@
+{
+  "name": "akebono-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "firebase": "^12.13.0",
+    "nuxt": "^3.13.0",
+    "reka-ui": "^2.9.0",
+    "vue": "^3.5.0",
+    "vue-router": "^4.4.0"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "^1.6.0",
+    "@nuxtjs/tailwindcss": "^6.12.0",
+    "typescript": "^5.5.0",
+    "vue-tsc": "^2.1.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

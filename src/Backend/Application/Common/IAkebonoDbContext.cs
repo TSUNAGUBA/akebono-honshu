@@ -1,0 +1,50 @@
+using Akebono.Domain.Entities;
+using Akebono.Domain.Orders;
+using Akebono.Domain.Products;
+using Microsoft.EntityFrameworkCore;
+
+namespace Akebono.Application.Common;
+
+public interface IAkebonoDbContext
+{
+    DbSet<User> Users { get; }
+    DbSet<AuditLog> AuditLogs { get; }
+
+    // 17 マスタ (Phase 5 §3.1-3.17)
+    DbSet<Size> Sizes { get; }
+    DbSet<Brand> Brands { get; }
+    DbSet<Function> Functions { get; }
+    DbSet<Country> Countries { get; }
+    DbSet<Supplier> Suppliers { get; }
+    DbSet<Department> Departments { get; }
+    DbSet<ProductType> ProductTypes { get; }
+    DbSet<ProductSeason> ProductSeasons { get; }
+    DbSet<ProductGroup> ProductGroups { get; }
+    DbSet<Color> Colors { get; }
+    DbSet<Material> Materials { get; }
+    DbSet<MaterialClassification> MaterialClassifications { get; }
+    DbSet<Warehouse> Warehouses { get; }
+    DbSet<DeliveryDestination> DeliveryDestinations { get; }
+    DbSet<DocumentTemplatePurchase> DocumentTemplatePurchases { get; }
+    DbSet<DocumentTemplateConfirmation> DocumentTemplateConfirmations { get; }
+    DbSet<DocumentTextPurchase> DocumentTextPurchases { get; }
+
+    // 商品関連 (Iteration 2、Phase 5 §4)
+    DbSet<ProductFamily> ProductFamilies { get; }
+    DbSet<Product> Products { get; }
+    DbSet<ProductImage> ProductImages { get; }
+    DbSet<ProductSupplierPrice> ProductSupplierPrices { get; }
+
+    // 発注関連 (Iteration 3、Phase 5 §5)
+    DbSet<PurchaseOrder> PurchaseOrders { get; }
+    DbSet<PurchaseOrderLine> PurchaseOrderLines { get; }
+    DbSet<PurchaseOrderExportLog> PurchaseOrderExportLogs { get; }
+
+    /// <summary>ジェネリック DbSet 取得 (MasterService&lt;TEntity&gt; 用)。DbContext.Set&lt;T&gt;() の暗黙実装。</summary>
+    DbSet<T> Set<T>() where T : class;
+
+    /// <summary>EF Core Database ファサード (トランザクション制御等で使用)。</summary>
+    Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade Database { get; }
+
+    Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+}

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.23.3" />
+    <PackageReference Include="AWSSDK.SecretsManager" Version="4.0.4.23" />
+    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.3.40" />
+  </ItemGroup>
+  <!--
+    LocalImageStorage が IWebHostEnvironment / IHttpContextAccessor / HttpRequest を参照するため
+    ASP.NET Core 共有フレームワーク参照を明示 (class library SDK は default で含まない、Iter 4 段階 C-1 reviewer 指摘)。
+    将来 Infrastructure を ASP.NET 非依存に戻す場合は LocalImageStorage を Presentation 層に移すこと。
+  -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Application\Akebono.Application.csproj" />
+  </ItemGroup>
+</Project>
