@@ -95,12 +95,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE akebono_migrator IN SCHEMA public
 \q
 ```
 
-接続テスト（EC2 上で。`<MIGRATOR_PW>` を置換）:
+接続テスト（EC2 上で。パスワードは `read -s` で入力し、bash 履歴・docker 引数に残しません）:
 
 ```bash
-docker run --rm -e PGPASSWORD='<MIGRATOR_PW>' postgres:16-alpine psql \
+read -rs -p "akebono_migrator のパスワード: " PGPASSWORD; export PGPASSWORD; echo
+docker run --rm -e PGPASSWORD postgres:16-alpine psql \
   -h tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com \
   -U akebono_migrator -d akebono_honshu -c "SELECT current_user, current_database();"
+unset PGPASSWORD
 ```
 `akebono_migrator | akebono_honshu` が返れば成功。確認できたら `exit` で EC2 から戻ります。
 
@@ -246,21 +248,26 @@ GitHub の **Actions** タブから手動実行します。
 EC2 に SSH し、手順 4-2 でコピーした **Firebase UID** を使って実行（`<MIGRATOR_PW>` / `<FIREBASE_UID>` を置換）:
 
 > `owner` 行には **init で既に全 4 権限が付与済み**です（`db/init/02-masters.sql`）。
-> ここでの主目的は **Firebase UID の紐付け**です。
+> ここでの主目的は **Firebase UID の紐付け** と **監査ログの追記専用化** です。
+
+EC2 上で、パスワードを `read -s` で入力（履歴・docker 引数に残りません）してから 2 つを実行します
+（`<FIREBASE_UID>` は手順 4-2 の UID に置換）:
 
 ```bash
-docker run --rm -e PGPASSWORD='<MIGRATOR_PW>' postgres:16-alpine psql \
-  -h tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com \
-  -U akebono_migrator -d akebono_honshu -c "
-UPDATE users SET firebase_uid = '<FIREBASE_UID>', updated_at = NOW() WHERE login_id = 'owner';"
-```
+read -rs -p "akebono_migrator のパスワード: " PGPASSWORD; export PGPASSWORD; echo
+RDS=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com
 
-**監査ログを追記専用にする（改竄防止・必須）** — アプリユーザの UPDATE/DELETE を剥奪します
-（`db/init/01-schema.sql` の設計: audit_logs は INSERT 専用）:
-```bash
-docker run --rm -e PGPASSWORD='<MIGRATOR_PW>' postgres:16-alpine psql \
-  -h tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com \
-  -U akebono_migrator -d akebono_honshu -c "REVOKE UPDATE, DELETE ON audit_logs FROM akebono_app;"
+# (1) owner に Firebase UID を紐付け
+docker run --rm -e PGPASSWORD postgres:16-alpine psql -h "$RDS" \
+  -U akebono_migrator -d akebono_honshu \
+  -c "UPDATE users SET firebase_uid = '<FIREBASE_UID>', updated_at = NOW() WHERE login_id = 'owner';"
+
+# (2) 監査ログを追記専用に（改竄防止・必須。db/init/01-schema.sql の設計: audit_logs は INSERT 専用）
+docker run --rm -e PGPASSWORD postgres:16-alpine psql -h "$RDS" \
+  -U akebono_migrator -d akebono_honshu \
+  -c "REVOKE UPDATE, DELETE ON audit_logs FROM akebono_app;"
+
+unset PGPASSWORD
 ```
 
 ### 6-4. Frontend デプロイ

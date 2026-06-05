@@ -75,7 +75,7 @@ jobs:
     permissions:
       contents: read
       packages: read           # EC2 への GHCR pull 用トークン (GITHUB_TOKEN)
-      id-token: write          # AWS OIDC AssumeRole 用
+      id-token: write          # AWS OIDC AssumeRole 用 (EC2_HOST 直指定で OIDC 未使用なら実質不要)
     # secrets は if: で直接参照できない (GitHub Actions 仕様)。env に展開して presence 判定する。
     env:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}

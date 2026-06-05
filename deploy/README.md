@@ -42,7 +42,7 @@ flowchart LR
 
 - **Frontend** (`deploy-frontend.yml`): `main` push / 手動 → Nuxt 静的生成 → Firebase Hosting。
 - **Backend** (`deploy-backend.yml`): `main` push / 手動 → Docker build → GHCR push → (OIDC 任意で) EC2 解決 → SSH で `.env` 配置 + `docker compose up -d` (**既存 nginx-proxy に相乗り**) + ヘルスチェック。
-- **DB** (`db-migrate.yml`): **手動のみ**。OIDC で EC2 を踏み台に、使い捨て psql コンテナで RDS に init / migrate。
+- **DB** (`db-migrate.yml`): **手動のみ**。(OIDC 任意で) EC2 を踏み台に、使い捨て psql コンテナで RDS に init / migrate。
 - **CI** (`ci.yml`): PR / push で Backend `dotnet build` + Frontend `pnpm typecheck`。
 
 ---
@@ -238,7 +238,7 @@ flowchart LR
 
 ## 5. セキュリティ留意点 (システム監査観点)
 
-- **長期鍵の最小化:** AWS は OIDC、GHCR は一時トークン。残る長期 secret は SSH 秘密鍵と DB/Firebase 認証情報のみ。SSH 鍵は定期ローテーション。
+- **長期鍵の最小化:** AWS は (使う場合) OIDC、GHCR は一時トークン。残る長期 secret は SSH 秘密鍵と DB/Firebase 認証情報のみ。SSH 鍵は定期ローテーション。
 - **機密の非コミット:** CI 生成の `deploy/ec2/.env` / `.ghcr_token` / `deploy/db/.dbenv` は `.gitignore` 済。EC2 上でもトークンは使用後に削除 (`docker logout` / `rm`)。
 - **本番 Swagger 無効化:** `ASPNETCORE_ENVIRONMENT=Production` 時は `/swagger` を出さない (Program.cs)。
 - **ロギング抑制:** 本番 `.env` で EF Core SQL ログ等を `Warning` に抑制 (PII/SQL 値漏洩・コスト対策)。
