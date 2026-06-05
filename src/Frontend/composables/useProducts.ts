@@ -163,6 +163,9 @@ export const productStatusLabel = (status: number): string => {
 
 export const useProducts = () => {
   const { apiFetch } = useApi()
+  // 画像アップロードは FormData を直接 $fetch するため apiBase を直接参照する
+  // (useOrders の Excel ダウンロードと同じパターン)。
+  const config = useRuntimeConfig()
 
   const listFamilies = async (includeDeleted = false): Promise<FamilyListItem[]> => {
     const res = await apiFetch<{ data: FamilyListItem[] }>(

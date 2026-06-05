@@ -5,6 +5,15 @@
 > **前提:** Iteration 1〜3 + MIG-3 までの機能実装は完了。本書は実装ではなく **本番環境への切替手順** を扱う。
 > **方針:** インフラ初級者向けに段階を細分化し、各段階で「オペレーター作業 (AWS / Firebase コンソール操作)」と「Claude 作業 (コード変更)」を明確に分離する。
 
+> **⚠️ 実装変更メモ (2026-06-05、段階 C/D 実装時のオペレーター判断):**
+> 本書は当初 **Backend = AWS App Runner / イメージ = ECR** 前提で記述しているが、実装段階で
+> オペレーター判断により **Backend = EC2(ubuntu) + docker compose / イメージ = GHCR /
+> 設定 = repository secrets → EC2 .env** に変更した。GitHub Actions → AWS は OIDC を踏襲。
+> **CI/CD の実体と手順の SoT は `deploy/README.md`** とする。本書の §4 (App Runner) / §5 (CI/CD)
+> の App Runner 固有記述は「当初計画の記録」として残すが、実装は `deploy/README.md` を参照すること。
+> DB は EF Core Migration ではなく生 SQL (`db/init`, `db/migration`) を冪等適用する方式
+> (`db-migrate.yml` + `deploy/db/run-migrations.sh`)。
+
 ---
 
 ## 0. 段階分割の全体像
@@ -290,7 +299,7 @@ flowchart LR
 | **Claude** | `nuxt.config.ts` 修正 (`ssr: false` 廃止して `<ClientOnly>` ラップ済、`nuxi generate` で静的サイト生成設定) |
 | **Claude** | `firebase.json` + `.firebaserc` 作成 (Hosting 設定、SPA リダイレクト rewrite) |
 | **オペレーター** | `firebase login` + `firebase init hosting` 確認 (project 紐付け) |
-| **オペレーター** | 初回 `firebase deploy --only hosting` (Claude が手順書化) |
+| **オペレーター** | 初回 `firebase deploy --only hosting --project <prod-project-id>` (`.firebaserc` は dev/prod エイリアスのため `--project` 明示。手順 SoT は `deploy/README.md`) |
 | **オペレーター** | CORS 設定 | App Runner Backend に Firebase Hosting のドメイン (`*.web.app` 等) を Allow Origin に追加 |
 
 #### 4.2.5 動作確認
@@ -336,9 +345,10 @@ flowchart LR
 | **オペレーター** | IAM Role 作成 (GitHub Actions 用、ECR push + App Runner deploy 最小権限) |
 | **オペレーター** | Firebase CI トークン or Service Account 鍵を GitHub Secrets に登録 |
 | **オペレーター** | GitHub repository Secrets に `AWS_ACCOUNT_ID` / `AWS_OIDC_ROLE_ARN` 等を登録 |
-| **Claude** | `.github/workflows/deploy-backend.yml` 作成 | dotnet test → docker build → ECR push → App Runner update |
-| **Claude** | `.github/workflows/deploy-frontend.yml` 作成 | pnpm typecheck → nuxi generate → firebase deploy |
-| **Claude** | 既存 `.github/workflows/pr-checks.yml` 拡張 | Backend `dotnet test`、Frontend `pnpm typecheck` を追加 |
+| **Claude** | `.github/workflows/deploy-backend.yml` 作成 (実装) | docker build → **GHCR push** → OIDC で EC2 解決 → **SSH で docker compose up** + health check |
+| **Claude** | `.github/workflows/deploy-frontend.yml` 作成 (実装) | nuxi generate → firebase deploy (Service Account) |
+| **Claude** | `.github/workflows/db-migrate.yml` + `deploy/db/run-migrations.sh` 作成 (実装) | 手動実行で RDS に init / migrate (EC2 踏み台 + 使い捨て psql、冪等台帳、MIG-3 除外) |
+| **Claude** | `.github/workflows/ci.yml` 新設 (pr-checks は PR メタ検証の別役割として温存) | Backend `dotnet build` + Frontend `pnpm typecheck` |
 | **オペレーター** | 動作確認 (main に空 commit push → 自動デプロイ確認) |
 
 ### 5.3 完了基準

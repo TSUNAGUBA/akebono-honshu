@@ -2,7 +2,8 @@
 
 > **対象:** akebono アパレル生産管理システム MVP の **ローカル開発環境**。
 > Iter 4 段階 A (AWS RDS 接続、2026-05-20 完了) と 段階 B (Firebase Auth 切替、2026-05-20 完了) を反映済。
-> 段階 C (本番 App Runner + Firebase Hosting デプロイ) は別文書。
+> 段階 C/D (本番デプロイ + CI/CD) は **`deploy/README.md`** が SoT。実装はオペレーター判断で
+> EC2(ubuntu) + GHCR + repository secrets 構成 (当初計画の App Runner/ECR から変更)。
 >
 > **ゴール:** PostgreSQL + .NET Backend + Nuxt Frontend をローカルで起動し、Firebase Auth でログイン → ユーザ一覧表示まで疎通
 
@@ -541,8 +542,8 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 | 発注書 (O-01〜07) | ✅ Iteration 3 完了 | Excel 出力含む MVP のクリティカルパス |
 | Firebase 本番認証 | ✅ Iteration 4 段階 B 完了 (2026-05-20) | JwtBearer + JWKS 検証、`POST /auth/sync` で users.firebase_uid 引当 |
 | AWS RDS 接続 | ✅ Iteration 4 段階 A 完了 (2026-05-20) | dotnet user-secrets で接続文字列管理 |
-| AWS App Runner + Firebase Hosting + S3 | Iteration 4 段階 C | 本番デプロイ (Dockerfile / ECR / Secrets Manager) |
-| CI/CD (GitHub Actions) | Iteration 4 段階 D | main push で自動デプロイ |
+| EC2(ubuntu) コンテナ + Firebase Hosting | Iteration 4 段階 C/D | 本番デプロイ (Dockerfile / **GHCR** / repository secrets)。当初計画は App Runner/ECR、実装で EC2/GHCR に変更。SoT: `deploy/README.md` |
+| CI/CD (GitHub Actions) | ✅ Iteration 4 段階 D 実装 | main push で自動デプロイ (`deploy-backend`/`deploy-frontend`)、DB は手動 `db-migrate` |
 | EF Core マイグレーション | Iteration 1 | 現在は `db/init/01-schema.sql` + `db/migration/*.sql` を投入 |
 | TLS / セキュリティ強化 | Iteration 4 段階 C | KMS / IAM 最小権限 / audit_logs 改竄防止 |
 | User Secrets / Connection String 整理 | ✅ Iteration 4 段階 A 完了 | `dotnet user-secrets` 運用に移行済 |
@@ -554,6 +555,8 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 
 ## 9. 関連ドキュメント
 
+- **本番デプロイ (CI/CD): `deploy/README.md`** — GitHub Actions による Firebase Hosting /
+  EC2 コンテナ配置 / RDS 初期化・マイグレーションの手順・必要 secrets 一覧 (SoT)
 - Phase 7 Iteration 計画: `.ai-native/outputs/phase7/iteration-plan.md`
 - Phase 7 INDEX: `.ai-native/outputs/phase7/_index.md`
 - Phase 5 設計: `.ai-native/outputs/phase5/{architecture,data-design,api-design,screen-design}.md`

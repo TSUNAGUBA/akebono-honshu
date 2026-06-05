@@ -1,0 +1,46 @@
+# ===========================================================================
+# CI: ビルド / 型チェック (PR + main push)
+#
+# 既存 pr-checks.yml は PR メタデータ (Issue 参照 / セルフチェック) を検証する別役割。
+# 本ワークフローはコンパイル/型の早期検知を担う (migration-plan §5.2 の意図)。
+# テストプロジェクトは未整備のため、Backend は dotnet build で疎通確認する。
+# ===========================================================================
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore & build (Release)
+        run: dotnet build src/Backend/Akebono.sln -c Release
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        working-directory: src/Frontend
+        run: pnpm install --no-frozen-lockfile
+      - name: Type check (nuxi typecheck)
+        working-directory: src/Frontend
+        run: pnpm run typecheck

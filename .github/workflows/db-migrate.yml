@@ -1,0 +1,97 @@
+# ===========================================================================
+# RDS スキーマ初期化 / マイグレーション (手動実行)
+#
+# データ保護のため push 自動実行はせず workflow_dispatch のみ。
+# RDS へは VPC 内の EC2 を踏み台にして到達する (GitHub ランナーは動的 IP のため
+# プライベート RDS に直接到達不可)。psql は EC2 上の使い捨てコンテナで実行。
+#
+# action=init   : 空 DB に db/init を投入 (既存があれば中止)。現行マイグレーションは baseline 記録。
+# action=migrate: db/migration の未適用スキーマのみ適用 (MIG-3 データ取込は除外、UI で実施)。
+# ===========================================================================
+name: DB Init / Migrate (RDS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'init = 空DBにスキーマ投入(既存があれば中止) / migrate = 未適用マイグレーション適用'
+        type: choice
+        options: [migrate, init]
+        default: migrate
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: db-migrate
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Connect to EC2
+        id: ec2
+        uses: ./.github/actions/ec2-connect
+        with:
+          ec2-host: ${{ secrets.EC2_HOST }}
+          ec2-instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          ssh-user: ${{ secrets.EC2_SSH_USER }}
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          ssh-known-hosts: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+
+      - name: Render .dbenv (DB 接続情報)
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_ADMIN_USER: ${{ secrets.DB_ADMIN_USER }}
+          DB_ADMIN_PASSWORD: ${{ secrets.DB_ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_HOST}" ] || [ -z "${DB_NAME}" ] || [ -z "${DB_ADMIN_USER}" ] || [ -z "${DB_ADMIN_PASSWORD}" ]; then
+            echo "::error::DB_HOST / DB_NAME / DB_ADMIN_USER / DB_ADMIN_PASSWORD secret が未設定です" >&2
+            exit 1
+          fi
+          {
+            echo "DB_HOST=${DB_HOST}"
+            echo "DB_PORT=${DB_PORT:-5432}"
+            echo "DB_NAME=${DB_NAME}"
+            echo "DB_ADMIN_USER=${DB_ADMIN_USER}"
+            echo "DB_ADMIN_PASSWORD=${DB_ADMIN_PASSWORD}"
+          } > deploy/db/.dbenv
+
+      - name: Copy migration bundle to EC2
+        env:
+          HOST: ${{ steps.ec2.outputs.host }}
+          SSH_USER: ${{ secrets.EC2_SSH_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "${SSH_USER}@${HOST}" \
+            'rm -rf ~/akebono-migrate && mkdir -p ~/akebono-migrate'
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes -r \
+            db deploy/db/run-migrations.sh deploy/db/.dbenv \
+            "${SSH_USER}@${HOST}:~/akebono-migrate/"
+
+      - name: Run on EC2 (action=${{ inputs.action }})
+        env:
+          HOST: ${{ steps.ec2.outputs.host }}
+          SSH_USER: ${{ secrets.EC2_SSH_USER }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "${SSH_USER}@${HOST}" \
+            "cd ~/akebono-migrate && ACTION='${ACTION}' bash run-migrations.sh && rm -rf ~/akebono-migrate"
+
+      - name: Cleanup local secrets
+        if: always()
+        run: rm -f deploy/db/.dbenv

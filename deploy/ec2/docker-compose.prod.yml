@@ -1,0 +1,44 @@
+# ===========================================================================
+# あけぼの本州 Backend 本番デプロイ (EC2 / docker compose)
+#
+# このファイル・deploy.sh・.env は GitHub Actions (.github/workflows/deploy-backend.yml)
+# が EC2 の ~/akebono-deploy/ に配置し、deploy.sh から起動する。
+#
+# 設定値はすべて同ディレクトリの .env (CI が repository secrets から生成) で注入する。
+# .env は git 管理外 (リポジトリ root .gitignore)。テンプレートは .env.example を参照。
+#
+# Backend イメージは GHCR (ghcr.io/<owner>/akebono-honshu-backend:<tag>) から pull する。
+# ===========================================================================
+services:
+  backend:
+    # BACKEND_IMAGE は .env で必須 (未設定なら compose がエラー)。
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must be set in .env}
+    container_name: akebono-backend
+    restart: unless-stopped
+    # .env の全キーをコンテナ環境変数として注入 (ConnectionStrings__Postgres /
+    # Firebase__ProjectId / Cors__Origins / ASPNETCORE_ENVIRONMENT 等)。
+    env_file:
+      - .env
+    ports:
+      # ホスト公開ポート。TLS 終端・リバースプロキシ (nginx / ALB) はオペレーター責務。
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    volumes:
+      # LocalImageStorage 使用時に商品画像をコンテナ再作成跨ぎで永続化 (原則 2: 状態保護)。
+      # ImageStorage__Provider=S3 運用時は未使用 (無害)。
+      - akebono-uploads:/app/wwwroot/uploads
+    healthcheck:
+      # Dockerfile の HEALTHCHECK と同等 (curl は image に同梱済)。
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "4", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  akebono-uploads:
+    name: akebono-uploads

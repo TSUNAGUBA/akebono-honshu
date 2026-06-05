@@ -33,6 +33,12 @@ dist/
 # Docker
 .docker/
 
+# CI が repository secrets から生成するデプロイ用の機密ファイル (絶対にコミットしない)
+# deploy/ec2/.env は上の .env パターンでも除外されるが明示する
+deploy/ec2/.env
+deploy/ec2/.ghcr_token
+deploy/db/.dbenv
+
 # Misc
 *.tmp
 *.bak

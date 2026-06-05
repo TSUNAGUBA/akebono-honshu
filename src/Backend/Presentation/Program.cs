@@ -24,8 +24,10 @@ var builder = WebApplication.CreateBuilder(args);
 // AWS Secrets Manager 経由で秘密情報 (DB 接続文字列等) を IConfiguration に注入 (Iter 4 段階 C-2)。
 // - dev/test/CI: `Secrets:Provider=Environment` (default) → 何もしない。環境変数 / User Secrets /
 //   appsettings.Development.json で値が解決される (既存挙動)。
-// - prod (App Runner): 環境変数 `Secrets__Provider=AwsSecretsManager` + `Secrets__AwsPrefix=akebono/prod/`
-//   で有効化。`ConnectionStrings:Postgres` 等が Secrets Manager 経由で上書きされる。
+// - prod (EC2/docker compose): 既定は `Secrets:Provider=Environment` で、repository secrets から
+//   生成した .env (ConnectionStrings__Postgres 等) で値が解決される (deploy/README.md)。
+//   AWS Secrets Manager 運用に切替える場合は `Secrets__Provider=AwsSecretsManager` +
+//   `Secrets__AwsPrefix=akebono/prod/` を設定する (EC2 インスタンスプロファイルに権限が必要)。
 // SecretMappings の対象 Secret 群 (`db-connection`, `firebase-sa-key` ほか) は事前定義されている
 // (Infrastructure/Secrets/SecretMappings.cs)。
 // **fail-fast SoT (SA-P0-1):** prefix の null / placeholder 検証は AddAkebonoAwsSecretsManager 拡張に
@@ -51,7 +53,10 @@ builder.Services.ConfigureHttpJsonOptions(opt =>
 });
 
 builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
-    .WithOrigins(builder.Configuration["Cors:Origins"]?.Split(',') ?? ["http://localhost:3000"])
+    // 空要素・前後空白を除去 (誤設定で空文字 origin が紛れても無害化、SA 指摘)。
+    .WithOrigins(builder.Configuration["Cors:Origins"]
+        ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        ?? ["http://localhost:3000"])
     .AllowAnyHeader()
     .AllowAnyMethod()
     .AllowCredentials()
@@ -77,7 +82,7 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
 //   firebase_uid 変更 / 論理削除 / IsActive 変更時は **2 つの cache を同時に Remove** すること
 //   1. `cache.Remove($"fb_uid_resolve:{uid}")` — 引当キャッシュ flush (60s 遅延回避)
 //   2. `cache.Remove($"audit_logged:{uid}")` — de-dup 解除 (復活後の新規拒否を即座に監査可能化)
-// - multi-instance 注意: 段階 C で App Runner を 2 instance 以上に水平拡張する場合 IMemoryCache は
+// - multi-instance 注意: Backend を 2 インスタンス以上に水平拡張する場合 (EC2 複数台 / 複数コンテナ等) IMemoryCache は
 //   プロセスローカルかつ memory pressure で eviction される (de-dup の信頼性も低下)。架構判断は
 //   architecture.md §4.5 参照
 // - soft-deleted (`IsDeleted=true`) ユーザの扱い: 引当 WHERE が `!IsDeleted` のため hit せず
@@ -285,12 +290,18 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.UseSwagger();
-app.UseSwaggerUI(options =>
+// Swagger UI は本番では公開しない (API スキーマ漏洩防止)。
+// migration-plan §4.2.3「C-2 範囲外の本番セキュリティ TODO P1-5」を段階 D で解消。
+// dev/staging では従来通り /swagger を提供し、Production (ASPNETCORE_ENVIRONMENT=Production) で無効化。
+if (!app.Environment.IsProduction())
 {
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Akebono Honshu API v1");
-    options.DocumentTitle = "Akebono Honshu API";
-});
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Akebono Honshu API v1");
+        options.DocumentTitle = "Akebono Honshu API";
+    });
+}
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 

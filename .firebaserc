@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "dev": "akebono-honshu",
+    "prod": "akebono-honshu-prod"
+  }
+}
