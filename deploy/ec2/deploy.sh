@@ -35,6 +35,12 @@ fi
 
 echo "==> pull image"
 "${COMPOSE[@]}" pull
+
+# 非 root コンテナ (appuser UID 1000) が uploads 名前付きボリュームに書込めるよう所有者を整える。
+# 初回 deploy で root 所有のまま作られた volume も是正する (冪等)。root の使い捨てコンテナで chown。
+echo "==> uploads ボリュームの所有者を appuser(1000) に整える"
+docker run --rm -v akebono-honshu-uploads:/v alpine sh -c 'mkdir -p /v/product-images && chown -R 1000:1000 /v'
+
 echo "==> up -d"
 "${COMPOSE[@]}" up -d --remove-orphans
 

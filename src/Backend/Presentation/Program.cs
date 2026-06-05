@@ -279,7 +279,18 @@ if (!string.Equals(imageProvider, "S3", StringComparison.OrdinalIgnoreCase))
 {
     var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
     var uploadDir = Path.Combine(webRoot, "uploads", "product-images");
-    Directory.CreateDirectory(uploadDir);
+    // 補助的なディレクトリ確保の失敗で起動全体を止めない (CLAUDE.md 原則 4)。
+    // 本番 (EC2 docker) では named volume の所有者を deploy.sh が appuser(UID 1000) に整える。
+    try
+    {
+        Directory.CreateDirectory(uploadDir);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex,
+            "画像アップロード用ディレクトリ {UploadDir} の作成に失敗しました " +
+            "(画像アップロードは失敗しますが起動は継続します)。", uploadDir);
+    }
 }
 
 app.UseCors();
