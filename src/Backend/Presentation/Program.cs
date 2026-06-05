@@ -285,12 +285,18 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.UseSwagger();
-app.UseSwaggerUI(options =>
+// Swagger UI は本番では公開しない (API スキーマ漏洩防止)。
+// migration-plan §4.2.3「C-2 範囲外の本番セキュリティ TODO P1-5」を段階 D で解消。
+// dev/staging では従来通り /swagger を提供し、Production (ASPNETCORE_ENVIRONMENT=Production) で無効化。
+if (!app.Environment.IsProduction())
 {
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Akebono Honshu API v1");
-    options.DocumentTitle = "Akebono Honshu API";
-});
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Akebono Honshu API v1");
+        options.DocumentTitle = "Akebono Honshu API";
+    });
+}
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 

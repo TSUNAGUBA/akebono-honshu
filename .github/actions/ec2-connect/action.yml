@@ -1,0 +1,85 @@
+# ===========================================================================
+# 複合アクション: EC2 接続準備
+#
+# 役割: デプロイ系ワークフロー (deploy-backend / db-migrate) で重複する
+#       「EC2 ホスト解決 + SSH 秘密鍵/known_hosts 準備」を 1 箇所に集約する
+#       (CLAUDE.md 原則 3: 既存パターンの再利用 / 重複排除)。
+#
+# 前提: 呼び出し側ワークフローで先に actions/checkout と
+#       aws-actions/configure-aws-credentials (OIDC) を実行しておくこと。
+#       ec2-host が空のときのみ AWS API (ec2:DescribeInstances) を使う。
+#
+# 出力: host = 解決された EC2 ホスト (DNS or IP)。SSH 鍵は ~/.ssh/deploy_key。
+# ===========================================================================
+name: 'EC2 Connect'
+description: 'EC2 ホストを解決 (instance-id→AWS or 明示host) し、SSH 鍵と known_hosts を準備する'
+
+inputs:
+  ec2-host:
+    description: '明示的な EC2 ホスト (DNS/IP)。空なら ec2-instance-id から AWS 経由で解決する'
+    required: false
+    default: ''
+  ec2-instance-id:
+    description: 'EC2 インスタンス ID (ec2-host が空のとき使用)'
+    required: false
+    default: ''
+  ssh-user:
+    description: 'SSH ユーザ (例: ubuntu)'
+    required: true
+  ssh-private-key:
+    description: 'SSH 秘密鍵 (repository secret)'
+    required: true
+
+outputs:
+  host:
+    description: '解決された EC2 ホスト'
+    value: ${{ steps.resolve.outputs.host }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        EC2_HOST: ${{ inputs.ec2-host }}
+        EC2_INSTANCE_ID: ${{ inputs.ec2-instance-id }}
+      run: |
+        set -euo pipefail
+        HOST="${EC2_HOST}"
+        if [ -z "${HOST}" ]; then
+          if [ -z "${EC2_INSTANCE_ID}" ]; then
+            echo "::error::ec2-host か ec2-instance-id のいずれかを指定してください" >&2
+            exit 1
+          fi
+          echo "Resolving address for instance ${EC2_INSTANCE_ID} via ec2:DescribeInstances ..."
+          HOST="$(aws ec2 describe-instances --instance-ids "${EC2_INSTANCE_ID}" \
+            --query 'Reservations[0].Instances[0].PublicDnsName' --output text)"
+          if [ -z "${HOST}" ] || [ "${HOST}" = "None" ]; then
+            HOST="$(aws ec2 describe-instances --instance-ids "${EC2_INSTANCE_ID}" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
+          fi
+          if [ -z "${HOST}" ] || [ "${HOST}" = "None" ]; then
+            echo "::error::インスタンス ${EC2_INSTANCE_ID} のパブリックアドレスを解決できませんでした (起動中か / パブリック IP 付与を確認)" >&2
+            exit 1
+          fi
+        fi
+        echo "host=${HOST}" >> "${GITHUB_OUTPUT}"
+        echo "Resolved EC2 host: ${HOST}"
+
+    - id: ssh-setup
+      shell: bash
+      env:
+        SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        RESOLVED_HOST: ${{ steps.resolve.outputs.host }}
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        # known_hosts に対象ホストの鍵を登録 (TOFU)。失敗してもデプロイ全体は
+        # 後続 SSH で検知されるため、ここでは握りつぶさず明示的に追記する。
+        ssh-keyscan -T 20 "${RESOLVED_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || {
+          echo "::warning::ssh-keyscan が ${RESOLVED_HOST} の鍵取得に失敗しました (SSH 接続時に再評価されます)";
+        }
+        chmod 644 ~/.ssh/known_hosts 2>/dev/null || true

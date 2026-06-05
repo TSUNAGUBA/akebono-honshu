@@ -1,0 +1,77 @@
+# ===========================================================================
+# Frontend デプロイ: Nuxt 静的生成 → Firebase Hosting
+#
+# トリガー: main への push (Frontend / firebase 設定変更時) + 手動実行。
+# 設定値はすべて repository secrets から注入する (NUXT_PUBLIC_* / Firebase SA)。
+# ===========================================================================
+name: Deploy Frontend (Firebase Hosting)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Frontend/**'
+      - 'firebase.json'
+      - '.firebaserc'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: src/Frontend
+        # pnpm-lock.yaml 未コミットのため frozen 不可。再現性のためロックファイルの
+        # コミットを推奨 (deploy/README.md 参照)。
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Generate static site (nuxi generate)
+        working-directory: src/Frontend
+        # 静的生成では runtimeConfig.public がビルド時に埋め込まれるため、
+        # NUXT_PUBLIC_* を generate 時に渡す必要がある。
+        env:
+          NUXT_PUBLIC_API_BASE: ${{ secrets.NUXT_PUBLIC_API_BASE }}
+          NUXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NUXT_PUBLIC_FIREBASE_API_KEY }}
+          NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NUXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NUXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+          NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NUXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NUXT_PUBLIC_FIREBASE_APP_ID }}
+        run: pnpm run generate
+
+      - name: Deploy to Firebase Hosting
+        # firebase.json はリポジトリ root にあるため root で実行。
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT}" ] || [ -z "${FIREBASE_PROJECT_ID}" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT / FIREBASE_PROJECT_ID secret が未設定です" >&2
+            exit 1
+          fi
+          SA="${RUNNER_TEMP}/firebase-sa.json"
+          # サービスアカウント JSON を一時ファイルに展開 (シェルクォート事故回避のため env 経由)。
+          printf '%s' "${FIREBASE_SERVICE_ACCOUNT}" > "${SA}"
+          export GOOGLE_APPLICATION_CREDENTIALS="${SA}"
+          trap 'rm -f "${SA}"' EXIT
+          npx --yes firebase-tools@13 deploy --only hosting \
+            --project "${FIREBASE_PROJECT_ID}" --non-interactive

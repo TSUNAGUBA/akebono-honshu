@@ -1,0 +1,154 @@
+# ===========================================================================
+# Backend デプロイ: Docker build → GHCR push → EC2(ubuntu) でコンテナ起動
+#
+# トリガー: main への push (Backend / deploy 設定変更時) + 手動実行。
+# 認証:
+#   - GHCR push/pull = GITHUB_TOKEN (long-lived secret 不要)
+#   - AWS (EC2 ホスト解決) = OIDC ロール (long-lived key 不要)
+#   - EC2 への配置/起動 = SSH (秘密鍵は repository secret)
+# 設定値はすべて repository secrets から .env を生成して EC2 に渡す。
+# ===========================================================================
+name: Deploy Backend (EC2)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Backend/**'
+      - 'deploy/ec2/**'
+      - '.github/workflows/deploy-backend.yml'
+      - '.github/actions/ec2-connect/**'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+# 既定は最小 (read)。各 job が必要な権限のみを追加付与する (最小権限)。
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write          # GHCR push に必要
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image name/tag
+        id: meta
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"          # GHCR は小文字必須
+          image="ghcr.io/${owner}/akebono-honshu-backend"
+          tag="sha-${GITHUB_SHA::12}"
+          echo "image=${image}:${tag}" >> "${GITHUB_OUTPUT}"
+          echo "image_latest=${image}:latest" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push image
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          IMAGE_LATEST: ${{ steps.meta.outputs.image_latest }}
+        run: |
+          set -euo pipefail
+          # build context は src/Backend/ (Dockerfile の前提)。
+          docker build -t "${IMAGE}" -t "${IMAGE_LATEST}" -f src/Backend/Dockerfile src/Backend
+          docker push "${IMAGE}"
+          docker push "${IMAGE_LATEST}"
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read           # EC2 への GHCR pull 用トークン (GITHUB_TOKEN)
+      id-token: write          # AWS OIDC AssumeRole 用
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Connect to EC2
+        id: ec2
+        uses: ./.github/actions/ec2-connect
+        with:
+          ec2-host: ${{ secrets.EC2_HOST }}
+          ec2-instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          ssh-user: ${{ secrets.EC2_SSH_USER }}
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      - name: Render production .env
+        env:
+          BACKEND_IMAGE: ${{ needs.build-and-push.outputs.image }}
+          BACKEND_HOST_PORT: ${{ secrets.BACKEND_HOST_PORT }}
+          DB_CONNECTION: ${{ secrets.PROD_DB_CONNECTION }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          IMAGE_STORAGE_PROVIDER: ${{ secrets.IMAGE_STORAGE_PROVIDER }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_CONNECTION}" ] || [ -z "${FIREBASE_PROJECT_ID}" ] || [ -z "${CORS_ORIGINS}" ]; then
+            echo "::error::PROD_DB_CONNECTION / FIREBASE_PROJECT_ID / CORS_ORIGINS secret が未設定です" >&2
+            exit 1
+          fi
+          cd deploy/ec2
+          {
+            echo "BACKEND_IMAGE=${BACKEND_IMAGE}"
+            echo "BACKEND_HOST_PORT=${BACKEND_HOST_PORT:-8080}"
+            echo "ASPNETCORE_ENVIRONMENT=Production"
+            echo "ASPNETCORE_URLS=http://+:8080"
+            echo "ConnectionStrings__Postgres=${DB_CONNECTION}"
+            echo "Firebase__ProjectId=${FIREBASE_PROJECT_ID}"
+            echo "Cors__Origins=${CORS_ORIGINS}"
+            echo "ImageStorage__Provider=${IMAGE_STORAGE_PROVIDER:-Local}"
+            echo "S3__BucketName=${S3_BUCKET_NAME:-__OVERRIDE_ME__}"
+            echo "AWS__Region=${AWS_REGION:-ap-northeast-1}"
+            echo "Secrets__Provider=Environment"
+            echo "Logging__LogLevel__Default=Warning"
+            echo "Logging__LogLevel__Akebono=Information"
+            echo "Logging__LogLevel__Microsoft.Hosting.Lifetime=Information"
+            echo "Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command=Warning"
+          } > .env
+          echo "Rendered .env (値はマスク表示):"
+          sed -E 's/=.*/=***/' .env
+
+      - name: Write GHCR token file
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "${GHCR_TOKEN}" > deploy/ec2/.ghcr_token
+
+      - name: Copy deploy bundle to EC2
+        env:
+          HOST: ${{ steps.ec2.outputs.host }}
+          SSH_USER: ${{ secrets.EC2_SSH_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "${SSH_USER}@${HOST}" 'mkdir -p ~/akebono-deploy'
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes \
+            deploy/ec2/docker-compose.prod.yml deploy/ec2/deploy.sh deploy/ec2/.env deploy/ec2/.ghcr_token \
+            "${SSH_USER}@${HOST}:~/akebono-deploy/"
+
+      - name: Run deploy on EC2
+        env:
+          HOST: ${{ steps.ec2.outputs.host }}
+          SSH_USER: ${{ secrets.EC2_SSH_USER }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "${SSH_USER}@${HOST}" \
+            "cd ~/akebono-deploy && GHCR_USER='${GHCR_USER}' bash deploy.sh"

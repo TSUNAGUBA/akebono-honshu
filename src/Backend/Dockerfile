@@ -2,7 +2,10 @@
 # ===========================================================================
 # Akebono Honshu Backend Dockerfile (Iter 4 段階 C-3)
 #
-# **対象:** AWS App Runner デプロイ用 (.NET 8 / ASP.NET Core)。
+# **対象:** EC2(ubuntu) 上の docker compose 本番デプロイ (.NET 8 / ASP.NET Core)。
+#   ※ Iter 4 当初計画は App Runner だったが、オペレーター判断で EC2 配置に変更
+#     (deploy/README.md 参照)。本 Dockerfile は両者で動作する (Port 8080 / non-root /
+#     HEALTHCHECK は EC2 docker compose では有効、App Runner では無視される)。
 # **build context:** `src/Backend/` (このファイルが置かれている階層)。
 # **配置の意図:** Frontend (src/Frontend) と無関係のため context をリポジトリ root にせず、
 # Backend ソリューションディレクトリ直下に Dockerfile を置く。

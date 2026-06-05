@@ -554,6 +554,8 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 
 ## 9. 関連ドキュメント
 
+- **本番デプロイ (CI/CD): `deploy/README.md`** — GitHub Actions による Firebase Hosting /
+  EC2 コンテナ配置 / RDS 初期化・マイグレーションの手順・必要 secrets 一覧 (SoT)
 - Phase 7 Iteration 計画: `.ai-native/outputs/phase7/iteration-plan.md`
 - Phase 7 INDEX: `.ai-native/outputs/phase7/_index.md`
 - Phase 5 設計: `.ai-native/outputs/phase5/{architecture,data-design,api-design,screen-design}.md`
