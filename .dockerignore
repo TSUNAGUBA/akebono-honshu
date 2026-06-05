@@ -1,0 +1,36 @@
+# ===========================================================================
+# Backend イメージのビルドコンテキスト = リポジトリ root (src/Backend/Dockerfile)。
+# 必要なのは src/Backend と db のみ。それ以外の大きい/不要なものを除外して
+# コンテキスト転送を軽くする (src/Backend/.dockerignore は context=root では使われない)。
+# ===========================================================================
+.git
+**/bin
+**/obj
+**/.vs
+**/.vscode
+**/.idea
+**/*.user
+**/*.suo
+
+# Frontend (バックエンドイメージに不要)
+src/Frontend
+
+# ドキュメント / 方法論 (イメージに不要)
+.ai-native
+blog
+docs
+RUNBOOK.md
+README.md
+
+# Node 関連 (念のため)
+**/node_modules
+**/.nuxt
+**/.output
+
+# CI 生成の機密 (絶対に焼き込まない)
+deploy/ec2/.env
+deploy/ec2/.ghcr_token
+deploy/db/.dbenv
+
+# ローカル画像残骸 (S3 移行済)
+src/Backend/Presentation/wwwroot/uploads

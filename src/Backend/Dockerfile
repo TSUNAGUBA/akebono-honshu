@@ -6,9 +6,11 @@
 #   ※ Iter 4 当初計画は App Runner だったが、オペレーター判断で EC2 配置に変更
 #     (deploy/README.md 参照)。本 Dockerfile は両者で動作する (Port 8080 / non-root /
 #     HEALTHCHECK は EC2 docker compose では有効、App Runner では無視される)。
-# **build context:** `src/Backend/` (このファイルが置かれている階層)。
-# **配置の意図:** Frontend (src/Frontend) と無関係のため context をリポジトリ root にせず、
-# Backend ソリューションディレクトリ直下に Dockerfile を置く。
+# **build context:** リポジトリ root (`.`)。
+#   理由: Application.csproj が MIG-3 SQL を `..\..\..\db\migration\*.sql` (リポジトリ直下) から
+#   EmbeddedResource として埋め込むため、build context に `db/` を含める必要がある
+#   (context=src/Backend では db/ が外れ `dotnet publish` が CS1566 で失敗する)。
+#   context のスリム化は repo root の `.dockerignore` で行う。
 #
 # **設計判断 (ヒアリング A/A/A 案、Iter 4 段階 C-3):**
 # - Base image: `mcr.microsoft.com/dotnet/{sdk,aspnet}:8.0-bookworm-slim`
@@ -27,14 +29,17 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim AS build
 WORKDIR /src
 
-COPY Domain/Akebono.Domain.csproj Domain/
-COPY Application/Akebono.Application.csproj Application/
-COPY Infrastructure/Akebono.Infrastructure.csproj Infrastructure/
-COPY Presentation/Akebono.Api.csproj Presentation/
+COPY src/Backend/Domain/Akebono.Domain.csproj Domain/
+COPY src/Backend/Application/Akebono.Application.csproj Application/
+COPY src/Backend/Infrastructure/Akebono.Infrastructure.csproj Infrastructure/
+COPY src/Backend/Presentation/Akebono.Api.csproj Presentation/
 RUN dotnet restore Presentation/Akebono.Api.csproj
 
-# ソースをコピーして publish (Release config、UseAppHost=false で native exe を生成しない)。
-COPY . .
+# Backend ソース + MIG-3 埋込 SQL (db/) をコピーして publish。
+# db/ は /db に置く: Application.csproj の `..\..\..\db\migration` が /src/Application から
+# /db/migration に解決されるため (EmbeddedResource CS1566 回避)。
+COPY src/Backend/ .
+COPY db/ /db/
 RUN dotnet publish Presentation/Akebono.Api.csproj \
     -c Release \
     -o /app/publish \

@@ -28,6 +28,15 @@ jobs:
       - name: Restore & build (Release)
         run: dotnet build src/Backend/Akebono.sln -c Release
 
+  backend-docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build (no push) — Dockerfile とビルドコンテキストを検証
+        # ci.yml の dotnet build はフルリポジトリで通るため Docker の context 制限を検知できない。
+        # 本番と同じ context=repo root で docker build し、CS1566 等 (埋込リソースの欠落) を PR で捕捉する。
+        run: docker build -f src/Backend/Dockerfile -t akebono-honshu-backend:ci .
+
   frontend-typecheck:
     runs-on: ubuntu-latest
     steps:

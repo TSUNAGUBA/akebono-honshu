@@ -19,7 +19,9 @@ on:
     branches: [main]
     paths:
       - 'src/Backend/**'
+      - 'db/migration/**'      # MIG-3 SQL は backend イメージに埋め込まれる
       - 'deploy/ec2/**'
+      - '.dockerignore'
       - '.github/workflows/deploy-backend.yml'
       - '.github/actions/ec2-connect/**'
   workflow_dispatch:
@@ -64,8 +66,9 @@ jobs:
           IMAGE_LATEST: ${{ steps.meta.outputs.image_latest }}
         run: |
           set -euo pipefail
-          # build context は src/Backend/ (Dockerfile の前提)。
-          docker build -t "${IMAGE}" -t "${IMAGE_LATEST}" -f src/Backend/Dockerfile src/Backend
+          # build context は リポジトリ root (Application.csproj が db/migration の MIG-3 SQL を
+          # EmbeddedResource として埋め込むため、db/ を context に含める)。
+          docker build -t "${IMAGE}" -t "${IMAGE_LATEST}" -f src/Backend/Dockerfile .
           docker push "${IMAGE}"
           docker push "${IMAGE_LATEST}"
 
