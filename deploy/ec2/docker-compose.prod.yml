@@ -1,33 +1,39 @@
 # ===========================================================================
 # あけぼの本州 Backend 本番デプロイ (EC2 / docker compose)
 #
-# このファイル・deploy.sh・.env は GitHub Actions (.github/workflows/deploy-backend.yml)
-# が EC2 の ~/akebono-deploy/ に配置し、deploy.sh から起動する。
+# 既存ホストの jwilder/nginx-proxy + acme-companion に「相乗り」する構成。
+# - backend を外部ネットワーク PROXY_NETWORK (既定 tsunaguba-dev-001) に参加させる
+# - ホストポートは公開しない。nginx-proxy が VIRTUAL_HOST/VIRTUAL_PORT を読み、
+#   同一ネットワーク経由で backend:8080 にプロキシ + Let's Encrypt 自動 TLS を張る
+#   (兄弟アプリ akebono-warehouse-api 等と同じ流儀)
 #
-# 設定値はすべて同ディレクトリの .env (CI が repository secrets から生成) で注入する。
-# .env は git 管理外 (リポジトリ root .gitignore)。テンプレートは .env.example を参照。
-#
-# Backend イメージは GHCR (ghcr.io/<owner>/akebono-honshu-backend:<tag>) から pull する。
+# このファイル・deploy.sh・.env は GitHub Actions (deploy-backend.yml) が EC2 の
+# ~/akebono-deploy/ に配置し、deploy.sh から起動する。設定値はすべて .env (CI が
+# repository secrets から生成、git 管理外) で注入する。VIRTUAL_HOST 等も .env 経由で
+# backend コンテナ env に入り、nginx-proxy が docker API から読み取る。
 # ===========================================================================
 services:
   backend:
-    # BACKEND_IMAGE は .env で必須 (未設定なら compose がエラー)。
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE must be set in .env}
-    container_name: akebono-backend
+    container_name: akebono-honshu-api
     restart: unless-stopped
-    # .env の全キーをコンテナ環境変数として注入 (ConnectionStrings__Postgres /
-    # Firebase__ProjectId / Cors__Origins / ASPNETCORE_ENVIRONMENT 等)。
+    # 共有ホスト相乗りのためリソース上限を設定 (.env で調整可)。
+    # 暴走時に同居アプリ (nginx-proxy / 兄弟API) を巻き込まないための保護。
+    mem_limit: ${BACKEND_MEM_LIMIT:-1024m}
+    cpus: ${BACKEND_CPUS:-1.0}
+    # .env の全キーをコンテナ環境変数として注入:
+    #  - ASP.NET Core 設定 (ConnectionStrings__Postgres / Firebase__ProjectId / Cors__Origins ...)
+    #  - nginx-proxy 連携 (VIRTUAL_HOST / VIRTUAL_PORT / VIRTUAL_PROTO / LETSENCRYPT_HOST / LETSENCRYPT_EMAIL)
     env_file:
       - .env
-    ports:
-      # ホスト公開ポート。TLS 終端・リバースプロキシ (nginx / ALB) はオペレーター責務。
-      - "${BACKEND_HOST_PORT:-8080}:8080"
+    # ホストポートは公開しない (ports: なし)。到達は nginx-proxy 経由のみ。
+    networks:
+      - proxy
     volumes:
       # LocalImageStorage 使用時に商品画像をコンテナ再作成跨ぎで永続化 (原則 2: 状態保護)。
-      # ImageStorage__Provider=S3 運用時は未使用 (無害)。
-      - akebono-uploads:/app/wwwroot/uploads
+      - akebono-honshu-uploads:/app/wwwroot/uploads
     healthcheck:
-      # Dockerfile の HEALTHCHECK と同等 (curl は image に同梱済)。
+      # Dockerfile の HEALTHCHECK と同等 (curl は image に同梱済)。コンテナ内 8080 を検査。
       test: ["CMD", "curl", "--fail", "--silent", "--max-time", "4", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
@@ -39,6 +45,12 @@ services:
         max-size: "10m"
         max-file: "3"
 
+networks:
+  # 既存 nginx-proxy が使う外部ネットワークに相乗り (作成済み前提)。
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-tsunaguba-dev-001}
+
 volumes:
-  akebono-uploads:
-    name: akebono-uploads
+  akebono-honshu-uploads:
+    name: akebono-honshu-uploads

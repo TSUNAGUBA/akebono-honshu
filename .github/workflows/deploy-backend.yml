@@ -1,11 +1,15 @@
 # ===========================================================================
 # Backend デプロイ: Docker build → GHCR push → EC2(ubuntu) でコンテナ起動
 #
-# トリガー: main への push (Backend / deploy 設定変更時) + 手動実行。
+# 配置先 EC2 は既存の jwilder/nginx-proxy + acme-companion が動くホスト。
+# backend は同じ docker ネットワーク (PROXY_NETWORK) に相乗りし、VIRTUAL_HOST 等の
+# 環境変数でルーティング + Let's Encrypt 自動 TLS を受ける (ホストポートは公開しない)。
+#
 # 認証:
 #   - GHCR push/pull = GITHUB_TOKEN (long-lived secret 不要)
-#   - AWS (EC2 ホスト解決) = OIDC ロール (long-lived key 不要)
 #   - EC2 への配置/起動 = SSH (秘密鍵は repository secret)
+#   - AWS (EC2 ホスト解決) = OIDC ロール。**任意**: EC2_HOST を直接指定すれば不要
+#     (AWS_ROLE_ARN 未設定なら OIDC ステップは自動スキップ)。
 # 設定値はすべて repository secrets から .env を生成して EC2 に渡す。
 # ===========================================================================
 name: Deploy Backend (EC2)
@@ -71,15 +75,21 @@ jobs:
     permissions:
       contents: read
       packages: read           # EC2 への GHCR pull 用トークン (GITHUB_TOKEN)
-      id-token: write          # AWS OIDC AssumeRole 用
+      id-token: write          # AWS OIDC AssumeRole 用 (EC2_HOST 直指定で OIDC 未使用なら実質不要)
+    # secrets は if: で直接参照できない (GitHub Actions 仕様)。env に展開して presence 判定する。
+    env:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
     steps:
       - uses: actions/checkout@v4
 
+      # EC2_HOST を直接指定する運用では AWS は不要 (AWS_ROLE_ARN 未設定ならスキップ)。
       - name: Configure AWS credentials (OIDC)
+        if: ${{ env.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Connect to EC2
         id: ec2
@@ -94,7 +104,9 @@ jobs:
       - name: Render production .env
         env:
           BACKEND_IMAGE: ${{ needs.build-and-push.outputs.image }}
-          BACKEND_HOST_PORT: ${{ secrets.BACKEND_HOST_PORT }}
+          PROXY_NETWORK: ${{ secrets.PROXY_NETWORK }}
+          API_VIRTUAL_HOST: ${{ secrets.API_VIRTUAL_HOST }}
+          LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
           DB_CONNECTION: ${{ secrets.PROD_DB_CONNECTION }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
@@ -103,16 +115,23 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -euo pipefail
-          if [ -z "${DB_CONNECTION}" ] || [ -z "${FIREBASE_PROJECT_ID}" ] || [ -z "${CORS_ORIGINS}" ]; then
-            echo "::error::PROD_DB_CONNECTION / FIREBASE_PROJECT_ID / CORS_ORIGINS secret が未設定です" >&2
+          if [ -z "${DB_CONNECTION}" ] || [ -z "${FIREBASE_PROJECT_ID}" ] || [ -z "${CORS_ORIGINS}" ] || [ -z "${API_VIRTUAL_HOST}" ]; then
+            echo "::error::PROD_DB_CONNECTION / FIREBASE_PROJECT_ID / CORS_ORIGINS / API_VIRTUAL_HOST secret が未設定です" >&2
             exit 1
           fi
           cd deploy/ec2
           {
             echo "BACKEND_IMAGE=${BACKEND_IMAGE}"
-            echo "BACKEND_HOST_PORT=${BACKEND_HOST_PORT:-8080}"
+            echo "PROXY_NETWORK=${PROXY_NETWORK:-tsunaguba-dev-001}"
             echo "ASPNETCORE_ENVIRONMENT=Production"
             echo "ASPNETCORE_URLS=http://+:8080"
+            # --- nginx-proxy 連携 (backend コンテナ env として注入され、nginx-proxy が読む) ---
+            echo "VIRTUAL_HOST=${API_VIRTUAL_HOST}"
+            echo "VIRTUAL_PORT=8080"
+            echo "VIRTUAL_PROTO=http"
+            echo "LETSENCRYPT_HOST=${API_VIRTUAL_HOST}"
+            if [ -n "${LETSENCRYPT_EMAIL}" ]; then echo "LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}"; fi
+            # --- アプリ設定 ---
             echo "ConnectionStrings__Postgres=${DB_CONNECTION}"
             echo "Firebase__ProjectId=${FIREBASE_PROJECT_ID}"
             echo "Cors__Origins=${CORS_ORIGINS}"
