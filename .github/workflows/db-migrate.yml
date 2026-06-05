@@ -33,7 +33,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # EC2_HOST を直接指定する運用では AWS は不要 (AWS_ROLE_ARN 未設定ならスキップ)。
       - name: Configure AWS credentials (OIDC)
+        if: ${{ secrets.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}

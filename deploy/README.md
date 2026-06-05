@@ -5,6 +5,9 @@
 > Phase 5 `architecture.md` / Phase 7 `iteration4-prod-migration-plan.md` は当初 **App Runner** 前提で
 > 記述されているが、**本実装はオペレーター判断で「EC2(ubuntu) にコンテナ配置」へ変更**している
 > (§0 参照)。
+>
+> **初学者向けの一本道セットアップ手順は [`SETUP_GUIDE_ja.md`](./SETUP_GUIDE_ja.md) を参照**
+> (この環境の実値を埋めた PowerShell 版・コピペ完遂型)。本ファイルは設計リファレンス。
 
 ---
 
@@ -14,7 +17,8 @@
 |---|---|---|---|
 | Backend 実行基盤 | AWS App Runner | **EC2(ubuntu) + docker compose** | オペレーター指定 |
 | イメージ配信 | ECR | **GHCR** (GitHub Container Registry) | オペレーター指定 (Q1) |
-| GitHub Actions → AWS 認証 | OIDC | **OIDC** (踏襲) | Q2。長期キー漏洩リスク回避 |
+| GitHub Actions → AWS 認証 | OIDC | **OIDC (任意)** — 固定 IP なら `EC2_HOST` 直指定で AWS 不要 | Q2 + 既存環境最適化 |
+| Backend 公開 / TLS | App Runner (HTTPS) | **既存 nginx-proxy + acme-companion に相乗り** (自動 Let's Encrypt) | 既存ホスト同居 |
 | Frontend 配信 | Firebase Hosting | **Firebase Hosting** (踏襲) | – |
 | 設定/機密 | AWS Secrets Manager | **repository secrets → EC2 .env** | オペレーター指定 |
 | DB スキーマ | EF Core Migration | **生 SQL (db/init, db/migration) を冪等適用** | 実装実態に合わせる |
@@ -37,7 +41,7 @@ flowchart LR
 ```
 
 - **Frontend** (`deploy-frontend.yml`): `main` push / 手動 → Nuxt 静的生成 → Firebase Hosting。
-- **Backend** (`deploy-backend.yml`): `main` push / 手動 → Docker build → GHCR push → OIDC で EC2 を解決 → SSH で `.env` 配置 + `docker compose up -d` + ヘルスチェック。
+- **Backend** (`deploy-backend.yml`): `main` push / 手動 → Docker build → GHCR push → (OIDC 任意で) EC2 解決 → SSH で `.env` 配置 + `docker compose up -d` (**既存 nginx-proxy に相乗り**) + ヘルスチェック。
 - **DB** (`db-migrate.yml`): **手動のみ**。OIDC で EC2 を踏み台に、使い捨て psql コンテナで RDS に init / migrate。
 - **CI** (`ci.yml`): PR / push で Backend `dotnet build` + Frontend `pnpm typecheck`。
 
@@ -49,18 +53,16 @@ flowchart LR
 
 - Docker Engine + `docker compose` (v2 plugin) を導入。
 - ユーザ (例 `ubuntu`) が `docker` を sudo なしで実行できること (`usermod -aG docker ubuntu`)。
+- **既存ホスト (jwilder/nginx-proxy + acme-companion 稼働中) に相乗りする前提** (§1.7)。Backend は
+  ホストポートを公開せず、共有ネットワーク経由で nginx-proxy からのみ到達する。
 - セキュリティグループ:
-  - **Inbound:** SSH (22) を GitHub Actions から許可。GitHub ランナーは固定 IP を持たないため、
-    実務では (a) 一時的に広めに許可、(b) Tailscale/SSM 等の踏み台、(c) self-hosted runner のいずれか。
-    最小構成としては運用ポリシーに応じて 22 を許可する。Backend 公開ポート (既定 8080、または
-    リバースプロキシ/ALB 経由 443) も業務 LAN からのアクセスに合わせて開ける。
-  - **Outbound:** `ghcr.io` (443)、RDS (5432)、Firebase/Google API (443)。
+  - **Inbound:** SSH (22) を GitHub Actions から到達可能に (簡易は `0.0.0.0/0` + 鍵のみ認証。
+    開けたくない場合は self-hosted runner)。HTTP/HTTPS (80/443) は既存 nginx-proxy が公開済み。
+    **Backend 専用ポートの公開は不要。**
+  - **Outbound:** `ghcr.io` (443)、RDS (5432)、Let's Encrypt / Google API (443)。
 - EBS ボリュームは暗号化を推奨 (`.env` に DB パスワード等が置かれるため)。
-- **TLS 終端は前提条件 (必須):** 本パイプラインは Backend を 8080 で **HTTP 公開**する。Frontend は
-  Firebase Hosting (HTTPS) 配信のため、API が HTTP のままだと **mixed content で全 API が失敗**し、
-  Firebase ID トークン (Authorization ヘッダ) が平文で流れる。本番では次のいずれかを必須とする:
-  (a) ALB/nginx + ACM 証明書で **HTTPS 終端**し `NUXT_PUBLIC_API_BASE` を `https://` にする、
-  (b) 業務 LAN / VPN 内に閉じ、SG で Backend ポートを社内 CIDR に限定する。
+- **TLS は自動:** nginx-proxy + acme-companion が `VIRTUAL_HOST` / `LETSENCRYPT_HOST` を見て
+  Let's Encrypt 証明書を自動発行・更新する (§1.7)。独自の ALB/証明書は不要。
 - `cpus` / `mem_limit` (コンテナのリソース上限) は EC2 サイズに応じて
   `deploy/ec2/docker-compose.prod.yml` に追加してよい (暴走時のホスト巻き込み防止)。
 
@@ -72,12 +74,15 @@ flowchart LR
   - **アプリ用** (`PROD_DB_CONNECTION` で使用): DML 権限のみ。`audit_logs` は INSERT のみ等。
   - **マイグレーション用** (`DB_ADMIN_*` で使用): DDL 権限あり (CREATE/ALTER TABLE)。
 
-### 1.3 AWS OIDC (GitHub Actions → AWS)
+### 1.3 AWS OIDC (GitHub Actions → AWS) — **任意 (固定 IP なら不要)**
+
+> **`EC2_HOST` を直接指定する運用では本節は丸ごとスキップできます** (固定 IP / EIP / DNS がある場合)。
+> `AWS_ROLE_ARN` secret が未設定なら、ワークフローの AWS 認証ステップは自動でスキップされます。
+> 動的 IP で `EC2_INSTANCE_ID` から解決したい場合のみ、以下を設定してください。
 
 1. IAM → ID プロバイダ → **GitHub OIDC** を追加 (`token.actions.githubusercontent.com`、audience `sts.amazonaws.com`)。
 2. IAM ロールを作成し、信頼ポリシーで本リポジトリ・ブランチに限定 (下記)。
-3. 許可ポリシーは **`ec2:DescribeInstances` のみ** (EC2 ホスト解決用)。`EC2_HOST` secret を直接指定する
-   運用なら本権限も不要だが、OIDC ステップ自体は残る。
+3. 許可ポリシーは **`ec2:DescribeInstances` のみ** (EC2 ホスト解決用)。
 
 **信頼ポリシー (trust policy):**
 ```json
@@ -139,6 +144,20 @@ flowchart LR
 - (再現性のため) `src/Frontend/pnpm-lock.yaml` をコミットしておくと CI が `--frozen-lockfile`
   相当の固定インストールにできる (現状は未コミットのため `--no-frozen-lockfile`)。
 
+### 1.7 既存 nginx-proxy への相乗り (この環境の肝)
+
+本番 EC2 では **jwilder/nginx-proxy + acme-companion** が稼働しており、コンテナに環境変数を
+付けて同じ docker ネットワークに繋ぐだけで、ルーティングと TLS が自動化される。Backend も
+兄弟アプリ (akebono-warehouse 等) と同じ流儀で相乗りする (`docker-compose.prod.yml`)。
+
+- 参加ネットワーク: `PROXY_NETWORK` (既定 `tsunaguba-dev-001`)。compose で `external: true` 参照。
+- Backend コンテナに付与する env (CI が `.env` 経由で注入):
+  - `VIRTUAL_HOST` = API ドメイン (例 `akebono-honshu-api.akebono.work`)
+  - `VIRTUAL_PORT=8080` / `VIRTUAL_PROTO=http`
+  - `LETSENCRYPT_HOST` = `VIRTUAL_HOST` と同じ / `LETSENCRYPT_EMAIL` (任意、未指定なら acme の DEFAULT_EMAIL)
+- 事前に **DNS A レコード** (`VIRTUAL_HOST` → EC2 公開 IP) を作成 (証明書発行に必須)。
+- ホストポートは公開しない。デプロイの health check はコンテナの health 状態で判定する。
+
 ---
 
 ## 2. 登録する Repository Secrets 一覧
@@ -147,17 +166,19 @@ flowchart LR
 
 | Secret 名 | 使うワークフロー | 例 / 形式 | 説明 |
 |---|---|---|---|
-| `AWS_ROLE_ARN` | backend, db | `arn:aws:iam::123…:role/akebono-gha` | OIDC で AssumeRole するロール ARN |
-| `AWS_REGION` | backend, db | `ap-northeast-1` | リージョン |
-| `EC2_INSTANCE_ID` | backend, db | `i-0abc…` | EC2 解決用 (EC2_HOST 未設定時) |
-| `EC2_HOST` *(任意)* | backend, db | `ec2-xx.compute.amazonaws.com` | 固定ホスト/EIP を使う場合の上書き |
+| `EC2_HOST` | backend, db | `57.180.167.243` | EC2 公開 IP/DNS。固定ならこれで **AWS 不要** |
 | `EC2_SSH_USER` | backend, db | `ubuntu` | SSH ユーザ |
-| `EC2_SSH_PRIVATE_KEY` | backend, db | (PEM 全文) | SSH 秘密鍵 |
-| `EC2_SSH_KNOWN_HOSTS` *(任意/推奨)* | backend, db | (`ssh-keyscan` 出力) | ホスト鍵ピン留め。未設定で TOFU |
+| `EC2_SSH_PRIVATE_KEY` | backend, db | (OpenSSH 秘密鍵 全文) | SSH 秘密鍵 |
+| `EC2_SSH_KNOWN_HOSTS` *(推奨)* | backend, db | (`ssh-keyscan` 出力) | ホスト鍵ピン留め。未設定で TOFU |
+| `API_VIRTUAL_HOST` | backend | `akebono-honshu-api.akebono.work` | nginx-proxy 用ドメイン (VIRTUAL_HOST / LETSENCRYPT_HOST) |
+| `LETSENCRYPT_EMAIL` *(任意)* | backend | `ops@example.co.jp` | 証明書通知先 (未設定なら acme DEFAULT_EMAIL) |
+| `PROXY_NETWORK` *(任意)* | backend | `tsunaguba-dev-001` | 相乗り先ネットワーク (既定値あり) |
+| `AWS_ROLE_ARN` *(任意)* | backend, db | `arn:aws:iam::123…:role/akebono-gha` | OIDC ロール。未設定なら AWS 認証スキップ |
+| `AWS_REGION` *(任意)* | backend, db | `ap-northeast-1` | OIDC 使用時のみ |
+| `EC2_INSTANCE_ID` *(任意)* | backend, db | `i-0abc…` | 動的 IP を OIDC で解決する場合のみ |
 | `PROD_DB_CONNECTION` | backend | `Host=…;Port=5432;Database=akebono_honshu;Username=…;Password=…` | アプリ用 Npgsql 接続文字列 |
 | `FIREBASE_PROJECT_ID` | backend, frontend | `akebono-honshu-prod` | Backend の Audience / Firebase deploy 先 |
 | `CORS_ORIGINS` | backend | `https://akebono-honshu-prod.web.app` | 許可オリジン (カンマ区切り) |
-| `BACKEND_HOST_PORT` *(任意)* | backend | `8080` | EC2 公開ポート (既定 8080) |
 | `IMAGE_STORAGE_PROVIDER` *(任意)* | backend | `Local` / `S3` | 既定 `Local` |
 | `S3_BUCKET_NAME` *(任意)* | backend | `akebono-honshu-images-prod` | S3 運用時のみ |
 | `DB_HOST` | db | `akebono1.xxx.rds.amazonaws.com` | RDS エンドポイント |
