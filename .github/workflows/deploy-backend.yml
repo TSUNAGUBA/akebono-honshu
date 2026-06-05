@@ -76,16 +76,20 @@ jobs:
       contents: read
       packages: read           # EC2 への GHCR pull 用トークン (GITHUB_TOKEN)
       id-token: write          # AWS OIDC AssumeRole 用
+    # secrets は if: で直接参照できない (GitHub Actions 仕様)。env に展開して presence 判定する。
+    env:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
     steps:
       - uses: actions/checkout@v4
 
       # EC2_HOST を直接指定する運用では AWS は不要 (AWS_ROLE_ARN 未設定ならスキップ)。
       - name: Configure AWS credentials (OIDC)
-        if: ${{ secrets.AWS_ROLE_ARN != '' }}
+        if: ${{ env.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Connect to EC2
         id: ec2

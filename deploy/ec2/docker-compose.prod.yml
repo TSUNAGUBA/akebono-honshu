@@ -17,6 +17,10 @@ services:
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE must be set in .env}
     container_name: akebono-honshu-api
     restart: unless-stopped
+    # 共有ホスト相乗りのためリソース上限を設定 (.env で調整可)。
+    # 暴走時に同居アプリ (nginx-proxy / 兄弟API) を巻き込まないための保護。
+    mem_limit: ${BACKEND_MEM_LIMIT:-1024m}
+    cpus: ${BACKEND_CPUS:-1.0}
     # .env の全キーをコンテナ環境変数として注入:
     #  - ASP.NET Core 設定 (ConnectionStrings__Postgres / Firebase__ProjectId / Cors__Origins ...)
     #  - nginx-proxy 連携 (VIRTUAL_HOST / VIRTUAL_PORT / VIRTUAL_PROTO / LETSENCRYPT_HOST / LETSENCRYPT_EMAIL)

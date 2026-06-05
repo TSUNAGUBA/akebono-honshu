@@ -3,6 +3,9 @@
 > この手順書は **GitHub Actions で本番デプロイできる状態にする**ための、上から順に実行すれば完了する一本道の手順です。
 > コマンドは **Windows PowerShell** 用です。`<...>` の部分だけご自身の値に置き換えてください。
 > 不明点はコマンド結果を共有いただければ確認します。
+>
+> ⚠️ 本ファイルには RDS エンドポイント・EC2 IP 等の**環境識別子**が含まれます（パスワード等の秘密値は含みません）。
+> **リポジトリは private 前提**です。public 化する場合は識別子を伏せるか、本手順書を非公開チャネルで配布してください。
 
 ## この環境の確定値（置き換え済み）
 
@@ -190,9 +193,14 @@ gh secret set NUXT_PUBLIC_API_BASE             --repo $repo --body "https://akeb
 gh secret set NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN --repo $repo --body "akebono-honshu-e388e.firebaseapp.com"
 gh secret set NUXT_PUBLIC_FIREBASE_PROJECT_ID  --repo $repo --body "akebono-honshu-e388e"
 
-# 各自の値（プロンプトで貼り付け or 直接 body 指定）
-gh secret set DB_ADMIN_PASSWORD                --repo $repo --body "<MIGRATOR_PW>"
-gh secret set PROD_DB_CONNECTION               --repo $repo --body "Host=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=<APP_PW>"
+# パスワードを含む値は Read-Host で入力する（PowerShell 履歴にはコマンド本文＝変数名のみ残り、
+# 値は履歴に残りません。より厳密にしたい場合は履歴に残らない「方法 B: Web UI」を使用）。
+$migPw = Read-Host "akebono_migrator のパスワード"
+gh secret set DB_ADMIN_PASSWORD  --repo $repo --body $migPw
+$appPw = Read-Host "akebono_app のパスワード"
+gh secret set PROD_DB_CONNECTION --repo $repo --body "Host=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=$appPw"
+
+# Firebase Web config は公開情報のため --body で可
 gh secret set NUXT_PUBLIC_FIREBASE_API_KEY          --repo $repo --body "<apiKey>"
 gh secret set NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET   --repo $repo --body "<storageBucket>"
 gh secret set NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID --repo $repo --body "<messagingSenderId>"
@@ -237,22 +245,18 @@ GitHub の **Actions** タブから手動実行します。
 ### 6-3. ログインユーザの紐付け（owner に Firebase UID と権限を付与）
 EC2 に SSH し、手順 4-2 でコピーした **Firebase UID** を使って実行（`<MIGRATOR_PW>` / `<FIREBASE_UID>` を置換）:
 
+> `owner` 行には **init で既に全 4 権限が付与済み**です（`db/init/02-masters.sql`）。
+> ここでの主目的は **Firebase UID の紐付け**です。
+
 ```bash
 docker run --rm -e PGPASSWORD='<MIGRATOR_PW>' postgres:16-alpine psql \
   -h tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com \
   -U akebono_migrator -d akebono_honshu -c "
-UPDATE users SET
-  firebase_uid = '<FIREBASE_UID>',
-  product_ledger_permission = 1,
-  purchase_order_create_permission = 1,
-  purchase_order_info_permission = 1,
-  process_record_permission = 1,
-  updated_at = NOW()
-WHERE login_id = 'owner';"
+UPDATE users SET firebase_uid = '<FIREBASE_UID>', updated_at = NOW() WHERE login_id = 'owner';"
 ```
-（`1` = フル権限。`owner` 行に全 4 権限を付与します。）
 
-（任意・推奨）監査ログを追記専用にする（アプリの更新/削除を禁止）:
+**監査ログを追記専用にする（改竄防止・必須）** — アプリユーザの UPDATE/DELETE を剥奪します
+（`db/init/01-schema.sql` の設計: audit_logs は INSERT 専用）:
 ```bash
 docker run --rm -e PGPASSWORD='<MIGRATOR_PW>' postgres:16-alpine psql \
   -h tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com \
@@ -300,3 +304,6 @@ curl.exe https://akebono-honshu-api.akebono.work/health
 ## Appendix: self-hosted runner（SSH を開けたくない場合・任意）
 
 EC2 上に GitHub Actions の self-hosted runner を置くと、SSH(22) を開けずに「EC2 自身が」デプロイを実行できます（より安全）。導入する場合は別途ご案内します（`runs-on: self-hosted` への切替が必要なため、希望時に対応します）。
+
+> self-hosted runner 採用時は、GitHub ホストランナーと違いホストが永続するため、デプロイ後に
+> `~/.ssh/deploy_key` 等の一時鍵・機密が残らないようクリーンアップ（`if: always()` での削除）を併せて入れます。

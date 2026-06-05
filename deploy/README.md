@@ -33,9 +33,9 @@ flowchart LR
     end
     FE -->|nuxi generate + firebase deploy| FH[Firebase Hosting]
     BE -->|docker build + push| GHCR[(GHCR image)]
-    BE -->|OIDC: ec2 describe + SSH| EC2[EC2 ubuntu / docker compose]
+    BE -->|（OIDC任意）SSH| EC2[EC2 ubuntu / nginx-proxy 相乗り]
     GHCR -->|pull| EC2
-    DB -->|OIDC + SSH 経由 psql| EC2
+    DB -->|SSH 経由 psql| EC2
     EC2 -->|5432| RDS[(RDS PostgreSQL)]
     EC2 -->|HTTPS| FH
 ```
@@ -63,8 +63,9 @@ flowchart LR
 - EBS ボリュームは暗号化を推奨 (`.env` に DB パスワード等が置かれるため)。
 - **TLS は自動:** nginx-proxy + acme-companion が `VIRTUAL_HOST` / `LETSENCRYPT_HOST` を見て
   Let's Encrypt 証明書を自動発行・更新する (§1.7)。独自の ALB/証明書は不要。
-- `cpus` / `mem_limit` (コンテナのリソース上限) は EC2 サイズに応じて
-  `deploy/ec2/docker-compose.prod.yml` に追加してよい (暴走時のホスト巻き込み防止)。
+- **リソース上限 (共有ホストで重要):** compose に `mem_limit` / `cpus` を設定済 (既定 `1024m` / `1.0`、
+  `.env` の `BACKEND_MEM_LIMIT` / `BACKEND_CPUS` で調整可)。暴走時に同居アプリ (nginx-proxy / 兄弟API)
+  を巻き込まないための保護。EC2 サイズに合わせて調整する。
 
 ### 1.2 EC2 → RDS 疎通
 
@@ -242,7 +243,7 @@ flowchart LR
 - **本番 Swagger 無効化:** `ASPNETCORE_ENVIRONMENT=Production` 時は `/swagger` を出さない (Program.cs)。
 - **ロギング抑制:** 本番 `.env` で EF Core SQL ログ等を `Warning` に抑制 (PII/SQL 値漏洩・コスト対策)。
 - **既存データ保護:** DB init は既存 DB で中止、migrate は台帳で冪等 (原則 2 / 7)。
-- **EBS 暗号化 / SG 最小化** を推奨。Backend を 8080 で直接公開する場合は業務 LAN/VPN に限定する。
+- **EBS 暗号化 / SG 最小化** を推奨。Backend のホストポートは公開せず、到達は既存 nginx-proxy 経由のみ (§1.7)。
 - **SSH ホスト鍵:** `EC2_SSH_KNOWN_HOSTS` を設定して MITM 検証を有効化する (§1.4)。
 - **デプロイ失敗通知:** 既定では GitHub の Actions 失敗通知 (メール) で検知する。Slack 等への能動通知が
   必要な場合は通知先を決めて各 deploy ワークフローに `if: failure()` ステップを追加する
