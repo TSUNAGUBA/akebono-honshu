@@ -79,6 +79,12 @@ docker run --rm -it postgres:16-alpine psql \
 CREATE ROLE akebono_migrator LOGIN PASSWORD '__MIGRATOR_PW__';
 CREATE ROLE akebono_app      LOGIN PASSWORD '__APP_PW__';
 
+-- 【RDS 必須】マスターは「真の superuser」ではないため、別ロール所有の DB を作るには
+-- 先にそのロールのメンバーになる必要がある。これが無いと CREATE/ALTER ... OWNER が
+-- `must be member of role` で失敗し、DB が master 所有のまま → init の ALTER DATABASE で
+-- `must be owner of database` エラーになる。
+GRANT akebono_migrator TO CURRENT_USER;
+
 -- DB を作成。所有者を migrator に（init スクリプトの ALTER DATABASE 実行に必要）
 CREATE DATABASE akebono_honshu OWNER akebono_migrator;
 
@@ -91,6 +97,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE akebono_migrator IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO akebono_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE akebono_migrator IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO akebono_app;
+
+-- 検証: 両方とも akebono_migrator であること（master のままなら GRANT が効いていない）
+SELECT 'DB owner=' || pg_catalog.pg_get_userbyid(datdba) FROM pg_database WHERE datname='akebono_honshu';
+SELECT 'schema public owner=' || pg_catalog.pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public';
 
 \q
 ```
@@ -158,7 +168,7 @@ unset PGPASSWORD
 | `EC2_SSH_KNOWN_HOSTS` | `C:\key\known_hosts_akebono.txt` の中身（手順 1-2） |
 | `API_VIRTUAL_HOST` | `akebono-honshu-api.akebono.work` |
 | `LETSENCRYPT_EMAIL` | `yamashita@tsunaguba.co.jp` |
-| `PROD_DB_CONNECTION` | `Host=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=<APP_PW>` |
+| `PROD_DB_CONNECTION` | `Host=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=<APP_PW>;SSL Mode=Require;Trust Server Certificate=true` |
 | `FIREBASE_PROJECT_ID` | `akebono-honshu-e388e` |
 | `CORS_ORIGINS` | `https://akebono-honshu-e388e.web.app` |
 | `DB_HOST` | `tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com` |
@@ -200,7 +210,7 @@ gh secret set NUXT_PUBLIC_FIREBASE_PROJECT_ID  --repo $repo --body "akebono-hons
 $migPw = Read-Host "akebono_migrator のパスワード"
 gh secret set DB_ADMIN_PASSWORD  --repo $repo --body $migPw
 $appPw = Read-Host "akebono_app のパスワード"
-gh secret set PROD_DB_CONNECTION --repo $repo --body "Host=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=$appPw"
+gh secret set PROD_DB_CONNECTION --repo $repo --body "Host=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=$appPw;SSL Mode=Require;Trust Server Certificate=true"
 
 # Firebase Web config は公開情報のため --body で可
 gh secret set NUXT_PUBLIC_FIREBASE_API_KEY          --repo $repo --body "<apiKey>"
