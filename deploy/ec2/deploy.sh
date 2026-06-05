@@ -11,8 +11,8 @@
 #   - GHCR_USER        (GHCR ログインユーザ = github.actor)
 #
 # 設計:
-#   - 原則 4 (非ブロッキング) ではなく「デプロイは失敗を明確に伝える」方針。
-#     health check 失敗時は非 0 終了し、CI を赤にしてオペレーターへ通知する。
+#   - health check (主要フロー) は fail-fast: 失敗時は非 0 終了し CI を赤にして通知する。
+#   - 補助処理 (image prune / docker logout) は `|| true` で非ブロッキング化 (原則 4 遵守)。
 #   - トークンは login 後にファイル削除 + 終了時 docker logout で EC2 に残さない。
 # ===========================================================================
 set -euo pipefail

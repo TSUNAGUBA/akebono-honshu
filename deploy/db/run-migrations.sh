@@ -75,8 +75,9 @@ users_exists() {
   [ "$(psql_run -tA -c "SELECT to_regclass('public.users') IS NOT NULL;")" = "t" ]
 }
 
-is_applied() {
-  [ "$(psql_run -tA -c "SELECT count(*) FROM schema_migrations WHERE filename = '$1';")" = "1" ]
+# 適用済みなら台帳の checksum を返す。未適用なら空文字。
+applied_checksum() {
+  psql_run -tA -c "SELECT checksum FROM schema_migrations WHERE filename = '$1';"
 }
 
 record_applied() {
@@ -85,6 +86,11 @@ record_applied() {
 }
 
 checksum() { sha256sum "$1" | awk '{print $1}'; }
+
+# DB 接続前提チェック。set -e 下で失敗すれば即 fail-fast し、後続の users_exists 等が
+# 接続失敗を「テーブル無し」と誤判定して保護ロジックを素通りするのを防ぐ (reviewer 指摘)。
+echo "==> DB 接続確認 (${DB_HOST}:${DB_PORT}/${DB_NAME})"
+psql_run -q -c "SELECT 1;" >/dev/null
 
 case "${ACTION}" in
   init)
@@ -121,14 +127,21 @@ case "${ACTION}" in
     while IFS= read -r f; do
       [ -z "${f}" ] && continue
       bn="$(basename "${f}")"
-      if is_applied "${bn}"; then
-        echo "   skip (applied): ${bn}"
+      cur="$(checksum "${f}")"
+      stored="$(applied_checksum "${bn}")"
+      if [ -n "${stored}" ]; then
+        # 適用済み。前進専用方針のため再適用はしないが、内容が変化していれば警告 (ドリフト検知)。
+        if [ "${stored}" != "${cur}" ]; then
+          echo "::warning::${bn} は適用済みだが内容が台帳 checksum と不一致 (stored=${stored:0:12}.. current=${cur:0:12}..)。前進専用のため skip。要確認。"
+        else
+          echo "   skip (applied): ${bn}"
+        fi
         skipped=$((skipped + 1))
         continue
       fi
       echo "   applying: ${bn}"
       psql_run -f "/${f}"
-      record_applied "${bn}" "$(checksum "${f}")"
+      record_applied "${bn}" "${cur}"
       applied=$((applied + 1))
     done < <(schema_migration_files)
     echo "==> migrate 完了 (applied=${applied}, skipped=${skipped})"

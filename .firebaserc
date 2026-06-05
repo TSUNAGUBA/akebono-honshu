@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "akebono-honshu"
+    "dev": "akebono-honshu",
+    "prod": "akebono-honshu-prod"
   }
 }

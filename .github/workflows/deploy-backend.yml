@@ -89,6 +89,7 @@ jobs:
           ec2-instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           ssh-user: ${{ secrets.EC2_SSH_USER }}
           ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          ssh-known-hosts: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
 
       - name: Render production .env
         env:
@@ -152,3 +153,9 @@ jobs:
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -o BatchMode=yes "${SSH_USER}@${HOST}" \
             "cd ~/akebono-deploy && GHCR_USER='${GHCR_USER}' bash deploy.sh"
+
+      - name: Cleanup local secret files
+        if: always()
+        # ランナーのチェックアウト配下に生成した機密ファイルを確実に削除する
+        # (db-migrate.yml と同じパターン、原則3/5)。
+        run: rm -f deploy/ec2/.env deploy/ec2/.ghcr_token

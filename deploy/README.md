@@ -56,7 +56,13 @@ flowchart LR
     リバースプロキシ/ALB 経由 443) も業務 LAN からのアクセスに合わせて開ける。
   - **Outbound:** `ghcr.io` (443)、RDS (5432)、Firebase/Google API (443)。
 - EBS ボリュームは暗号化を推奨 (`.env` に DB パスワード等が置かれるため)。
-- TLS 終端・リバースプロキシ (nginx / ALB) はオペレーター責務 (本パイプラインは 8080 で HTTP 公開)。
+- **TLS 終端は前提条件 (必須):** 本パイプラインは Backend を 8080 で **HTTP 公開**する。Frontend は
+  Firebase Hosting (HTTPS) 配信のため、API が HTTP のままだと **mixed content で全 API が失敗**し、
+  Firebase ID トークン (Authorization ヘッダ) が平文で流れる。本番では次のいずれかを必須とする:
+  (a) ALB/nginx + ACM 証明書で **HTTPS 終端**し `NUXT_PUBLIC_API_BASE` を `https://` にする、
+  (b) 業務 LAN / VPN 内に閉じ、SG で Backend ポートを社内 CIDR に限定する。
+- `cpus` / `mem_limit` (コンテナのリソース上限) は EC2 サイズに応じて
+  `deploy/ec2/docker-compose.prod.yml` に追加してよい (暴走時のホスト巻き込み防止)。
 
 ### 1.2 EC2 → RDS 疎通
 
@@ -107,11 +113,15 @@ flowchart LR
 > **EC2 インスタンスプロファイル** に最小権限を付与する (migration-plan §4.2.1 / §4.2.2 の IAM サンプル参照)。
 > 本パイプラインの既定は `ImageStorage__Provider=Local` / `Secrets__Provider=Environment` のため不要。
 
-### 1.4 EC2 SSH 鍵
+### 1.4 EC2 SSH 鍵 / ホスト鍵
 
 - デプロイ用のキーペアを用意し、**公開鍵を EC2 の `~/.ssh/authorized_keys`** に登録。
 - **秘密鍵を repository secret `EC2_SSH_PRIVATE_KEY`** に登録 (改行込みでそのまま貼付)。
 - 鍵は定期ローテーション推奨。
+- **(推奨) ホスト鍵のピン留め:** `EC2_SSH_KNOWN_HOSTS` secret に EC2 の公開ホスト鍵を登録すると、
+  デプロイ時に MITM 検証付きで接続する。取得は `ssh-keyscan <EC2ホスト>` の出力をそのまま貼付。
+  **未設定時は `ssh-keyscan` の TOFU** (初回信頼) になり、経路上の攻撃者が偽鍵を返しても検知できない。
+  DB パスワード入りの `.env` を scp する宛先のため、本番では設定を強く推奨。
 
 ### 1.5 GHCR (GitHub Container Registry)
 
@@ -143,6 +153,7 @@ flowchart LR
 | `EC2_HOST` *(任意)* | backend, db | `ec2-xx.compute.amazonaws.com` | 固定ホスト/EIP を使う場合の上書き |
 | `EC2_SSH_USER` | backend, db | `ubuntu` | SSH ユーザ |
 | `EC2_SSH_PRIVATE_KEY` | backend, db | (PEM 全文) | SSH 秘密鍵 |
+| `EC2_SSH_KNOWN_HOSTS` *(任意/推奨)* | backend, db | (`ssh-keyscan` 出力) | ホスト鍵ピン留め。未設定で TOFU |
 | `PROD_DB_CONNECTION` | backend | `Host=…;Port=5432;Database=akebono_honshu;Username=…;Password=…` | アプリ用 Npgsql 接続文字列 |
 | `FIREBASE_PROJECT_ID` | backend, frontend | `akebono-honshu-prod` | Backend の Audience / Firebase deploy 先 |
 | `CORS_ORIGINS` | backend | `https://akebono-honshu-prod.web.app` | 許可オリジン (カンマ区切り) |
@@ -197,6 +208,10 @@ flowchart LR
 | Frontend | `firebase hosting:rollback` (Firebase Console / CLI) |
 | DB | 前進専用 (forward-only)。誤適用時は RDS の PITR で復旧。`schema_migrations` 台帳と実 DB の整合を確認 |
 
+> **health check 失敗時:** `deploy.sh` は新コンテナ起動後に `/health` を検査し、失敗すると非 0 終了
+> (CI が赤)。単一 EC2 構成では新版が unhealthy のままダウンタイムになるため、**上表 Backend の
+> ロールバック (旧 `sha-<commit>` タグへ) を直ちに実行**すること。自動ロールバックは未実装 (MVP 範囲)。
+
 ---
 
 ## 5. セキュリティ留意点 (システム監査観点)
@@ -207,3 +222,13 @@ flowchart LR
 - **ロギング抑制:** 本番 `.env` で EF Core SQL ログ等を `Warning` に抑制 (PII/SQL 値漏洩・コスト対策)。
 - **既存データ保護:** DB init は既存 DB で中止、migrate は台帳で冪等 (原則 2 / 7)。
 - **EBS 暗号化 / SG 最小化** を推奨。Backend を 8080 で直接公開する場合は業務 LAN/VPN に限定する。
+- **SSH ホスト鍵:** `EC2_SSH_KNOWN_HOSTS` を設定して MITM 検証を有効化する (§1.4)。
+- **デプロイ失敗通知:** 既定では GitHub の Actions 失敗通知 (メール) で検知する。Slack 等への能動通知が
+  必要な場合は通知先を決めて各 deploy ワークフローに `if: failure()` ステップを追加する
+  (migration-plan §5.5 のヒアリング事項)。
+- **OIDC は main 限定:** 信頼ポリシーが `refs/heads/main` 限定のため、`workflow_dispatch` を **main 以外の
+  ブランチで手動起動すると OIDC 認証が失敗**する (意図的な安全側挙動)。
+- **ホスト再起動後:** `restart: unless-stopped` で通常はローカルイメージから自動復帰するが、イメージが
+  ローカルから消えている場合は private イメージを再 pull できないため `deploy-backend` を再実行する。
+- **サプライチェーン:** 再現性・改ざん耐性のため `src/Frontend/pnpm-lock.yaml` のコミット (§1.6) を推奨。
+  重要 Actions の commit SHA ピン留め / `postgres:16-alpine` のダイジェスト固定も将来的に検討。

@@ -29,6 +29,10 @@ inputs:
   ssh-private-key:
     description: 'SSH 秘密鍵 (repository secret)'
     required: true
+  ssh-known-hosts:
+    description: '固定 known_hosts (任意、推奨)。指定すれば MITM 検証あり。未指定時は ssh-keyscan TOFU。'
+    required: false
+    default: ''
 
 outputs:
   host:
@@ -70,6 +74,7 @@ runs:
       shell: bash
       env:
         SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        KNOWN_HOSTS: ${{ inputs.ssh-known-hosts }}
         RESOLVED_HOST: ${{ steps.resolve.outputs.host }}
       run: |
         set -euo pipefail
@@ -77,9 +82,15 @@ runs:
         chmod 700 ~/.ssh
         printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
-        # known_hosts に対象ホストの鍵を登録 (TOFU)。失敗してもデプロイ全体は
-        # 後続 SSH で検知されるため、ここでは握りつぶさず明示的に追記する。
-        ssh-keyscan -T 20 "${RESOLVED_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || {
-          echo "::warning::ssh-keyscan が ${RESOLVED_HOST} の鍵取得に失敗しました (SSH 接続時に再評価されます)";
-        }
+        if [ -n "${KNOWN_HOSTS}" ]; then
+          # 固定 known_hosts を使用 (MITM 検証あり、推奨)。
+          printf '%s\n' "${KNOWN_HOSTS}" >> ~/.ssh/known_hosts
+          echo "EC2_SSH_KNOWN_HOSTS による host key 検証を有効化しました"
+        else
+          # フォールバック: ssh-keyscan TOFU。攻撃者が経路上で偽鍵を返すと検知できないため、
+          # 本番は EC2_SSH_KNOWN_HOSTS の設定を推奨 (deploy/README.md §1.4)。
+          echo "::warning::EC2_SSH_KNOWN_HOSTS 未設定。ssh-keyscan(TOFU) で接続します (MITM 検証なし)。本番は固定 known_hosts を推奨。"
+          ssh-keyscan -T 20 "${RESOLVED_HOST}" >> ~/.ssh/known_hosts 2>/dev/null \
+            || echo "::warning::ssh-keyscan が ${RESOLVED_HOST} の鍵取得に失敗しました"
+        fi
         chmod 644 ~/.ssh/known_hosts 2>/dev/null || true

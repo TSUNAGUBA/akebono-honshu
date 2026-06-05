@@ -47,6 +47,7 @@ jobs:
           ec2-instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           ssh-user: ${{ secrets.EC2_SSH_USER }}
           ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          ssh-known-hosts: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
 
       - name: Render .dbenv (DB 接続情報)
         env:
