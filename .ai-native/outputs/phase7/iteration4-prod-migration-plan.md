@@ -299,7 +299,7 @@ flowchart LR
 | **Claude** | `nuxt.config.ts` 修正 (`ssr: false` 廃止して `<ClientOnly>` ラップ済、`nuxi generate` で静的サイト生成設定) |
 | **Claude** | `firebase.json` + `.firebaserc` 作成 (Hosting 設定、SPA リダイレクト rewrite) |
 | **オペレーター** | `firebase login` + `firebase init hosting` 確認 (project 紐付け) |
-| **オペレーター** | 初回 `firebase deploy --only hosting` (Claude が手順書化) |
+| **オペレーター** | 初回 `firebase deploy --only hosting --project <prod-project-id>` (`.firebaserc` は dev/prod エイリアスのため `--project` 明示。手順 SoT は `deploy/README.md`) |
 | **オペレーター** | CORS 設定 | App Runner Backend に Firebase Hosting のドメイン (`*.web.app` 等) を Allow Origin に追加 |
 
 #### 4.2.5 動作確認
