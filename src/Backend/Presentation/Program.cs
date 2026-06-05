@@ -14,10 +14,10 @@ using Microsoft.OpenApi.Models;
 // .NET Core / .NET 5+ は既定で限定的なエンコーディングのみ対応のため必須。
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-// (Iter 4 段階 B 後続レビュー指摘 SA P1-2 で削除)
-// 旧: AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
-// SystemTime.Now が常に Kind=Unspecified を返す設計に統一できているため Legacy switch は不要。
-// 残すと将来 timestamptz 追加時の silent conversion bug の温床になる (レビュー指摘)。
+// Npgsql レガシータイムスタンプ挙動を有効化 (本番 auth/sync で発覚した必須設定)。
+// JST-naive 設計: SystemTime.Now=Kind=Unspecified、全 timestamp 列は timestamp without time zone。
+// 無効だと Npgsql 既定で DateTime->timestamptz となり Kind=Unspecified の書込が失敗するため必須。
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
