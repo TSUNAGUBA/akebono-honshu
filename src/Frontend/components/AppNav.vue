@@ -44,6 +44,27 @@ const onLogout = async () => {
             発注書
           </NuxtLink>
           <NuxtLink
+            to="/production/status"
+            class="rounded-md px-3 py-1.5 text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+            active-class="bg-blue-100 font-semibold text-blue-700"
+          >
+            生産手配
+          </NuxtLink>
+          <NuxtLink
+            to="/production/instructions"
+            class="rounded-md px-3 py-1.5 text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+            active-class="bg-blue-100 font-semibold text-blue-700"
+          >
+            生産指示書
+          </NuxtLink>
+          <NuxtLink
+            to="/production/material-orders"
+            class="rounded-md px-3 py-1.5 text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+            active-class="bg-blue-100 font-semibold text-blue-700"
+          >
+            素材発注書
+          </NuxtLink>
+          <NuxtLink
             v-if="user?.processRecordPermission === 1"
             to="/admin/legacy-import"
             class="rounded-md px-3 py-1.5 text-gray-700 hover:bg-blue-50 hover:text-blue-700"
