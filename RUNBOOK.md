@@ -176,7 +176,7 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 ##### Step 2. スキーマ初期化 (db/init/*.sql を番号順に投入)
 
 ```bash
-# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..05)
+# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..06)
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
@@ -192,6 +192,10 @@ psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=re
 # 生産管理拡張 (BOM/生産指示書/素材発注書)。Iter 5 で追加
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/05-production.sql
+
+# リアルなデモ業務データ一式 (商品/付属情報/発注/生産)。冪等 (ON CONFLICT) なので再実行可
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/06-demo-data.sql
 
 # 動作確認
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
@@ -374,9 +378,9 @@ pnpm dev
 
 ### 3.2 Iteration 2 追加シナリオ (商品マスタ P-01〜P-06)
 
-> **前提:** `db/init/03-products.sql` を pgAdmin4 で実行して商品関連 4 テーブル + Seed 投入。Backend 再起動でローカル画像保存先 `wwwroot/uploads/product-images/` が自動作成される。
+> **前提:** `db/init/03-products.sql` を pgAdmin4 で実行して商品関連 4 テーブル + Seed 投入。さらに `db/init/06-demo-data.sql` でリアルなデモ商品・仕入単価・BOM が投入される（冪等、再実行可）。Backend 再起動でローカル画像保存先 `wwwroot/uploads/product-images/` が自動作成される。
 
-1. **商品企画一覧 (P-04):** `http://localhost:3000/products` → デモ商品 春夏ベーシック が表示される
+1. **商品企画一覧 (P-04):** `http://localhost:3000/products` → 商品企画が一覧表示される（`06-demo-data.sql` 投入時は「婦人コンフォートサンダル」等 8 企画・49 SKU）
    - テーブル / カード ボタンで切替 (lg 以上 5 列、md 3 列、sm 2 列)
    - カード表示で代表画像 (`primary_image_s3_key`) が表示される (画像未登録時はプレースホルダー)
 2. **商品新規ウィザード (P-01〜P-03):** 商品一覧 (`/products`) 右上「+ 新規商品ウィザード」→ 4 セクションフォームで一括登録
@@ -402,7 +406,7 @@ pnpm dev
 
 > **前提:** `db/init/04-orders.sql` を pgAdmin4 で実行して発注関連 3 テーブル + Seed 投入。Backend 再起動で ClosedXML 0.105.0 が NuGet 復元される。
 
-1. **発注書一覧 (O-03):** `http://localhost:3000/orders` → Seed `26-00001` が「未出力」バッジで表示
+1. **発注書一覧 (O-03):** `http://localhost:3000/orders` → 発注書が一覧表示される（`26-00001` ほか、`06-demo-data.sql` 投入時は未出力／出力済（`S00021` 等）／中止が混在）
 2. **新規発注書 (O-01):** ホーム（ポータル）の「発注」カード → `/orders` →「+ 新規発注書」→ ヘッダ + 明細 + 連絡文章テンプレ複写 (O-07) → 登録で `mgmt_no` 自動採番
 3. **詳細・編集 (O-04、F-16):** 行クリック → 詳細画面で「編集」→ 数量/単価変更 → **編集理由 5 値 select 必須** + メモ任意 → 保存で `audit_logs.note` に `edit_reason=quantity` 記録
 4. **Excel ダウンロード (O-06、MVP クリティカルパス):**
