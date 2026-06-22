@@ -209,7 +209,7 @@ flowchart LR
 
 ### 3.2 DB 初期化 / マイグレーション (手動)
 1. **初回のみ:** Actions → *DB Init / Migrate (RDS)* → Run workflow → `action = init`。
-   - 空 DB に `db/init/01..04` を投入し、現行マイグレーションを baseline 記録する。
+   - 空 DB に `db/init/*.sql` (01..05) を番号順に投入し、現行マイグレーションを baseline 記録する。
    - 既に `public.users` がある DB では **安全のため中止**する (データ保護)。
 2. **以後のスキーマ変更:** `db/migration/` に `mig-3-*` 以外の `*.sql` を追加 → `action = migrate`。
    - 台帳 (`schema_migrations`) に無いものだけを順に適用する (再実行で二重適用しない)。

@@ -18,6 +18,10 @@
 --   取込先の全 DDL は CREATE ... IF NOT EXISTS / CREATE INDEX IF NOT EXISTS /
 --   INSERT ... ON CONFLICT DO NOTHING で冪等 (原則2)。再適用しても既存データ・
 --   既存26テーブルを破壊しない (原則7、追加のみ)。
+--   注: schema_migrations 台帳が記録する checksum は本ラッパーファイルの内容に対する
+--   もの。取込先 05-production.sql を後から書き換えても本ファイルの checksum は不変で
+--   ドリフト検知に出ない (前進専用方針のため実害なし)。スキーマの後続変更は新しい
+--   マイグレーションファイルを追加して対応すること。
 --
 -- 適用方法 (自動・推奨):
 --   GitHub Actions「DB Init / Migrate (RDS)」を action=migrate で実行する。

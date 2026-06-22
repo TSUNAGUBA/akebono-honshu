@@ -6,6 +6,12 @@
 > **戦略:** `docs/migration/mig-3-strategy.md` を先に読むこと。設計判断 5 件は
 > ユーザ承認済み (2026-05-20)。
 
+> **本書の対象範囲:** 本書は **MIG-3（既存 CSV データ取込）専用**の手順書です。
+> スキーマ系マイグレーション（`iter4-*` / `iter5-*` 等、`mig-3-*` 以外の `*.sql`）は
+> GitHub Actions「DB Init / Migrate (RDS)」を `action=migrate` で実行すれば
+> `run-migrations.sh` が `schema_migrations` 台帳に基づき自動適用します
+> （前進専用・二重適用防止）。手順は `deploy/README.md` §3.2 を参照。
+
 ---
 
 ## 推奨: 画面から取込 (1 操作)
