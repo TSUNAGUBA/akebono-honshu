@@ -301,6 +301,7 @@ curl.exe https://akebono-honshu-api.akebono.work/health
 
 - **コード変更**: `main` に push すると、変更箇所に応じて backend / frontend が自動デプロイされます。手動は Actions タブから。
 - **スキーマ変更**: `db/migration/` に `mig-3-*` 以外の `*.sql` を追加 → `DB Init / Migrate` を `action=migrate` で実行（適用済みは自動 skip）。
+- **デモ業務データの反映（既存 DB）**: 稼働中 DB は `init` が中止されるため、リアルなデモデータ（商品・付属情報・発注・生産）は `db/migration/iter6-demo-data.sql`（`db/init/06-demo-data.sql` を取り込む、冪等）が `action=migrate` で適用されます。
 - **MIG-3（既存 CSV 取込）**: 画面 `/admin/legacy-import` から実施（このワークフローの対象外）。
 
 ---
