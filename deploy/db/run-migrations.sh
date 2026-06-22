@@ -50,8 +50,13 @@ if [ ! -d db/init ] || [ ! -d db/migration ]; then
 fi
 
 # 使い捨て psql コンテナ。db/ を read-only マウントし、PG* で接続情報を渡す。
+# 重要: -i は付けない。本関数は `while IFS= read -r f; do ... done < <(...)` ループの
+# 内側から呼ばれる。`docker run -i` はホスト stdin をコンテナへ接続し、psql が読まなくても
+# docker の stdin 転送がループの未処理入力 (次の移行ファイル行) を消費してしまう。結果、
+# 2 件目以降のマイグレーション (例: iter5) が読まれず EOF になり適用されない。
+# psql はここでは -c / -f file のみ使用し stdin を必要としないため -i は不要。
 psql_run() {
-  docker run --rm -i \
+  docker run --rm \
     -e PGPASSWORD="${DB_ADMIN_PASSWORD}" \
     -e PGHOST="${DB_HOST}" -e PGPORT="${DB_PORT}" \
     -e PGUSER="${DB_ADMIN_USER}" -e PGDATABASE="${DB_NAME}" \
