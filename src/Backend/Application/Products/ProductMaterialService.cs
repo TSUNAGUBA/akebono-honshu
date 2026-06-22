@@ -54,6 +54,13 @@ public class ProductMaterialService(IAkebonoDbContext db, IAuditLogger audit)
         if (dupKey is not null)
             throw new InvalidOperationException("同一部位に同一素材が重複しています (BOM-002)");
 
+        // FK 存在検証 (MaterialOrderService.CreateAsync と対称。移行データ等の materialId=0/不在を
+        // DB の FK 制約違反 500 ではなく 422 で弾く)
+        var materialIds = req.Materials.Select(m => m.MaterialId).Distinct().ToList();
+        var existCount = await db.Materials.CountAsync(m => materialIds.Contains(m.Id), ct);
+        if (existCount != materialIds.Count)
+            throw new ArgumentException("指定された素材の一部が存在しません (BOM-001)");
+
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {

@@ -71,9 +71,9 @@ public static class ProductionEndpoints
 
         pi.MapGet("/{id:long}", async (HttpContext http, ProductionInstructionService svc, long id, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, out _))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
-            var detail = await svc.GetDetailAsync(id, ct);
+            var detail = await svc.GetDetailAsync(id, actorId, ct);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
         });
 
@@ -167,9 +167,9 @@ public static class ProductionEndpoints
 
         mo.MapGet("/{id:long}", async (HttpContext http, MaterialOrderService svc, long id, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, out _))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
-            var detail = await svc.GetDetailAsync(id, ct);
+            var detail = await svc.GetDetailAsync(id, actorId, ct);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
         });
 

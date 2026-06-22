@@ -21,7 +21,6 @@ const loading = ref(true)
 const errorMessage = ref('')
 const bomMissing = ref(false)
 const submittingIdx = ref<number | null>(null)
-const createdMsg = ref('')
 
 const defaultDue = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
 
@@ -86,7 +85,6 @@ const createGroup = async (gi: number) => {
     </header>
 
     <div v-if="errorMessage" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ errorMessage }}</div>
-    <div v-if="createdMsg" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{{ createdMsg }}</div>
 
     <section v-if="bomMissing" class="rounded-lg border border-amber-300 bg-amber-50 p-6 text-sm text-amber-800">
       素材構成（BOM）が未登録のため所要量を展開できません。

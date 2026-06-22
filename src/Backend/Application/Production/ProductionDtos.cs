@@ -109,7 +109,9 @@ public record MaterialOrderListItem(
     DateOnly DueDate,
     short Status,
     int LineCount,
-    decimal TotalAmount,       // マスク前。endpoint 側で price 権限により *** 化
+    // 素材単価(機密 中-高)。現状は認証済ユーザに開示 (既存仕入単価と同水準)。開示は MaterialPrice.View
+    // で監査記録 (金額マスク)。price 権限ゲート/一覧デフォルトマスクは専用権限カラム未整備のため段階C へ繰延
+    decimal TotalAmount,
     string CurrencyCode,
     string ExportState,
     DateTime? FirstExportedAt,
@@ -146,6 +148,6 @@ public record MaterialOrderLineDetail(
     long? ProductFamilyId,
     decimal RequiredQuantity,
     string Unit,
-    decimal? UnitPrice,        // マスク前
+    decimal? UnitPrice,        // 機密。開示は GetDetailAsync で MaterialPrice.View 監査 (金額マスク)。上部 TotalAmount 注記参照
     string CurrencyCode,
     decimal Subtotal);

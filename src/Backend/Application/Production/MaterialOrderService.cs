@@ -133,17 +133,22 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
             })
             .ToListAsync(ct);
 
-        return rows.Select(x => new MaterialOrderListItem(
+        var result = rows.Select(x => new MaterialOrderListItem(
             x.O.Id, x.O.OrderNo, x.O.MaterialSupplierId,
             x.O.MaterialSupplier?.Code ?? "?", x.O.MaterialSupplier?.Name ?? "?",
             x.O.ProductionInstructionId, x.O.DueDate, (short)x.O.Status,
             x.LineCount, x.Total, x.Currency,
             x.O.FirstExportedAt is null ? "unexported" : "exported",
             x.O.FirstExportedAt, x.O.CreatedAt, x.O.UpdatedAt)).ToList();
+
+        // 機密(素材単価=金額)を含む一覧の開示を監査 (金額はマスク)
+        await audit.LogAsync(actorUserId, "MaterialPrice.View",
+            entityType: "MaterialOrder", note: $"list count={result.Count}, total=***", cancellationToken: ct);
+        return result;
     }
 
-    /// <summary>詳細 (MO-03)。</summary>
-    public async Task<MaterialOrderDetail?> GetDetailAsync(long id, CancellationToken ct = default)
+    /// <summary>詳細 (MO-03)。素材単価を含むため開示を監査 (金額マスク)。</summary>
+    public async Task<MaterialOrderDetail?> GetDetailAsync(long id, long actorUserId, CancellationToken ct = default)
     {
         var order = await db.MaterialOrders
             .Include(o => o.MaterialSupplier)
@@ -156,6 +161,9 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
             .Where(l => l.MaterialOrderId == id)
             .OrderBy(l => l.LineNo)
             .ToListAsync(ct);
+
+        await audit.LogAsync(actorUserId, "MaterialPrice.View",
+            entityType: "MaterialOrder", entityId: id, note: $"order_no={order.OrderNo}, total=***", cancellationToken: ct);
 
         return new MaterialOrderDetail(
             order.Id, order.OrderNo, order.MaterialSupplierId,

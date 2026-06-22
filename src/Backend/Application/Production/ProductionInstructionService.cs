@@ -109,16 +109,20 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
             })
             .ToListAsync(ct);
 
-        return rows.Select(x => new PiListItem(
+        var result = rows.Select(x => new PiListItem(
             x.P.Id, x.P.InstructionNo, Sku9(x.FirstSku), x.P.ProductFamily?.ProductName1 ?? "?",
             x.P.FactorySupplier?.Code ?? "?", x.P.FactorySupplier?.Name ?? "?",
             x.P.PlannedQuantity, x.P.DueDate, (short)x.P.Status,
             x.P.FirstExportedAt is null ? "unexported" : "exported",
             x.P.FirstExportedAt, x.P.CreatedAt, x.P.UpdatedAt)).ToList();
+
+        await audit.LogAsync(actorUserId, "ProductionInstruction.List",
+            entityType: "ProductionInstruction", note: $"count={result.Count}", cancellationToken: ct);
+        return result;
     }
 
     /// <summary>詳細 (PI-03 編集画面ベース)。</summary>
-    public async Task<PiDetail?> GetDetailAsync(long id, CancellationToken ct = default)
+    public async Task<PiDetail?> GetDetailAsync(long id, long actorUserId, CancellationToken ct = default)
     {
         var pi = await db.ProductionInstructions
             .Include(p => p.FactorySupplier)
@@ -134,6 +138,9 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
             .ToListAsync(ct);
 
         var sku9 = Sku9(lines.FirstOrDefault()?.SkuSnapshot);
+        await audit.LogAsync(actorUserId, "ProductionInstruction.View",
+            entityType: "ProductionInstruction", entityId: id, note: $"instruction_no={pi.InstructionNo}", cancellationToken: ct);
+
         return new PiDetail(
             pi.Id, pi.InstructionNo, pi.ProductFamilyId, sku9, pi.ProductFamily?.ProductName1 ?? "?",
             pi.FactorySupplierId, pi.FactorySupplier?.Code ?? "?", pi.FactorySupplier?.Name ?? "?",
