@@ -206,7 +206,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | 素材発注番号 `order_no` | `YY-MO-NNNNN` | 素材発注書 作成時 |
 
 > **同時実行安全な採番方式（監査C-4反映、`MAX()+1`単独＋例外頼みを廃止）:**
-> - 採番は**トランザクション内で `pg_advisory_xact_lock(hashtext(<doc_type>||<年度>))` を取得してから** その年度の最大連番+1を確定（App Runner 複数インスタンス・並行作成でも (doc_type, 年度) 単位で直列化）。
+> - 採番は**トランザクション内で `pg_advisory_xact_lock(hashtext(<doc_type>||<年度>))` を取得してから** その年度の最大連番+1を確定（**実行基盤のインスタンス数に依らず**＝本番 EC2 単一ホスト docker compose でも将来の複数インスタンス化でも、並行作成を (doc_type, 年度) 単位で直列化）。
 > - **防御多重化:** UNIQUE 制約違反を捕捉した場合は採番を再取得して**自動リトライ**（最大3回、Application 層）。**リトライ上限超過時は `PINST-005`/`MORD-004`（採番競合、再試行を促す）を返し、トランザクション全体をロールバック**（明細の部分作成なし、監査Minor-3反映）。advisory lock により競合は逐次化されるため上限超過は実質発生しない想定。
 > - **複数素材発注の連続作成（1生産指示→複数仕入先、M-1デッドロック対策）:** 各 `POST /material-orders` を**独立トランザクション**で処理（1リクエスト=1発注=1採番）。フロントは仕入先別に逐次 POST（並列禁止）。これにより同一Tx内での複数採番ロック競合・番号穴・部分失敗を回避。採番Txは「番号確定→即コミット」の最小スコープに保ち、Excel生成等の重処理をロック保持中に含めない（監査Minor-1）。
 > - 年度プレフィックスは採番時点の年度。年度切替時は連番リセット（advisory lock のキーに年度を含むため安全）。
@@ -350,3 +350,4 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | 2026-06-22 | 初版（5テーブル） |
 | 2026-06-22 v2 | 独立レビュー1周目反映: 明細 is_deleted 非保持を明記し未/済クエリ修正（C-1）/ 認可を既存実在トークンに是正＋§12新設（監査C-1）/ 素材単価のprice権限AND・デフォルトマスク・MaterialPrice.Viewブロッキング監査（監査C-2/M-4）/ 移行はBOM自動生成せず誤発注防止（監査C-3）/ 採番をadvisory lock+リトライ・複数発注は独立Tx（監査C-4/M-1）/ BOM↔3FK疎結合化・差分upsert・単一Tx（監査M-3）/ ロス率を任意DEFAULT0でMVP基本式統一（M-1）/ 出力履歴はaudit_logs集約を明記（M-2）/ subtotal精度根拠（Mi-1）/ NULL単価subtotal=0意味論＋注記（Mi-2）/ CHECK括弧明示（Mi-3）/ ERDにlast_exported_at（Ni-1） |
 | 2026-06-22 v3 | 独立レビュー2周目反映: §12 権限値の非単調エンコード是正＝既存 CheckMasterEditAsync/CheckOrderEditAsync 再利用（SA Major-1）/ PS-01生産バッジ権限を purchase_order:read に整合（SA Major-2）/ MaterialPrice.View を既存 data-design.md §6.1/§9 へ追記＋新設理由（CR Major-1）/ ブロッキング監査の読取系=明示サービス層INSERT＋2sタイムアウト＋AUDIT-001（SA Major-3）/ idx_mo_active 廃止＋§7.2 想定実行計画（CR Major-2）/ 採番リトライ上限 PINST-005/MORD-004（SA Minor-3）/ product_family_id NULL ロールアップ仕様（CR Minor-2）/ 採番Tx最小化・EC2単一実体注記（SA Minor-1） |
+| 2026-06-22 v4 | 独立レビュー3周目（収束確認）反映: §5 採番の実行基盤表記を中立化（「App Runner複数インスタンス」→「実行基盤のインスタンス数に依らず／本番EC2単一・将来複数とも直列化」、CR Nit-1/SA INFO-1）。3周目で CR=Crit0/Maj0/Min0、SA=リリースOK Crit0/Maj0/Min0 を確認、本修正で唯一の残差解消＝収束 |
