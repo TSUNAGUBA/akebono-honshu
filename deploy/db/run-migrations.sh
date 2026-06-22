@@ -106,7 +106,7 @@ case "${ACTION}" in
       echo "       スキーマ更新は action=migrate を使用してください。" >&2
       exit 1
     fi
-    # db/init の全スキーマファイルを番号順に適用 (01-schema..05-production..)。
+    # db/init の全スキーマ・シードファイルを番号順に適用 (01-schema..06-demo-data..)。
     # ハードコードせず glob することで、新規 init ファイル追加時の付け忘れを防ぐ
     # (原則1: 手動メンテを残さない。schema_migration_files と同じ find|sort パターン)。
     while IFS= read -r f; do
