@@ -104,3 +104,26 @@ CLAUDE.md 原則9／方法論SP-8に基づき、独立ロール（コードレ�
 | ブロッキング監査の読取系実装・可用性 | SA Major-3 | 明示サービス層INSERT＋短命Tx＋2sタイムアウト＋`AUDIT-001`、可用性トレードオフをオペレーター確認可と明記 |
 | idx_mo_active が EXISTS で効かない | CR Major-2 | 当該インデックス廃止、想定実行計画（idx_mol_family＋PK lookup）を明記 |
 | 移行でBOM未生成→全件「未」/採番リトライ上限/product_family_id NULL/App Runner表記 | Minor各 | BOM未登録 第3状態表示、`PINST-005`/`MORD-004`/`AUDIT-001` 追加、ロールアップ仕様明記、EC2実体注記 |
+
+---
+
+## 8. 実装（Iteration 5）と実装レビュー（2026-06-22）
+
+設計マージ（PR #7）後、直近スコープを実装（PR #9）。
+
+### 8.1 実装範囲
+- **バックエンド**（.NET8）: DB 5テーブル（`db/init/05-production.sql`、既存26テーブル無変更）/ Domain 8型 / Application 4サービス（ProductMaterial・ProductionInstruction・MaterialOrder・ProductionStatusQuery）/ Excel 2サービス / `ProductionEndpoints` / DI・Program 配線。**CI `dotnet build -c Release` + docker build success**
+- **フロントエンド**（Nuxt3）: `useProduction.ts` + 8ページ（未/済一覧・生産指示3・素材発注3・BOM編集）+ AppNav。**`nuxt typecheck` 0エラー（ローカル+CI）**
+
+### 8.2 実装レビュー（独立2ロール×2周、CLAUDE.md 原則9）
+| 周回 | コードレビュアー | システム監査官 |
+|---|---|---|
+| 1周目 | ISSUE（Crit1/Maj4/Min5/Nit3） | 条件付OK（Crit1/Maj3/Min4） |
+| **2周目** | **CLEAR（Crit0/Maj0、Min1=任意）** | （1周目指摘の解消を2周目で全確認） |
+
+**1周目→2周目で解消した主指摘:** AuditLogger 非ブロッキング化（原則4）＋note 512切詰め / 素材発注 一覧・詳細・Excel に `MaterialPrice.View` 監査（金額マスク）/ 生産指示 List・View 監査の対称化 / BOM の素材存在検証（FK 500→422）/ DTOコメント是正 / 死コード削除。
+
+### 8.3 繰延（オペレーター判断事項）— 素材単価の price 権限ゲート
+- **状況:** 設計（api-design-production §2.3）は素材単価の詳細/Excel/一覧開示に `price:read` ゲート＋一覧デフォルトマスク＋`MaterialPrice.View` ブロッキング監査を要求。**実コードには専用 price 権限カラムが存在せず**（`users` は4権限のみ）、**既存の仕入単価（PurchaseOrderService/OrderEndpoints）も同じく price 未ゲート**で平文返却。
+- **判定（両レビュー一致）:** 本実装は**既存仕入単価と同水準＝機密保護を退行させていない**。実装可能な是正（`MaterialPrice.View` 監査記録＝金額マスク）は本イテレーションで実施済。
+- **要判断:** price 権限ゲート/デフォルトマスク/ブロッキング監査(AUDIT-001) の本実装は、**既存の仕入単価(発注)と素材発注を一括で対象とする横断改修**（新権限カラム＋移行＋既存発注の改修）。直近スコープ外。次イテレーション（段階C）でオペレーター承認の上、既存・新規一括対応を推奨。
