@@ -30,7 +30,7 @@ export default defineNuxtConfig({
   },
   app: {
     head: {
-      title: 'akebono アパレル生産管理 (Iteration 0)',
+      title: 'Akebono Honshu | アパレル生産管理',
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },

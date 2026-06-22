@@ -240,7 +240,7 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "Akebono Honshu API",
         Version = "v1",
-        Description = "あけぼの本州 アパレル生産管理システム API (Phase 7 MVP)",
+        Description = "Akebono Honshu アパレル生産管理システム API (Phase 7 MVP)",
     });
 
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme

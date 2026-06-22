@@ -74,7 +74,9 @@ const doneBadge = (s: string) => s === 'done'
         <tbody>
           <tr v-if="rows.length === 0"><td colspan="6" class="px-4 py-8 text-center text-sm text-gray-500">該当する品番がありません</td></tr>
           <tr v-for="r in rows" :key="r.familyId" class="border-b border-gray-100 last:border-0 hover:bg-blue-50">
-            <td class="px-4 py-3 font-mono text-sm">{{ r.sku9 }}</td>
+            <td class="px-4 py-3 font-mono text-sm">
+              <NuxtLink :to="`/products/${r.familyId}`" class="text-blue-700 hover:underline">{{ r.sku9 }}</NuxtLink>
+            </td>
             <td class="px-4 py-3 text-sm">{{ r.productName }}</td>
             <td class="px-4 py-3 text-center">
               <span :class="doneBadge(r.materialOrder).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ doneBadge(r.materialOrder).label }}</span>

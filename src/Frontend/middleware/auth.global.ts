@@ -11,15 +11,14 @@ export default defineNuxtRouteMiddleware((to) => {
 
   const publicPaths = ['/login']
 
-  if (to.path === '/') {
-    return navigateTo(isAuthenticated.value ? '/users' : '/login')
-  }
-
+  // 未認証は公開パス以外すべて /login へ（ホーム '/' も含む）。
   if (!isAuthenticated.value && !publicPaths.includes(to.path)) {
     return navigateTo('/login')
   }
 
+  // 認証済みで /login に来たらホーム（ポータル）へ。
+  // ホーム '/' はポータル（カテゴリカード）を表示するためリダイレクトしない。
   if (isAuthenticated.value && to.path === '/login') {
-    return navigateTo('/users')
+    return navigateTo('/')
   }
 })

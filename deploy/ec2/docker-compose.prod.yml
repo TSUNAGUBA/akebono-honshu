@@ -1,5 +1,5 @@
 # ===========================================================================
-# あけぼの本州 Backend 本番デプロイ (EC2 / docker compose)
+# Akebono Honshu Backend 本番デプロイ (EC2 / docker compose)
 #
 # 既存ホストの jwilder/nginx-proxy + acme-companion に「相乗り」する構成。
 # - backend を外部ネットワーク PROXY_NETWORK (既定 tsunaguba-dev-001) に参加させる

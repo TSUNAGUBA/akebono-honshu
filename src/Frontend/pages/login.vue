@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// ログインはポータル chrome（ヘッダ・タブ）無しの全画面表示。
+definePageMeta({ layout: false })
+
 const { login } = useAuth()
 
 const email = ref('')
@@ -11,7 +14,7 @@ const onSubmit = async () => {
   submitting.value = true
   try {
     await login(email.value, password.value)
-    await navigateTo('/users')
+    await navigateTo('/')
   }
   catch (e: unknown) {
     // Firebase Auth エラーは FirebaseError.code を持つ。
@@ -48,10 +51,10 @@ const onSubmit = async () => {
       @submit.prevent="onSubmit"
     >
       <h1 class="mb-1 text-2xl font-bold">
-        akebono 生産管理
+        Akebono Honshu
       </h1>
       <p class="mb-6 text-sm text-gray-500">
-        Firebase Authentication でログイン
+        アパレル生産管理システム
       </p>
 
       <label class="mb-4 block">

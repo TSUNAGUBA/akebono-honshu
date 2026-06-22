@@ -5,7 +5,7 @@
 > 段階 C/D (本番デプロイ + CI/CD) は **`deploy/README.md`** が SoT。実装はオペレーター判断で
 > EC2(ubuntu) + GHCR + repository secrets 構成 (当初計画の App Runner/ECR から変更)。
 >
-> **ゴール:** PostgreSQL + .NET Backend + Nuxt Frontend をローカルで起動し、Firebase Auth でログイン → ユーザ一覧表示まで疎通
+> **ゴール:** PostgreSQL + .NET Backend + Nuxt Frontend をローカルで起動し、Firebase Auth でログイン → ホーム（ポータル：業務メニュー）表示まで疎通
 
 ---
 
@@ -39,7 +39,7 @@
 5. **Backend:** `cd src/Backend && dotnet restore` (`Microsoft.AspNetCore.Authentication.JwtBearer 8.0.27` が追加)
 6. **Frontend:** `cd src/Frontend && pnpm install` (`firebase 12.13.0` が追加) → `cp .env.example .env` (Firebase config を含む)
 7. 通常通り Backend (`dotnet run --project Presentation`) + Frontend (`pnpm dev`) を起動
-8. <http://localhost:3000> → メール + パスワードでログイン → ユーザ一覧表示
+8. <http://localhost:3000> → メール + パスワードでログイン → ホーム（ポータル：業務メニュー）表示
 9. 検証: 以下 SQL で `Login.Success` (result=0) が記録される
    ```sql
    SELECT occurred_at, actor_user_id, action, result
@@ -227,7 +227,7 @@ dotnet run --project Presentation
 cd ../../Frontend && pnpm dev
 ```
 
-ブラウザで `http://localhost:3000` → ログイン (owner / 開発時パスワード) → ユーザ一覧 → 商品管理 が表示できれば、ローカル UI + AWS RDS の構成で疎通完了。
+ブラウザで `http://localhost:3000` → ログイン (owner / 開発時パスワード) → ホーム（ポータル） → 商品一覧 が表示できれば、ローカル UI + AWS RDS の構成で疎通完了。
 
 ##### トラブルシュート
 
@@ -325,7 +325,7 @@ pnpm dev
 
 1. ブラウザで `http://localhost:3000` にアクセス → `/login` にリダイレクト
 2. メール + パスワードを入力 → 「ログイン」クリック (旧: `owner / localdev`)
-3. `/users` にリダイレクト、ユーザ一覧テーブルに 3 件 (owner / planner / sales) が表示
+3. `/`（ポータルホーム）に着地。「システム管理」＞「ユーザー管理」（`/users`）でユーザ一覧 3 件 (owner / planner / sales) を確認
 4. 「ログアウト」ボタン → `/login` に戻る
 5. 監査ログ確認:
 

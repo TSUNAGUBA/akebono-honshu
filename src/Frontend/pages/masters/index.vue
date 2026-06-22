@@ -5,7 +5,7 @@ import { masterDefinitions } from '~/utils/master-definitions'
 <template>
   <main class="mx-auto max-w-7xl px-4 py-8">
     <header class="mb-6">
-      <h1 class="text-2xl font-bold">マスタ管理</h1>
+      <h1 class="text-2xl font-bold">マスタ一覧</h1>
       <p class="mt-1 text-sm text-gray-500">
         17 マスタの CRUD 操作 (M-01 / M-02 共通テンプレート + M-04 仕入先 / M-05 連絡文書 個別対応)
       </p>
