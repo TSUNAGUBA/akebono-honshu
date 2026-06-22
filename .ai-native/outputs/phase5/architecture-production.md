@@ -25,7 +25,7 @@ src/Backend/
 │       ├─ ProductionInstructionStatus.cs (enum)
 │       └─ MaterialOrderStatus.cs        (enum)
 ├─ Application/ (or Service 層、既存方式に追従)
-│   ├─ ProductMaterialService     … BOM CRUD＋3FK同期＋所要量展開
+│   ├─ ProductMaterialService     … BOM CRUD（差分upsert・単一Tx）＋所要量展開（3FKは疎結合・書戻しなし）
 │   ├─ ProductionInstructionService … 採番・status遷移・スナップショット凍結
 │   ├─ MaterialOrderService       … prepare(BOM展開)・採番・status遷移
 │   └─ ProductionStatusQuery      … 未/済 EXISTS 算出（商品一覧 include）
@@ -40,8 +40,8 @@ src/Backend/
     └─ MaterialOrderEndpoints.cs          … 🆕
 ```
 - 依存方向は既存通り（Presentation→Application→Domain←Infrastructure）。
-- 権限: 既存4権限ポリシーに `production_info:read/write`（発注情報管理権限）を割当（§機能要件 §4）。`[Authorize]` 必須化の既存CI Lint（R-6）対象に新エンドポイントを含める。
-- 監査: 既存 `audit.LogAsync` / Interceptor に生産系 action（§data-design §6）を追加。
+- 権限: **既存実在トークンのみ使用**（`production_info:*` は不使用＝監査C-1）。BOM=`product:*`、生産指示/素材発注=`purchase_order:*`、素材単価開示/設定=`price:read/write` を AND（data-design §12, functional §4）。CI Lint は既存R-6（全API `[Authorize]`）に加え、**指定ポリシー名が登録済みポリシー集合に存在するかを検証**（属性有無だけでなく名前解決、監査M-2）。
+- 監査: 既存 `audit.LogAsync` / Interceptor に生産系 action（§data-design §6）を追加。**機密閲覧（MaterialPrice.View）・Excel.Export はブロッキング監査**（記録失敗時は開示拒否、一般C/U/Dは非ブロッキング、監査M-4）。
 - Excel: 既存 `IPurchaseOrderExcelService`（ClosedXML）と同パターンで2サービス追加。テンプレ未入手のため当面は動的生成（既存 Iter3 仮テンプレ同様）、実帳票入手後にテンプレファイル方式へ差替（I/F不変、Iter3知見#5）。
 
 ### A.2 フロントエンド（既存 Nuxt 構成に追加）
@@ -50,13 +50,13 @@ src/Backend/
 
 ### A.3 DB（既存 `db/init` に追加）
 - `db/init/05-production.sql`（新規5テーブルDDL、冪等 `CREATE TABLE IF NOT EXISTS`）。
-- `db/migration/` に既存 product_families→product_materials 初期生成パッチ（§data-design §9）。
+- BOM初期生成パッチは**設けない**（暫定所要量による誤発注防止、監査C-3、§data-design §9）。`db/migration/` には付属・副資材の `materials` 投入パッチのみ。
 - 本番は生SQL冪等適用方式（既存 `deploy/db/run-migrations.sh`、EF Migrationではない）に従う。
 
 ### A.4 SoT 境界（既存§1.2に追加）
 | データ | SoT | キャッシュ/派生 |
 |---|---|---|
-| BOM（素材構成・所要量） | RDS `product_materials` | `product_families` 3FK列（代表素材、編集時同期） |
+| BOM（素材構成・所要量） | RDS `product_materials`（独立SoT） | `product_families` 3FK列は**代表素材の表示用（疎結合・書戻しなし）**、BOM編集時の初期シードのみ利用（監査M-3） |
 | 生産指示・素材発注 | RDS `production_instructions`/`material_orders` 系 | — |
 | 品番ごと未/済 | （派生）SoT直読 EXISTS | denormalized 列なし（§data-design §7.2） |
 
@@ -129,7 +129,7 @@ flowchart TB
 ---
 
 ## C. 移行・並行稼働（既存 MIG 戦略に追従）
-- 既存 MIG-3（生産管理CSV 138列→product_families/products）の延長として、品番台帳の素材3部位を `product_materials` 初期行へ（§data-design §9）。
+- BOM は**移行で自動生成しない**（暫定所要量による誤発注防止、監査C-3、§data-design §9）。既存品番は BOM 未登録のまま稼働でき、素材発注時に BOM 必須チェック（MORD-001）で明示登録へ誘導。3FK代表素材は BOM編集の初期シードに利用。
 - 所要量・付属/副資材・素材仕入先区分は現行データに無いため**実ユーザ後追い入力**（並行稼働期間で整備、§domain-context §7）。
 - 既存26テーブル無変更のため、稼働中の MVP（商品マスタ・完成品発注）に影響なし（下位互換、CLAUDE.md 原則7）。
 
@@ -140,12 +140,14 @@ flowchart TB
 | # | リスク | 影響 | 緩和 |
 |---|---|---|---|
 | RP-1 | BOM所要量の実データ不在（現行は数量を持たない） | 素材発注数が当面不正確 | 初期は手調整前提。所要量を実ユーザが整備、ロス率で吸収。展開はプレビューで人が確認 |
-| RP-2 | 3部位代表素材(3FK)とBOM(product_materials)の同期ずれ | 表示と実BOMの不整合 | SoT=product_materials、編集時に同期トランザクション。reconcile不要な単方向（BOM→3FK）に限定 |
+| RP-2 | 3部位代表素材(3FK)とBOM(product_materials)の二重持ち | 表示と実BOMの不整合 | **疎結合化で解消（監査M-3）**: BOMが所要量SoT、3FKは表示用で書戻しなし。BOM編集は差分upsert・単一Tx。3FKはBOM未登録時の初期シードのみ |
 | RP-3 | 素材/製品仕入先の区分が現行に無い | 仕入先選択時の混乱 | 当面は区分せず選択可＋推奨仕入先で誘導。`仕入先分類`の意味判明後に区分追加（§domain §7-5） |
 | RP-4 | 生産指示と完成品発注（既存）の二重発行運用が不明 | 業務重複/混乱 | MVPは独立。ヒアリング（§domain §7-7）後に連携（指示→完成品発注自動生成）を検討 |
 | RP-5 | 未/済 EXISTS 算出の性能（一覧） | 一覧遅延 | 部分インデックス（idx_pi_family_active/idx_mol_family）。2,000品番で500ms担保。大規模化時のみ denormalize |
-| RP-6 | 素材単価の機密漏洩 | 営業秘密 | 既存仕入単価と同等保護（KMS/アクセス制御/監査マスク） |
+| RP-6 | 素材単価の機密漏洩 | 営業秘密 | 既存仕入単価と同等保護（KMS/`price`権限AND/監査マスク/MaterialPrice.Viewブロッキング監査、監査C-2/M-4） |
 | RP-7 | Excel テンプレ未確定（生産指示書/素材発注書の現行帳票なし） | 体裁手戻り | 動的生成で先行、実帳票入手後に差替（I/F不変、既存Iter3知見#5） |
+| RP-8 | 採番の同時実行衝突 | 番号重複/デッドロック/番号穴 | `pg_advisory_xact_lock(doc_type+年度)`＋UNIQUE＋自動リトライ、複数素材発注は独立Tx逐次（監査C-4/M-1、§data-design §5） |
+| RP-9 | 新エラーコード(500系)の監視漏れ | サイレント失敗検知遅延 | EXPORT-001/002 等を CloudWatch メトリクスフィルタ＋Alarm 対象に追加、構造化ログにErrorCode付与（監査M-5） |
 
 ---
 

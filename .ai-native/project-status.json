@@ -103,7 +103,7 @@
         "material_order_lines"
       ],
       "existingTablesChanged": "なし（既存26テーブルはスキーマ変更ゼロ、下位互換維持）",
-      "reviewStatus": "独立レビュー（code-reviewer + system-auditor）を指摘ゼロまで反復実施中"
+      "reviewStatus": "独立レビュー1周目反映済（code-reviewer ISSUE Critical2/Major2、system-auditor FAIL Critical2/Major5 を全反映）。2周目 再レビュー実施予定"
     }
   ]
 }
