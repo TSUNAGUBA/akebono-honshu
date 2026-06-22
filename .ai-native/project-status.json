@@ -70,6 +70,40 @@
       "phase0to2GateDecision": "PASS"
     }
   ],
-  "lastUpdated": "2026-05-18",
-  "lastGate": "Phase0-2:PASS"
+  "lastUpdated": "2026-06-22",
+  "lastGate": "Phase0-2:PASS",
+  "scopeIncrements": [
+    {
+      "id": "production-management",
+      "name": "生産管理拡張（BOM・生産指示書・素材発注書・未/済ステータス）",
+      "addedAt": "2026-06-22",
+      "trigger": "新規ユースケース発見（PHASE_JUMP_RULES → Phase 2 追補）。現行システムに手本のない新規業務（提案書 Apparel-ZONE の企画生産・生地材料発注・加工指図書に対応）",
+      "scopeClassification": "Full相当（新規エンティティ5件・新規業務軸）。Phase 2→3→5 増分として設計",
+      "operatorDecisions": {
+        "trigger": "商品マスタ＋生産数量を起点",
+        "materialQuantity": "BOMを商品マスタに登録（数量×所要量×(1+ロス率)）",
+        "statusGranularity": "品番ごと2軸バッジ（素材発注／生産指示）",
+        "otherScopeDepth": "ロードマップ＋データモデル骨格"
+      },
+      "deliverables": [
+        ".ai-native/outputs/production-extension-design.md",
+        ".ai-native/domain-context/business-flow/production-management-flow.md",
+        ".ai-native/outputs/phase2/usecases-production.md",
+        ".ai-native/outputs/phase3/functional-requirements-production.md",
+        ".ai-native/outputs/phase5/data-design-production.md",
+        ".ai-native/outputs/phase5/api-design-production.md",
+        ".ai-native/outputs/phase5/screen-design-production.md",
+        ".ai-native/outputs/phase5/architecture-production.md"
+      ],
+      "addedTables": [
+        "product_materials",
+        "production_instructions",
+        "production_instruction_lines",
+        "material_orders",
+        "material_order_lines"
+      ],
+      "existingTablesChanged": "なし（既存26テーブルはスキーマ変更ゼロ、下位互換維持）",
+      "reviewStatus": "独立レビュー（code-reviewer + system-auditor）を指摘ゼロまで反復実施中"
+    }
+  ]
 }
