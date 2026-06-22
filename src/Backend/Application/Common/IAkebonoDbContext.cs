@@ -1,5 +1,6 @@
 using Akebono.Domain.Entities;
 using Akebono.Domain.Orders;
+using Akebono.Domain.Production;
 using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 
@@ -39,6 +40,13 @@ public interface IAkebonoDbContext
     DbSet<PurchaseOrder> PurchaseOrders { get; }
     DbSet<PurchaseOrderLine> PurchaseOrderLines { get; }
     DbSet<PurchaseOrderExportLog> PurchaseOrderExportLogs { get; }
+
+    // 生産管理拡張 (Iteration 5、data-design-production §4)
+    DbSet<ProductMaterial> ProductMaterials { get; }
+    DbSet<ProductionInstruction> ProductionInstructions { get; }
+    DbSet<ProductionInstructionLine> ProductionInstructionLines { get; }
+    DbSet<MaterialOrder> MaterialOrders { get; }
+    DbSet<MaterialOrderLine> MaterialOrderLines { get; }
 
     /// <summary>ジェネリック DbSet 取得 (MasterService&lt;TEntity&gt; 用)。DbContext.Set&lt;T&gt;() の暗黙実装。</summary>
     DbSet<T> Set<T>() where T : class;

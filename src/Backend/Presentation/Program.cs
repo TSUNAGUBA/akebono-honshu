@@ -321,6 +321,7 @@ app.MapUserEndpoints();
 app.MapMasterEndpoints();
 app.MapProductEndpoints();
 app.MapOrderEndpoints();
+app.MapProductionEndpoints();
 app.MapLegacyImportEndpoints();
 
 app.Run();

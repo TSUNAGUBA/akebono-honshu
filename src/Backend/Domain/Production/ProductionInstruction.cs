@@ -1,0 +1,56 @@
+using Akebono.Domain.Entities;
+using Akebono.Domain.Products;
+
+namespace Akebono.Domain.Production;
+
+/// <summary>
+/// 生産指示書 (加工指図書) ヘッダ (Phase 5 data-design-production §4.2)。
+/// 品番1つを工場 (加工先) で生産1回ぶん指示する単位。
+/// 既存 PurchaseOrder と同じ「ヘッダ＋明細＋snapshot凍結＋first/last_exported_at」パターン。
+/// </summary>
+public class ProductionInstruction
+{
+    public long Id { get; set; }
+
+    /// <summary>生産指示番号 (例: "26-PI-00001"、作成時採番)</summary>
+    public string InstructionNo { get; set; } = string.Empty;
+
+    public long ProductFamilyId { get; set; }
+    /// <summary>加工先 (工場、supplier 兼用)</summary>
+    public long FactorySupplierId { get; set; }
+
+    /// <summary>生産総数量 (明細合計と一致)</summary>
+    public int PlannedQuantity { get; set; }
+    /// <summary>希望納期 (工場出荷希望日)</summary>
+    public DateOnly DueDate { get; set; }
+
+    public ProductionInstructionStatus Status { get; set; }
+    /// <summary>発行 (指示) 日時。NOT NULL = 指示済 (未/済バッジの済判定根拠)</summary>
+    public DateTime? InstructedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public DateTime? CancelledAt { get; set; }
+    public long? CancelledByUserId { get; set; }
+    public string? CancelReason { get; set; }
+
+    // 帳票宛名・表示の凍結 (初回 Excel 出力時にコピー)
+    public string? FactoryOfficialNameSnapshot { get; set; }
+    public string? FactoryCodeSnapshot { get; set; }
+    public string? ProductSku9Snapshot { get; set; }
+    public string? ProductNameSnapshot { get; set; }
+
+    public string? CommunicationText { get; set; }
+    public DateTime? FirstExportedAt { get; set; }
+    public DateTime? LastExportedAt { get; set; }
+
+    public bool IsDeleted { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public long CreatedByUserId { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public long UpdatedByUserId { get; set; }
+    public string? LegacyId { get; set; }
+
+    // ナビプロパティ
+    public ProductFamily? ProductFamily { get; set; }
+    public Supplier? FactorySupplier { get; set; }
+    public List<ProductionInstructionLine> Lines { get; set; } = new();
+}
