@@ -23,6 +23,9 @@ node_modules/
 .cache/
 dist/
 *.log
+node-compile-cache/
+# pnpm-lock は CI が `pnpm install --no-frozen-lockfile` で生成するため追跡しない (リポジトリ既存方針)
+pnpm-lock.yaml
 
 # Environment
 .env
