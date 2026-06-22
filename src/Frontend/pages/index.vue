@@ -1,12 +1,30 @@
 <script setup lang="ts">
-// / アクセス時のリダイレクトは middleware/auth.global.ts で処理されるため、
-// 本ページは middleware 通過中の loading 表示のみ。
-// onMounted で navigateTo を呼ぶと、URL 直接アクセス時の Vue Router 初期化
-// タイミングで誤動作する可能性があるため使わない。
+// ホーム = ポータル（目的別カテゴリカード）。業務フロー順（商品 → 発注 → 生産 →
+// マスタ → システム管理）にカードを並べる。権限による絞り込みは useNav が行う。
+const { categories } = useNav()
+const { user } = useAuth()
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center">
-    <p class="text-gray-500">読み込み中…</p>
-  </div>
+  <main class="mx-auto w-full max-w-6xl px-4 py-8">
+    <div class="mb-6">
+      <h1 class="text-xl font-bold text-gray-800">ホーム</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        <template v-if="user?.displayName">
+          {{ user.displayName }} さん、業務メニューを選択してください。
+        </template>
+        <template v-else>
+          業務メニューを選択してください。
+        </template>
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <PortalCategoryCard
+        v-for="category in categories"
+        :key="category.id"
+        :category="category"
+      />
+    </div>
+  </main>
 </template>

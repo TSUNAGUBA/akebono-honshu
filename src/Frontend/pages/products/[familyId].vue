@@ -5,7 +5,9 @@ import type { MasterItem } from '~/composables/useMasters'
 
 const route = useRoute()
 const familyId = computed(() => Number(route.params.familyId))
-const { canEditMaster } = useAuth()
+const { user, canEditMaster } = useAuth()
+// 操作導線（次アクション）の権限: 生産指示・発注書の作成は発注書作成権限が必要。
+const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 const {
   getFamily, updateFamily, deleteFamily,
   addSupplierPrice, uploadImage, deleteImage,
@@ -216,8 +218,6 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       <header class="mb-6 flex items-start justify-between gap-4">
         <div>
           <div class="text-xs text-gray-500">
-            <NuxtLink to="/products" class="hover:underline">商品管理</NuxtLink>
-            <span class="mx-1">/</span>
             <span class="font-mono">品番 {{ detail.family.itemNumber }}</span>
             <span class="mx-1 text-gray-400">·</span>
             <span class="font-mono">他品番 {{ detail.family.itemFamilyNumber }}</span>
@@ -247,6 +247,40 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       <div v-if="successMessage" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">
         {{ successMessage }}
       </div>
+
+      <!-- 次のアクション（操作導線）: この商品からの業務の次工程へ直接遷移する -->
+      <section
+        v-if="canEditMaster || canCreateOrder"
+        class="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+      >
+        <h2 class="mb-3 text-sm font-semibold text-gray-700">次のアクション</h2>
+        <div class="flex flex-wrap gap-2">
+          <NuxtLink
+            v-if="canEditMaster"
+            :to="`/production/bom/${familyId}`"
+            class="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 no-underline transition hover:bg-amber-100"
+          >
+            <NavIcon name="layers" class="h-4 w-4" />
+            素材構成(BOM)を編集
+          </NuxtLink>
+          <NuxtLink
+            v-if="canCreateOrder"
+            :to="`/production/instructions/new?familyId=${familyId}`"
+            class="inline-flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800 no-underline transition hover:bg-blue-100"
+          >
+            <NavIcon name="file-text" class="h-4 w-4" />
+            生産指示を作成
+          </NuxtLink>
+          <NuxtLink
+            v-if="canCreateOrder"
+            to="/orders/new"
+            class="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-800 no-underline transition hover:bg-indigo-100"
+          >
+            <NavIcon name="clipboard" class="h-4 w-4" />
+            発注書を作成
+          </NuxtLink>
+        </div>
+      </section>
 
       <!-- 企画情報 -->
       <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

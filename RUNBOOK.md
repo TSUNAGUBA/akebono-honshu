@@ -5,7 +5,7 @@
 > 段階 C/D (本番デプロイ + CI/CD) は **`deploy/README.md`** が SoT。実装はオペレーター判断で
 > EC2(ubuntu) + GHCR + repository secrets 構成 (当初計画の App Runner/ECR から変更)。
 >
-> **ゴール:** PostgreSQL + .NET Backend + Nuxt Frontend をローカルで起動し、Firebase Auth でログイン → ユーザ一覧表示まで疎通
+> **ゴール:** PostgreSQL + .NET Backend + Nuxt Frontend をローカルで起動し、Firebase Auth でログイン → ホーム（ポータル：業務メニュー）表示まで疎通
 
 ---
 
@@ -39,7 +39,7 @@
 5. **Backend:** `cd src/Backend && dotnet restore` (`Microsoft.AspNetCore.Authentication.JwtBearer 8.0.27` が追加)
 6. **Frontend:** `cd src/Frontend && pnpm install` (`firebase 12.13.0` が追加) → `cp .env.example .env` (Firebase config を含む)
 7. 通常通り Backend (`dotnet run --project Presentation`) + Frontend (`pnpm dev`) を起動
-8. <http://localhost:3000> → メール + パスワードでログイン → ユーザ一覧表示
+8. <http://localhost:3000> → メール + パスワードでログイン → ホーム（ポータル：業務メニュー）表示
 9. 検証: 以下 SQL で `Login.Success` (result=0) が記録される
    ```sql
    SELECT occurred_at, actor_user_id, action, result
@@ -227,7 +227,7 @@ dotnet run --project Presentation
 cd ../../Frontend && pnpm dev
 ```
 
-ブラウザで `http://localhost:3000` → ログイン (owner / 開発時パスワード) → ユーザ一覧 → 商品管理 が表示できれば、ローカル UI + AWS RDS の構成で疎通完了。
+ブラウザで `http://localhost:3000` → ログイン (owner / 開発時パスワード) → ホーム（ポータル） → 商品一覧 が表示できれば、ローカル UI + AWS RDS の構成で疎通完了。
 
 ##### トラブルシュート
 
@@ -325,7 +325,7 @@ pnpm dev
 
 1. ブラウザで `http://localhost:3000` にアクセス → `/login` にリダイレクト
 2. メール + パスワードを入力 → 「ログイン」クリック (旧: `owner / localdev`)
-3. `/users` にリダイレクト、ユーザ一覧テーブルに 3 件 (owner / planner / sales) が表示
+3. `/`（ポータルホーム）に着地。「システム管理」＞「ユーザー管理」（`/users`）でユーザ一覧 3 件 (owner / planner / sales) を確認
 4. 「ログアウト」ボタン → `/login` に戻る
 5. 監査ログ確認:
 
@@ -348,7 +348,7 @@ pnpm dev
 > **前提:** ステップ §2.1 + §2.2 で `db/init/01-schema.sql` 投入済の前提に加え、`db/init/02-masters.sql` を pgAdmin4 で実行して 17 マスタ + Seed データを投入する。
 
 1. ブラウザで `http://localhost:3000` → メール (Firebase で `owner` 行に紐付け済アカウント) + パスワードでログイン (Iter 4 段階 B 以降、旧 `owner / localdev` 形式は廃止)
-2. 上部ナビ「マスタ管理」をクリック → `/masters` に 17 マスタのカードが表示される
+2. ホーム（ポータル）の「マスタ」カード → `/masters` に 17 マスタのカードが表示される
 3. **ブランド (拡張なしマスタ)** カード → `/masters/brands` で 2 件 (akebono / プライベート)
    - 「+ 新規追加」→ コード `099`、名称 `テスト` → 保存 → 3 件に増える
    - 編集 → 名称変更 → 保存
@@ -379,7 +379,7 @@ pnpm dev
 1. **商品企画一覧 (P-04):** `http://localhost:3000/products` → デモ商品 春夏ベーシック が表示される
    - テーブル / カード ボタンで切替 (lg 以上 5 列、md 3 列、sm 2 列)
    - カード表示で代表画像 (`primary_image_s3_key`) が表示される (画像未登録時はプレースホルダー)
-2. **商品新規ウィザード (P-01〜P-03):** ナビ右上「+ 新規商品ウィザード」→ 4 セクションフォームで一括登録
+2. **商品新規ウィザード (P-01〜P-03):** 商品一覧 (`/products`) 右上「+ 新規商品ウィザード」→ 4 セクションフォームで一括登録
    - 1 トランザクションで family + 色×サイズ全 SKU + 仕入単価を登録
    - 11 桁品番が自動生成される (例: NA1001A4010)
 3. **詳細・修正 (P-05):** 商品カードクリック → 企画情報・SKU 一覧・仕入単価・画像のフル詳細
@@ -403,7 +403,7 @@ pnpm dev
 > **前提:** `db/init/04-orders.sql` を pgAdmin4 で実行して発注関連 3 テーブル + Seed 投入。Backend 再起動で ClosedXML 0.105.0 が NuGet 復元される。
 
 1. **発注書一覧 (O-03):** `http://localhost:3000/orders` → Seed `26-00001` が「未出力」バッジで表示
-2. **新規発注書 (O-01):** ナビ「発注書」→「+ 新規発注書」→ ヘッダ + 明細 + 連絡文章テンプレ複写 (O-07) → 登録で `mgmt_no` 自動採番
+2. **新規発注書 (O-01):** ホーム（ポータル）の「発注」カード → `/orders` →「+ 新規発注書」→ ヘッダ + 明細 + 連絡文章テンプレ複写 (O-07) → 登録で `mgmt_no` 自動採番
 3. **詳細・編集 (O-04、F-16):** 行クリック → 詳細画面で「編集」→ 数量/単価変更 → **編集理由 5 値 select 必須** + メモ任意 → 保存で `audit_logs.note` に `edit_reason=quantity` 記録
 4. **Excel ダウンロード (O-06、MVP クリティカルパス):**
    - 「📥 Excel ダウンロード」→ ファイル名 `PO_S00001_YYYYMMDD_HHmmss.xlsx`

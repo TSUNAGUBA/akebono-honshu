@@ -31,7 +31,11 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
   <main class="mx-auto max-w-7xl px-4 py-8">
     <header class="mb-6">
       <h1 class="text-2xl font-bold">素材発注書</h1>
-      <p class="mt-1 text-sm text-gray-500">MO-02 一覧 / MO-04 Excel 出力（生地材料発注）。新規作成は生産指示書の詳細から行います。</p>
+      <p class="mt-1 text-sm text-gray-500">
+        MO-02 一覧 / MO-04 Excel 出力（生地材料発注）。新規作成は
+        <NuxtLink to="/production/instructions" class="text-blue-700 hover:underline">生産指示書</NuxtLink>
+        の詳細から行います。
+      </p>
     </header>
 
     <div class="mb-3 flex items-center gap-4">

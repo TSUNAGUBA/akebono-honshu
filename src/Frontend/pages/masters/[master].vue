@@ -137,7 +137,7 @@ const formatCell = (value: unknown): string => {
       <header class="mb-6 flex items-start justify-between gap-4">
         <div>
           <div class="text-xs text-gray-500">
-            <NuxtLink to="/masters" class="hover:underline">マスタ管理</NuxtLink>
+            <NuxtLink to="/masters" class="hover:underline">マスタ一覧</NuxtLink>
             <span class="mx-1">/</span>
             <span>{{ slug }}</span>
           </div>

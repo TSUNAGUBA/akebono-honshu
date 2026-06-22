@@ -180,7 +180,7 @@ const onSubmit = async () => {
     <template v-else>
       <header class="mb-6">
         <div class="text-xs text-gray-500">
-          <NuxtLink to="/products" class="hover:underline">商品管理</NuxtLink>
+          <NuxtLink to="/products" class="hover:underline">商品一覧</NuxtLink>
           <span class="mx-1">/</span>
           <span>新規登録</span>
         </div>

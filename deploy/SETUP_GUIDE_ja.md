@@ -1,4 +1,4 @@
-# あけぼの本州 本番セットアップ手順書（Windows PowerShell / 初学者向け）
+# Akebono Honshu 本番セットアップ手順書（Windows PowerShell / 初学者向け）
 
 > この手順書は **GitHub Actions で本番デプロイできる状態にする**ための、上から順に実行すれば完了する一本道の手順です。
 > コマンドは **Windows PowerShell** 用です。`<...>` の部分だけご自身の値に置き換えてください。

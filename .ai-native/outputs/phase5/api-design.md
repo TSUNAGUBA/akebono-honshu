@@ -993,7 +993,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 ```yaml
 openapi: 3.0.3
 info:
-  title: あけぼの本州 アパレル生産管理 API
+  title: Akebono Honshu アパレル生産管理 API
   version: 1.0.0
   description: |
     MVP API. Firebase Authentication + RDS PostgreSQL バックエンド。

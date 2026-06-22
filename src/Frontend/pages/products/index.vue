@@ -63,7 +63,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
   <main class="mx-auto max-w-7xl px-4 py-8">
     <header class="mb-6 flex items-start justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold">商品管理</h1>
+        <h1 class="text-2xl font-bold">商品一覧</h1>
         <p class="mt-1 text-sm text-gray-500">P-04 商品企画一覧 / P-01〜P-03 新規ウィザード起動</p>
       </div>
       <NuxtLink
