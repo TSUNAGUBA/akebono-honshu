@@ -127,3 +127,12 @@ CLAUDE.md 原則9／方法論SP-8に基づき、独立ロール（コードレ�
 - **状況:** 設計（api-design-production §2.3）は素材単価の詳細/Excel/一覧開示に `price:read` ゲート＋一覧デフォルトマスク＋`MaterialPrice.View` ブロッキング監査を要求。**実コードには専用 price 権限カラムが存在せず**（`users` は4権限のみ）、**既存の仕入単価（PurchaseOrderService/OrderEndpoints）も同じく price 未ゲート**で平文返却。
 - **判定（両レビュー一致）:** 本実装は**既存仕入単価と同水準＝機密保護を退行させていない**。実装可能な是正（`MaterialPrice.View` 監査記録＝金額マスク）は本イテレーションで実施済。
 - **要判断:** price 権限ゲート/デフォルトマスク/ブロッキング監査(AUDIT-001) の本実装は、**既存の仕入単価(発注)と素材発注を一括で対象とする横断改修**（新権限カラム＋移行＋既存発注の改修）。直近スコープ外。次イテレーション（段階C）でオペレーター承認の上、既存・新規一括対応を推奨。
+
+### 8.4 デプロイ不具合修正（2026-06-22 ホットフィックス）
+
+- **事象:** 本番アプリの生産管理3画面（生産手配状況 / 生産指示書 / 素材発注書）が全て「取得に失敗しました（0件）」を表示。
+- **原因（データフロー不整合・原則6）:** 生産管理5テーブルを `db/init/05-production.sql` のみに定義していた。`db/init/*.sql` は**空 DB 初期化専用**（ローカル `docker-entrypoint-initdb.d` / RDS `action=init`）で、iter-4 で初期化済の本番 RDS には届かない。RDS への差分適用は `db/migration/*.sql`（`action=migrate`）が唯一の経路だが、対応するマイグレーションファイルが無かった。バックエンド（`ProductionEndpoints`）はデプロイ済のため、存在しないテーブルを参照し 500（relation does not exist）→ 一覧3画面が全滅。`db-migrate.yml`（run #5）は成功したが `migrate` は `db/init/` を見ないため何も適用していなかった。
+- **修正:**
+  1. `db/migration/iter5-production-schema.sql` を追加（既存 RDS への適用経路）。重複定義を避けるため正規定義 `db/init/05-production.sql` を `\ir` で取込む（原則3/5）。全 DDL 冪等（原則2）・追加のみ（原則7）。
+  2. `deploy/db/run-migrations.sh` の `init` を `db/init/*.sql` の glob 適用に修正（従来 01–04 ハードコードで 05 を取りこぼし）。新規 init ファイル追加時の付け忘れを防止（原則1）。
+- **オペレーター作業:** マージ後に GitHub Actions「DB Init / Migrate (RDS)」を **action=migrate** で実行 → 本番 RDS に5テーブルを追加適用。バックエンド再デプロイは不要（コード変更なし）。

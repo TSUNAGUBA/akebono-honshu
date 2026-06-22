@@ -16,8 +16,9 @@
 #   - DB_HOST DB_PORT DB_NAME DB_ADMIN_USER DB_ADMIN_PASSWORD
 #
 # 冪等性 (CLAUDE.md 原則 2 / 7):
-#   - init  : public.users が既に存在すれば中止 (既存データ保護)。db/init/01..04 を投入後、
-#             現行スキーママイグレーションを「適用済み」として schema_migrations に baseline 記録。
+#   - init  : public.users が既に存在すれば中止 (既存データ保護)。db/init/*.sql を番号順に
+#             全投入後、現行スキーママイグレーションを「適用済み」として schema_migrations に
+#             baseline 記録。
 #             (db/init は現行スキーマを反映済 = iter4-tz-to-jst-naive.sql 等は init に内包される)
 #   - migrate: schema_migrations 台帳に無いマイグレーションのみ順に適用 (再実行で二重適用しない)。
 #   - MIG-3 (mig-3-*.sql) は CSV データ取込のため除外 — UI (/admin/legacy-import) から実施する
@@ -100,10 +101,14 @@ case "${ACTION}" in
       echo "       スキーマ更新は action=migrate を使用してください。" >&2
       exit 1
     fi
-    for f in db/init/01-schema.sql db/init/02-masters.sql db/init/03-products.sql db/init/04-orders.sql; do
+    # db/init の全スキーマファイルを番号順に適用 (01-schema..05-production..)。
+    # ハードコードせず glob することで、新規 init ファイル追加時の付け忘れを防ぐ
+    # (原則1: 手動メンテを残さない。schema_migration_files と同じ find|sort パターン)。
+    while IFS= read -r f; do
+      [ -z "${f}" ] && continue
       echo "   applying ${f}"
       psql_run -f "/${f}"
-    done
+    done < <(find db/init -maxdepth 1 -type f -name '*.sql' | sort)
     ensure_ledger
     # baseline: db/init は現行スキーマを反映済のため、現行マイグレーションは「実行せず適用済み記録」する。
     while IFS= read -r f; do
