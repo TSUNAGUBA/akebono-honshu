@@ -1,0 +1,313 @@
+using Akebono.Application.Common;
+using Akebono.Domain.Common;
+using Akebono.Domain.Production;
+using Microsoft.EntityFrameworkCore;
+
+namespace Akebono.Application.Production;
+
+/// <summary>
+/// 生産指示書 (加工指図書) Application サービス (Phase 5 §PI-01〜04)。
+/// 既存 PurchaseOrderService と同じ「ヘッダ＋明細＋snapshot凍結＋status遷移」パターン。
+/// 採番 (instruction_no = YY-PI-NNNNN) は advisory lock でトランザクション内直列化 (RP-8)。
+/// </summary>
+public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger audit)
+{
+    private const int MaxNumberingRetries = 3;
+
+    /// <summary>新規作成 (PI-01)。status=Draft。明細合計を planned_quantity に整合。</summary>
+    public async Task<ProductionInstruction> CreateAsync(CreatePiRequest req, long actorUserId, CancellationToken ct = default)
+    {
+        if (req.Lines.Count == 0)
+            throw new ArgumentException("明細を 1 件以上指定してください (PINST-001)");
+        if (req.Lines.Any(l => l.Quantity <= 0))
+            throw new ArgumentException("生産数量は正の数を指定してください (PINST-001)");
+        if (req.Lines.GroupBy(l => l.ProductId).Any(g => g.Count() > 1))
+            throw new ArgumentException("同一 SKU が重複しています (PINST-002)");
+
+        // 品番に属する SKU か検証
+        var productIds = req.Lines.Select(l => l.ProductId).ToList();
+        var products = await db.Products
+            .Where(p => productIds.Contains(p.Id) && !p.IsDeleted)
+            .ToListAsync(ct);
+        if (products.Count != productIds.Count)
+            throw new ArgumentException("指定された SKU の一部が存在しません (PINST-003)");
+        if (products.Any(p => p.ProductFamilyId != req.ProductFamilyId))
+            throw new ArgumentException("指定 SKU が品番に属していません (PINST-003)");
+
+        var family = await db.ProductFamilies.FirstOrDefaultAsync(f => f.Id == req.ProductFamilyId, ct)
+            ?? throw new ArgumentException("品番が存在しません (PINST-003)");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            var now = SystemTime.Now;
+            var instructionNo = await GenerateInstructionNoAsync(ct);
+
+            var pi = new ProductionInstruction
+            {
+                InstructionNo = instructionNo,
+                ProductFamilyId = req.ProductFamilyId,
+                FactorySupplierId = req.FactorySupplierId,
+                PlannedQuantity = req.Lines.Sum(l => l.Quantity),
+                DueDate = req.DueDate,
+                Status = ProductionInstructionStatus.Draft,
+                CommunicationText = req.CommunicationText,
+                CreatedAt = now, UpdatedAt = now,
+                CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
+            };
+            db.ProductionInstructions.Add(pi);
+            await db.SaveChangesAsync(ct);
+
+            short lineNo = 1;
+            var productById = products.ToDictionary(p => p.Id);
+            foreach (var l in req.Lines)
+            {
+                var product = productById[l.ProductId];
+                db.ProductionInstructionLines.Add(new ProductionInstructionLine
+                {
+                    ProductionInstructionId = pi.Id,
+                    LineNo = lineNo++,
+                    ProductId = product.Id,
+                    SkuSnapshot = product.Sku,
+                    ProductNameSnapshot = family.ProductName1,
+                    Quantity = l.Quantity,
+                    CreatedAt = now, UpdatedAt = now,
+                    CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
+                });
+            }
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            await audit.LogAsync(actorUserId, "ProductionInstruction.Create",
+                entityType: "ProductionInstruction", entityId: pi.Id,
+                note: $"instruction_no={pi.InstructionNo}, qty={pi.PlannedQuantity}", cancellationToken: ct);
+            return pi;
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    /// <summary>一覧 (PI-02)。</summary>
+    public async Task<List<PiListItem>> ListAsync(long actorUserId, bool includeCancelled, CancellationToken ct = default)
+    {
+        var query = db.ProductionInstructions
+            .Include(p => p.FactorySupplier)
+            .Include(p => p.ProductFamily)
+            .Where(p => !p.IsDeleted);
+        if (!includeCancelled)
+            query = query.Where(p => p.Status != ProductionInstructionStatus.Cancelled);
+
+        var rows = await query
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                P = p,
+                FirstSku = p.Lines.OrderBy(l => l.LineNo).Select(l => l.SkuSnapshot).FirstOrDefault(),
+            })
+            .ToListAsync(ct);
+
+        var result = rows.Select(x => new PiListItem(
+            x.P.Id, x.P.InstructionNo, Sku9(x.FirstSku), x.P.ProductFamily?.ProductName1 ?? "?",
+            x.P.FactorySupplier?.Code ?? "?", x.P.FactorySupplier?.Name ?? "?",
+            x.P.PlannedQuantity, x.P.DueDate, (short)x.P.Status,
+            x.P.FirstExportedAt is null ? "unexported" : "exported",
+            x.P.FirstExportedAt, x.P.CreatedAt, x.P.UpdatedAt)).ToList();
+
+        await audit.LogAsync(actorUserId, "ProductionInstruction.List",
+            entityType: "ProductionInstruction", note: $"count={result.Count}", cancellationToken: ct);
+        return result;
+    }
+
+    /// <summary>詳細 (PI-03 編集画面ベース)。</summary>
+    public async Task<PiDetail?> GetDetailAsync(long id, long actorUserId, CancellationToken ct = default)
+    {
+        var pi = await db.ProductionInstructions
+            .Include(p => p.FactorySupplier)
+            .Include(p => p.ProductFamily)
+            .FirstOrDefaultAsync(p => p.Id == id, ct);
+        if (pi is null) return null;
+
+        var lines = await db.ProductionInstructionLines
+            .Include(l => l.Product).ThenInclude(p => p!.Color)
+            .Include(l => l.Product).ThenInclude(p => p!.Size)
+            .Where(l => l.ProductionInstructionId == id)
+            .OrderBy(l => l.LineNo)
+            .ToListAsync(ct);
+
+        var sku9 = Sku9(lines.FirstOrDefault()?.SkuSnapshot);
+        await audit.LogAsync(actorUserId, "ProductionInstruction.View",
+            entityType: "ProductionInstruction", entityId: id, note: $"instruction_no={pi.InstructionNo}", cancellationToken: ct);
+
+        return new PiDetail(
+            pi.Id, pi.InstructionNo, pi.ProductFamilyId, sku9, pi.ProductFamily?.ProductName1 ?? "?",
+            pi.FactorySupplierId, pi.FactorySupplier?.Code ?? "?", pi.FactorySupplier?.Name ?? "?",
+            pi.PlannedQuantity, pi.DueDate, (short)pi.Status,
+            pi.InstructedAt, pi.CompletedAt, pi.CancelledAt, pi.CancelReason,
+            pi.CommunicationText, pi.FirstExportedAt, pi.LastExportedAt, pi.CreatedAt, pi.UpdatedAt,
+            lines.Select(l => new PiLineDetail(
+                l.Id, l.LineNo, l.ProductId, l.SkuSnapshot, l.ProductNameSnapshot,
+                l.Product?.Color?.Name ?? "?", l.Product?.Size?.Name ?? "?", l.Quantity)).ToList());
+    }
+
+    /// <summary>編集 (PI-03)。Draft/Issued のみ。明細は全削除→再INSERT。</summary>
+    public async Task<ProductionInstruction?> UpdateAsync(long id, UpdatePiRequest req, long actorUserId, CancellationToken ct = default)
+    {
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        if (pi is null) return null;
+        if (pi.Status is ProductionInstructionStatus.Cancelled or ProductionInstructionStatus.Completed)
+            throw new InvalidOperationException("中止済/完了済の生産指示は編集できません (PINST-004)");
+        if (req.Lines.Count == 0 || req.Lines.Any(l => l.Quantity <= 0))
+            throw new ArgumentException("生産数量は正の数を指定してください (PINST-001)");
+        if (req.Lines.GroupBy(l => l.ProductId).Any(g => g.Count() > 1))
+            throw new ArgumentException("同一 SKU が重複しています (PINST-002)");
+
+        var productIds = req.Lines.Select(l => l.ProductId).ToList();
+        var products = await db.Products.Where(p => productIds.Contains(p.Id) && !p.IsDeleted).ToListAsync(ct);
+        if (products.Count != productIds.Count || products.Any(p => p.ProductFamilyId != pi.ProductFamilyId))
+            throw new ArgumentException("指定 SKU が品番に属していません (PINST-003)");
+        var family = await db.ProductFamilies.FirstAsync(f => f.Id == pi.ProductFamilyId, ct);
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            var now = SystemTime.Now;
+            pi.FactorySupplierId = req.FactorySupplierId;
+            pi.DueDate = req.DueDate;
+            pi.CommunicationText = req.CommunicationText;
+            pi.PlannedQuantity = req.Lines.Sum(l => l.Quantity);
+            pi.UpdatedAt = now;
+            pi.UpdatedByUserId = actorUserId;
+
+            var existing = await db.ProductionInstructionLines.Where(l => l.ProductionInstructionId == id).ToListAsync(ct);
+            db.ProductionInstructionLines.RemoveRange(existing);
+            await db.SaveChangesAsync(ct);
+
+            short lineNo = 1;
+            var productById = products.ToDictionary(p => p.Id);
+            foreach (var l in req.Lines)
+            {
+                var product = productById[l.ProductId];
+                db.ProductionInstructionLines.Add(new ProductionInstructionLine
+                {
+                    ProductionInstructionId = pi.Id,
+                    LineNo = lineNo++,
+                    ProductId = product.Id,
+                    SkuSnapshot = product.Sku,
+                    ProductNameSnapshot = family.ProductName1,
+                    Quantity = l.Quantity,
+                    CreatedAt = now, UpdatedAt = now,
+                    CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
+                });
+            }
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            await audit.LogAsync(actorUserId, "ProductionInstruction.Update",
+                entityType: "ProductionInstruction", entityId: id,
+                note: $"instruction_no={pi.InstructionNo}, qty={pi.PlannedQuantity}", cancellationToken: ct);
+            return pi;
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    /// <summary>発行 (PI-03)。Draft→Issued、instructed_at SET。冪等。</summary>
+    public async Task<bool> IssueAsync(long id, long actorUserId, CancellationToken ct = default)
+    {
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        if (pi is null) return false;
+        if (pi.Status == ProductionInstructionStatus.Cancelled)
+            throw new InvalidOperationException("中止済の生産指示は発行できません (PINST-004)");
+        if (pi.Status is ProductionInstructionStatus.Issued or ProductionInstructionStatus.Completed)
+            return true; // 冪等
+
+        var now = SystemTime.Now;
+        pi.Status = ProductionInstructionStatus.Issued;
+        pi.InstructedAt = now;
+        pi.UpdatedAt = now;
+        pi.UpdatedByUserId = actorUserId;
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync(actorUserId, "ProductionInstruction.Issue",
+            entityType: "ProductionInstruction", entityId: id,
+            note: $"instruction_no={pi.InstructionNo}", cancellationToken: ct);
+        return true;
+    }
+
+    /// <summary>生産完了 (PI-03)。Issued→Completed。</summary>
+    public async Task<bool> CompleteAsync(long id, long actorUserId, CancellationToken ct = default)
+    {
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        if (pi is null) return false;
+        if (pi.Status != ProductionInstructionStatus.Issued)
+            throw new InvalidOperationException("発行済の生産指示のみ完了にできます (PINST-004)");
+
+        var now = SystemTime.Now;
+        pi.Status = ProductionInstructionStatus.Completed;
+        pi.CompletedAt = now;
+        pi.UpdatedAt = now;
+        pi.UpdatedByUserId = actorUserId;
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync(actorUserId, "ProductionInstruction.Complete",
+            entityType: "ProductionInstruction", entityId: id,
+            note: $"instruction_no={pi.InstructionNo}", cancellationToken: ct);
+        return true;
+    }
+
+    /// <summary>中止 (PI-03)。status=Cancelled。物理削除しない。冪等。</summary>
+    public async Task<bool> CancelAsync(long id, CancelPiRequest req, long actorUserId, CancellationToken ct = default)
+    {
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        if (pi is null) return false;
+        if (pi.Status == ProductionInstructionStatus.Cancelled) return true; // 冪等
+
+        var now = SystemTime.Now;
+        pi.Status = ProductionInstructionStatus.Cancelled;
+        pi.CancelledAt = now;
+        pi.CancelledByUserId = actorUserId;
+        pi.CancelReason = req.Reason;
+        pi.UpdatedAt = now;
+        pi.UpdatedByUserId = actorUserId;
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync(actorUserId, "ProductionInstruction.Cancel",
+            entityType: "ProductionInstruction", entityId: id,
+            note: $"instruction_no={pi.InstructionNo}, reason={req.Reason}", cancellationToken: ct);
+        return true;
+    }
+
+    /// <summary>11桁品番の上位9桁を取り出す (色×サイズを除いた品番)。</summary>
+    private static string Sku9(string? sku)
+        => string.IsNullOrEmpty(sku) ? "" : (sku.Length >= 9 ? sku[..9] : sku);
+
+    /// <summary>instruction_no 採番 (YY-PI-NNNNN)。呼び出し元のトランザクション内で advisory lock を取得。</summary>
+    private async Task<string> GenerateInstructionNoAsync(CancellationToken ct)
+    {
+        var year2 = SystemTime.Now.Year % 100;
+        var prefix = $"{year2:D2}-PI-";
+        var lockKey = $"PI-{year2:D2}";
+        for (var attempt = 0; attempt < MaxNumberingRetries; attempt++)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)", ct);
+            var existing = await db.ProductionInstructions
+                .Where(p => p.InstructionNo.StartsWith(prefix))
+                .Select(p => p.InstructionNo)
+                .ToListAsync(ct);
+            var maxSeq = existing
+                .Select(s => s.Length > prefix.Length && int.TryParse(s.AsSpan(prefix.Length), out var n) ? n : 0)
+                .DefaultIfEmpty(0).Max();
+            var candidate = $"{prefix}{maxSeq + 1:D5}";
+            if (!await db.ProductionInstructions.AnyAsync(p => p.InstructionNo == candidate, ct))
+                return candidate;
+        }
+        throw new InvalidOperationException("生産指示番号の採番に失敗しました。再試行してください (PINST-005)");
+    }
+}

@@ -2,6 +2,7 @@ using Akebono.Application.Common;
 using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
 using Akebono.Domain.Orders;
+using Akebono.Domain.Production;
 using Akebono.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -42,6 +43,13 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
     public DbSet<PurchaseOrderExportLog> PurchaseOrderExportLogs => Set<PurchaseOrderExportLog>();
+
+    // 生産管理拡張 (Iteration 5)
+    public DbSet<ProductMaterial> ProductMaterials => Set<ProductMaterial>();
+    public DbSet<ProductionInstruction> ProductionInstructions => Set<ProductionInstruction>();
+    public DbSet<ProductionInstructionLine> ProductionInstructionLines => Set<ProductionInstructionLine>();
+    public DbSet<MaterialOrder> MaterialOrders => Set<MaterialOrder>();
+    public DbSet<MaterialOrderLine> MaterialOrderLines => Set<MaterialOrderLine>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -345,6 +353,150 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.ExportedByUserId).HasColumnName("exported_by_user_id");
             b.Property(x => x.IsFirstExport).HasColumnName("is_first_export");
             b.Property(x => x.ExcelTemplateVersion).HasColumnName("excel_template_version").IsRequired().HasMaxLength(16);
+        });
+
+        // 生産管理拡張 (Iteration 5、data-design-production §4)
+        modelBuilder.Entity<ProductMaterial>(b =>
+        {
+            b.ToTable("product_materials");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.MaterialRole).HasColumnName("material_role").HasConversion<short>();
+            b.Property(x => x.MaterialId).HasColumnName("material_id");
+            b.Property(x => x.RequiredQtyPerUnit).HasColumnName("required_qty_per_unit").HasColumnType("numeric(12,4)");
+            b.Property(x => x.Unit).HasColumnName("unit").IsRequired().HasMaxLength(8);
+            b.Property(x => x.RecommendedSupplierId).HasColumnName("recommended_supplier_id");
+            b.Property(x => x.LossRate).HasColumnName("loss_rate").HasColumnType("numeric(5,4)");
+            b.Property(x => x.Remark).HasColumnName("remark").HasMaxLength(255);
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.ProductFamily).WithMany().HasForeignKey(x => x.ProductFamilyId);
+            b.HasOne(x => x.Material).WithMany().HasForeignKey(x => x.MaterialId);
+            b.HasOne(x => x.RecommendedSupplier).WithMany().HasForeignKey(x => x.RecommendedSupplierId);
+        });
+
+        modelBuilder.Entity<ProductionInstruction>(b =>
+        {
+            b.ToTable("production_instructions");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.InstructionNo).HasColumnName("instruction_no").IsRequired().HasMaxLength(16);
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.FactorySupplierId).HasColumnName("factory_supplier_id");
+            b.Property(x => x.PlannedQuantity).HasColumnName("planned_quantity");
+            b.Property(x => x.DueDate).HasColumnName("due_date");
+            b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
+            b.Property(x => x.InstructedAt).HasColumnName("instructed_at");
+            b.Property(x => x.CompletedAt).HasColumnName("completed_at");
+            b.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
+            b.Property(x => x.CancelledByUserId).HasColumnName("cancelled_by_user_id");
+            b.Property(x => x.CancelReason).HasColumnName("cancel_reason").HasMaxLength(255);
+            b.Property(x => x.FactoryOfficialNameSnapshot).HasColumnName("factory_official_name_snapshot").HasMaxLength(255);
+            b.Property(x => x.FactoryCodeSnapshot).HasColumnName("factory_code_snapshot").HasMaxLength(3);
+            b.Property(x => x.ProductSku9Snapshot).HasColumnName("product_sku9_snapshot").HasMaxLength(9);
+            b.Property(x => x.ProductNameSnapshot).HasColumnName("product_name_snapshot").HasMaxLength(255);
+            b.Property(x => x.CommunicationText).HasColumnName("communication_text");
+            b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
+            b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
+
+            b.HasOne(x => x.ProductFamily).WithMany().HasForeignKey(x => x.ProductFamilyId);
+            b.HasOne(x => x.FactorySupplier).WithMany().HasForeignKey(x => x.FactorySupplierId);
+            b.HasMany(x => x.Lines).WithOne(l => l.ProductionInstruction!).HasForeignKey(l => l.ProductionInstructionId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(x => x.InstructionNo).IsUnique();
+        });
+
+        modelBuilder.Entity<ProductionInstructionLine>(b =>
+        {
+            b.ToTable("production_instruction_lines");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.ProductionInstructionId).HasColumnName("production_instruction_id");
+            b.Property(x => x.LineNo).HasColumnName("line_no");
+            b.Property(x => x.ProductId).HasColumnName("product_id");
+            b.Property(x => x.SkuSnapshot).HasColumnName("sku_snapshot").IsRequired().HasMaxLength(11);
+            b.Property(x => x.ProductNameSnapshot).HasColumnName("product_name_snapshot").IsRequired().HasMaxLength(255);
+            b.Property(x => x.Quantity).HasColumnName("quantity");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId);
+            b.HasIndex(x => new { x.ProductionInstructionId, x.LineNo }).IsUnique();
+            b.HasIndex(x => new { x.ProductionInstructionId, x.ProductId }).IsUnique();
+        });
+
+        modelBuilder.Entity<MaterialOrder>(b =>
+        {
+            b.ToTable("material_orders");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.OrderNo).HasColumnName("order_no").IsRequired().HasMaxLength(16);
+            b.Property(x => x.MaterialSupplierId).HasColumnName("material_supplier_id");
+            b.Property(x => x.ProductionInstructionId).HasColumnName("production_instruction_id");
+            b.Property(x => x.DueDate).HasColumnName("due_date");
+            b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
+            b.Property(x => x.InstructedAt).HasColumnName("instructed_at");
+            b.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
+            b.Property(x => x.CancelledByUserId).HasColumnName("cancelled_by_user_id");
+            b.Property(x => x.CancelReason).HasColumnName("cancel_reason").HasMaxLength(255);
+            b.Property(x => x.SupplierOfficialNameSnapshot).HasColumnName("supplier_official_name_snapshot").HasMaxLength(255);
+            b.Property(x => x.SupplierCodeSnapshot).HasColumnName("supplier_code_snapshot").HasMaxLength(3);
+            b.Property(x => x.CommunicationText).HasColumnName("communication_text");
+            b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
+            b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
+
+            b.HasOne(x => x.MaterialSupplier).WithMany().HasForeignKey(x => x.MaterialSupplierId);
+            b.HasOne(x => x.ProductionInstruction).WithMany().HasForeignKey(x => x.ProductionInstructionId);
+            b.HasMany(x => x.Lines).WithOne(l => l.MaterialOrder!).HasForeignKey(l => l.MaterialOrderId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(x => x.OrderNo).IsUnique();
+        });
+
+        modelBuilder.Entity<MaterialOrderLine>(b =>
+        {
+            b.ToTable("material_order_lines");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.MaterialOrderId).HasColumnName("material_order_id");
+            b.Property(x => x.LineNo).HasColumnName("line_no");
+            b.Property(x => x.MaterialId).HasColumnName("material_id");
+            b.Property(x => x.MaterialNameSnapshot).HasColumnName("material_name_snapshot").IsRequired().HasMaxLength(255);
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.SourcePiLineId).HasColumnName("source_pi_line_id");
+            b.Property(x => x.RequiredQuantity).HasColumnName("required_quantity").HasColumnType("numeric(14,4)");
+            b.Property(x => x.Unit).HasColumnName("unit").IsRequired().HasMaxLength(8);
+            b.Property(x => x.UnitPrice).HasColumnName("unit_price").HasColumnType("numeric(12,2)");
+            b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
+            b.Property(x => x.Subtotal)
+                .HasColumnName("subtotal")
+                .HasColumnType("numeric(16,2)")
+                .HasComputedColumnSql("required_quantity * COALESCE(unit_price, 0)", stored: true)
+                .ValueGeneratedOnAddOrUpdate();
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.Material).WithMany().HasForeignKey(x => x.MaterialId);
+            b.HasOne(x => x.ProductFamily).WithMany().HasForeignKey(x => x.ProductFamilyId);
+            b.HasIndex(x => new { x.MaterialOrderId, x.LineNo }).IsUnique();
         });
     }
 

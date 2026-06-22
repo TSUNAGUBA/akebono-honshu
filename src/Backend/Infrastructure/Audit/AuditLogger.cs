@@ -2,11 +2,22 @@ using Akebono.Application.Common;
 using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
 using Akebono.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Akebono.Infrastructure.Audit;
 
-public class AuditLogger(AkebonoDbContext db) : IAuditLogger
+/// <summary>
+/// 監査ログ記録 (IAuditLogger 実装)。
+/// CLAUDE.md 原則4 (非ブロッキング): 監査は補助処理であり、その失敗が主フローを止めない。
+/// 主処理は呼び出し前に確定済み (Service は commit 後に LogAsync を呼ぶ) のため、
+/// ここでの SaveChanges 失敗は warning に留め握り潰す (主データは保持される)。
+/// note は audit_logs.note (VARCHAR 512) を超えないよう安全に切詰める。
+/// </summary>
+public class AuditLogger(AkebonoDbContext db, ILogger<AuditLogger> logger) : IAuditLogger
 {
+    private const int NoteMaxLength = 512;
+
     public async Task LogAsync(
         long? actorUserId,
         string action,
@@ -16,7 +27,7 @@ public class AuditLogger(AkebonoDbContext db) : IAuditLogger
         string? note = null,
         CancellationToken cancellationToken = default)
     {
-        db.AuditLogs.Add(new AuditLog
+        var entry = db.AuditLogs.Add(new AuditLog
         {
             OccurredAt = SystemTime.Now,
             ActorUserId = actorUserId,
@@ -24,8 +35,20 @@ public class AuditLogger(AkebonoDbContext db) : IAuditLogger
             EntityType = entityType,
             EntityId = entityId,
             Result = (short)(success ? AuditResult.Success : AuditResult.Failure),
-            Note = note,
+            Note = note is { Length: > NoteMaxLength } ? note[..NoteMaxLength] : note,
         });
-        await db.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // 監査記録の失敗で主操作 (確定済み) を 5xx にしない。追跡用に warning を残す。
+            entry.State = EntityState.Detached;
+            logger.LogWarning(ex,
+                "監査ログ記録に失敗しました (action={Action}, entity={EntityType}/{EntityId}, actor={Actor})",
+                action, entityType, entityId, actorUserId);
+        }
     }
 }
