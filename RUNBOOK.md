@@ -173,10 +173,10 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 \q
 ```
 
-##### Step 2. スキーマ初期化 (4 ファイルを順に投入)
+##### Step 2. スキーマ初期化 (db/init/*.sql を番号順に投入)
 
 ```bash
-# 新規 DB に接続し直し、初期化スクリプトを順に投入
+# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..05)
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
@@ -188,6 +188,10 @@ psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=re
 
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/04-orders.sql
+
+# 生産管理拡張 (BOM/生産指示書/素材発注書)。Iter 5 で追加
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/05-production.sql
 
 # 動作確認
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \

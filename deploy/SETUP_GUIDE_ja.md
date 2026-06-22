@@ -246,7 +246,7 @@ GitHub の **Actions** タブから手動実行します。
 
 ### 6-1. DB 初期化
 `Actions → DB Init / Migrate (RDS) → Run workflow` → `action` で **`init`** を選択 → Run。
-- 空 DB に `db/init/01..04` を投入し、現行マイグレーションを baseline 記録します。
+- 空 DB に `db/init/*.sql`（01..05）を番号順に投入し、現行マイグレーションを baseline 記録します。
 - 緑（成功）になったら次へ。
 
 ### 6-2. Backend デプロイ
