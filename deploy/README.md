@@ -213,6 +213,7 @@ flowchart LR
    - 既に `public.users` がある DB では **安全のため中止**する (データ保護)。
 2. **以後のスキーマ変更:** `db/migration/` に `mig-3-*` 以外の `*.sql` を追加 → `action = migrate`。
    - 台帳 (`schema_migrations`) に無いものだけを順に適用する (再実行で二重適用しない)。
+   - **既存(稼働中)DB へリアルなデモ業務データを反映**する場合も本 migrate を使う。`init` は既存 DB で中止されるため、`db/init/06-demo-data.sql` の内容は `iter6-demo-data.sql`（`\ir` で 06 を取り込む。冪等）が migrate 時に適用する。
 3. **MIG-3 (既存 CSV データ取込)** は本ワークフロー対象外。UI `/admin/legacy-import` から実施する
    (`db/migration/README.md`)。
 

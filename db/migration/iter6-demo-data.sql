@@ -1,0 +1,25 @@
+-- ============================================================================
+-- iter6-demo-data.sql — 既存(稼働中)DB へリアルなデモ業務データを適用するマイグレーション
+-- ----------------------------------------------------------------------------
+-- 背景:
+--   db/init/06-demo-data.sql は「新規 DB 構築」でのみ自動投入される:
+--     - docker compose 初回 (docker-entrypoint-initdb.d が db/init/*.sql を番号順実行)
+--     - run-migrations.sh action=init (空 DB のみ。users が既存なら中止＝データ保護)
+--   稼働中の RDS は users 等が既に存在するため init が走らず、db/init/06 を追加しても
+--   反映されない。そこで本マイグレーション (db-migrate.yml の action=migrate) で
+--   同じデータを既存 DB へ適用する。run-migrations.sh は schema_migrations 台帳で
+--   未適用分のみ適用し、二重適用を防ぐ (前進専用)。
+--
+-- 単一 SoT:
+--   投入内容の正規定義は db/init/06-demo-data.sql の 1 ファイル。重複定義を避けるため
+--   psql の \ir (include relative = 本ファイルからの相対) で取り込む。
+--   - 既存 DB へ migrate: 本ファイル＝/db/migration/iter6-demo-data.sql → ../init/ = /db/init/06-demo-data.sql に解決
+--   - リポジトリから手動 psql -f db/migration/iter6-demo-data.sql でも同様に db/init/06 を解決
+--
+-- 冪等:
+--   取り込む 06 は全 INSERT が ON CONFLICT DO NOTHING、改名 UPDATE も再実行 no-op のため
+--   何度適用しても安全 (CLAUDE.md 原則2)。既存業務データは破壊しない (原則7)。
+--   なお新規 DB の action=init では db/init/06 が直接投入され、本ファイルは run-migrations.sh が
+--   「実行せず台帳に baseline 記録」するため二重投入は起きない (fresh/既存いずれも安全)。
+-- ============================================================================
+\ir ../init/06-demo-data.sql

@@ -11,6 +11,11 @@
 > GitHub Actions「DB Init / Migrate (RDS)」を `action=migrate` で実行すれば
 > `run-migrations.sh` が `schema_migrations` 台帳に基づき自動適用します
 > （前進専用・二重適用防止）。手順は `deploy/README.md` §3.2 を参照。
+>
+> なお `iter6-demo-data.sql` は **リアルなデモ業務データ**（商品・付属情報・発注・生産）を
+> 既存(稼働中)DB へ反映するシードです（`db/init/06-demo-data.sql` を `\ir` で取り込む単一 SoT、
+> 全 INSERT 冪等）。スキーマ変更ではありませんが、`init` は既存 DB で中止されるため、
+> 同じく `action=migrate` で適用されます。
 
 ---
 
