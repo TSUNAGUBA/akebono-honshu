@@ -66,7 +66,7 @@
 | 処理 | `production_instructions`(Draft)＋`production_instruction_lines` 生成、`instruction_no`(YY-PI-NNNNN)を advisory lock+リトライで採番、planned_quantity＝明細合計を整合 |
 | 出力 | 生産指示書プレビュー、詳細へ |
 | 業務ルール | 数量>0、同一SKU重複不可。Idempotency-Key で二重作成防止 |
-| エラー | `PINST-001`(数量0), `PINST-002`(SKU重複), `PINST-003`(品番にSKU未展開/family不一致) |
+| エラー | `PINST-001`(数量0), `PINST-002`(SKU重複), `PINST-003`(品番にSKU未展開/family不一致), `PINST-005`(採番リトライ上限超過) |
 | 認可 | `purchase_order:write` |
 
 #### PI-02: 生産指示書 一覧・検索
@@ -108,7 +108,7 @@
 | 処理 | B-02展開を初期値に、素材仕入先別に `material_orders`(Draft)＋`material_order_lines` 生成、`order_no`(YY-MO-NNNNN)を advisory lock+リトライ採番。各明細に由来品番(`product_family_id`)保持。**1リクエスト=1発注=1採番の独立トランザクション**（複数仕入先は逐次POST、監査C-4/M-1） |
 | 出力 | 素材発注書プレビュー（仕入先別に複数生成され得る）、詳細へ |
 | 業務ルール | BOM未登録は `MORD-001`。数量>0、単価≥0。Idempotency-Key 必須 |
-| エラー | `MORD-001`(BOM未登録), `MORD-002`(数量/単価不正) |
+| エラー | `MORD-001`(BOM未登録), `MORD-002`(数量/単価不正), `MORD-004`(採番リトライ上限超過) |
 | 認可 | `purchase_order:write` **AND** `price:write`（単価設定を伴うため、既存仕入単価と同一保護、監査C-2） |
 
 #### MO-02: 素材発注書 一覧・検索
@@ -139,7 +139,7 @@
 | 業務ルール | 単価を帳票に含むため開示扱い。`Excel.Export`＋`MaterialPrice.View` 監査を**ブロッキング**で記録（監査M-4） |
 | 認可 | `purchase_order:read` **AND** `price:read` |
 | 性能 | 5秒以内 |
-| エラー | `EXPORT-001`/`EXPORT-002`（監視対象） |
+| エラー | `EXPORT-001`/`EXPORT-002`（監視対象）, `AUDIT-001`（機密閲覧監査の記録失敗時に出力拒否） |
 
 ### 2.4 生産手配ステータス（PS-NN）
 
@@ -148,11 +148,11 @@
 |------|------|
 | 入力 | 既存商品一覧（P-04）への列追加 or 専用「生産手配」一覧。フィルタ(素材発注 未/済, 生産指示 未/済) |
 | 処理 | 品番ごとに**派生算出**（data-design §7.2 のEXISTS、**明細 is_deleted は参照せず**親 status・is_deleted で判定、部分インデックス利用、N+1なし） |
-| 出力 | 各品番行に「素材発注: 未/済」「生産指示: 未/済」バッジ。フィルタで未手配のみ抽出 |
+| 出力 | 各品番行に「素材発注: 未/済」「生産指示: 未/済」バッジ。**BOM未登録品番は「BOM未登録（手配前）」を別表示**し手配漏れ（手配可なのに未）と区別（監査Minor）。フィルタで未手配のみ抽出 |
 | 業務ルール | 済判定: 生産指示=Issued以上(status 1/2)が存在 / 素材発注=Ordered(status 1)の発注明細が当該品番に存在 |
-| 認可 | `product:read` |
+| 認可 | `product:read`（一覧本体）＋ **`purchase_order:read`（生産バッジ付与の条件、監査Major-2）** |
 | 性能 | 一覧（2,000品番）500ms。部分インデックスで担保 |
-| 遷移 | 「未」バッジクリック→該当作成画面（PI-01/MO-01） |
+| 遷移 | 「未」バッジクリック→該当作成画面（PI-01/MO-01）。導線は `purchase_order:write` 保有時のみ活性（非保有は aria-disabled＋理由、監査Major-2） |
 
 ---
 
@@ -165,11 +165,11 @@
 | BR-P3 | 生産指示は品番×生産1回単位。色×サイズ別数量を明細で持つ | PI-01 |
 | BR-P4 | 素材発注数量(推奨)= `Σ(所要量×生産数量)`。**ロス率は任意(DEFAULT 0)、設定時のみ `×(1+loss_rate)`**（M-1反映）。手調整可 | MO-01 |
 | BR-P5 | 素材発注は素材仕入先別にヘッダ、明細に由来品番を保持 | MO-01 |
-| BR-P6 | 未/済は品番ごと派生算出（生産指示=Issued以上、素材発注=Ordered。明細is_deleted非参照） | PS-01 |
+| BR-P6 | 未/済は品番ごと派生算出（生産指示=Issued以上、素材発注=Ordered。明細is_deleted非参照）。素材発注の品番ロールアップは `material_order_lines.product_family_id` に依存（prepare経由は充足、完全手動NULL明細は寄与しない、監査CR Minor-2） | PS-01 |
 | BR-P7 | 採番: 生産指示=YY-PI-NNNNN、素材発注=YY-MO-NNNNN。**advisory lock+リトライで同時実行安全**（監査C-4） | PI-01/MO-01 |
 | BR-P8 | 生産指示・素材発注とも論理削除＋中止状態。Excel出力は中止後も可 | PI-03/MO-03 |
 | BR-P9 | 帳票宛名は初回Excel出力時にスナップショット凍結（既存F-22と同方針） | PI-04/MO-04 |
-| BR-P10 | 監査: BOM/生産指示/素材発注の C/U/D＋Excel出力＋素材単価閲覧。**機密閲覧(MaterialPrice.View)/Excel.Exportはブロッキング監査**、一般C/U/Dは非ブロッキング（監査M-4） | C-03拡張 |
+| BR-P10 | 監査: BOM/生産指示/素材発注の C/U/D＋Excel出力＋素材単価閲覧。**機密閲覧(MaterialPrice.View)/Excel.Exportは明示サービス層INSERTで短命Tx＋2sタイムアウトのブロッキング監査、永続失敗時 `AUDIT-001` で開示拒否**（一般C/U/Dは非ブロッキング、監査M-4/Major-3。`MaterialPrice.View` は既存 data-design.md §6.1 へ追記） | C-03拡張 |
 | BR-P11 | BOM未登録の品番は素材発注の所要量展開をブロック（MORD-001）。誤発注防止（監査C-3） | MO-01 |
 
 ---
@@ -184,9 +184,9 @@
 | PI-01〜04（生産指示） | `purchase_order:write` / `purchase_order:read` | purchase_order_create_permission |
 | MO-01/03（素材発注 更新・単価設定） | `purchase_order:write` AND `price:write` | purchase_order_create + 価格権限 |
 | MO-02/04（素材発注 参照・金額開示） | `purchase_order:read`（金額開示は AND `price:read`） | 同上 |
-| PS-01（未済一覧） | `product:read` | product_ledger_permission |
+| PS-01（未済一覧・生産バッジ） | `product:read`（一覧本体）＋ `purchase_order:read`（生産バッジ付与の条件、監査Major-2） | product_ledger ＋ purchase_order_create |
 
-> **割当根拠:** 生産指示・素材発注は**作成/編集を伴う書込操作**のため、write/read を分離できる「発注書作成権限」(`purchase_order_create`, 3値)に割当（2値の `purchase_order_info` ではなく）。素材単価は既存仕入単価と同一機密度のため `price` 権限と AND。**オペレーター確認で `purchase_order_info`/`process_record` への変更も可**（D-prod-7）。
+> **割当根拠:** 生産指示・素材発注は作成/編集を伴う書込操作のため、既存「発注書作成権限」(`purchase_order_create`) の write gate（既存 `CheckOrderEditAsync`、`>= 1`）を**再利用**。BOMは品番属性のため `CheckMasterEditAsync`（`product_ledger_permission >= 1`）を再利用。**権限値は非単調（1=更新可能/2=参照のみ）のため `≥` で read/write を導出せず、既存実装の判定をそのまま使う**（監査Major-1、詳細 data §12）。素材単価は既存 `price` 権限と AND。`purchase_order_info`/`process_record` への変更もオペレーター確認で可（D-prod-7）。
 > **CI Lint（監査M-2）:** 既存R-6（全API `[Authorize]` 必須）に加え、**指定ポリシー名が登録済みポリシー集合に存在するか**を検証（属性有無だけでなく名前解決）。新エンドポイント（prepare/material-requirements 含む）のポリシー名は実在トークンへ。
 
 ---

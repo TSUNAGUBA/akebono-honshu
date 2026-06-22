@@ -502,7 +502,7 @@
 | `actor_firebase_uid` | `VARCHAR(128) NULL` | Firebase UID（users テーブル削除済でも追跡可）|
 | `actor_ip` | `INET NULL` | 操作元 IP |
 | `actor_user_agent` | `VARCHAR(512) NULL` | UA |
-| `action` | `VARCHAR(64) NOT NULL` | 例: `Product.Create`, `Order.Submit`, `Login.Success`, `Auth.LoginRejected.Inactive`, `Auth.UidUnboundProbe`, `Price.View`, `Excel.Export`。認証拒否系は OnTokenValidated 側で記録される (`Login.Failure` という名称は使用しない、§Architecture §5.1 参照) |
+| `action` | `VARCHAR(64) NOT NULL` | 例: `Product.Create`, `Order.Submit`, `Login.Success`, `Auth.LoginRejected.Inactive`, `Auth.UidUnboundProbe`, `Price.View`, `MaterialPrice.View`, `Excel.Export`。認証拒否系は OnTokenValidated 側で記録される (`Login.Failure` という名称は使用しない、§Architecture §5.1 参照)。**生産管理拡張の action（`ProductMaterial.*` / `ProductionInstruction.*` / `MaterialOrder.*` / `MaterialPrice.View`）は `data-design-production.md §6` 参照** |
 | `entity_type` | `VARCHAR(64) NULL` | 対象エンティティ（products, purchase_orders 等）|
 | `entity_id` | `BIGINT NULL` | 対象 ID |
 | `entity_business_key` | `VARCHAR(64) NULL` | 業務 ID（sku, mgmt_no, order_no 等）|
@@ -527,7 +527,7 @@
 > **記録対象（C-03 + SEC-13）:**
 > - 主要トランザクション: product / product_family / product_supplier_price / purchase_order / purchase_order_line の C/U/D
 > - 認証イベント: `Login.Success` (成功) / `Auth.LoginRejected.Inactive` (IsActive=false ユーザ拒否、`actor_user_id` 付き) / `Auth.UidUnboundProbe` (未紐付け Firebase UID 偵察、`actor_user_id=NULL`) / `Logout` / `PasswordReset`。OnTokenValidated 内で per-UID 5 分 atomic de-dup が掛かっているため、同一 UID の連続失敗試行は 5 分に 1 件のみ記録 (audit_logs DoS 増幅対策、`architecture.md §5.1` 参照)
-> - 機密データ閲覧: Price.View（商品詳細での仕入単価表示）
+> - 機密データ閲覧: Price.View（商品詳細での仕入単価表示）、MaterialPrice.View（素材発注の素材単価表示。生産管理拡張、ブロッキング監査、`data-design-production.md §6`）
 > - エクスポート: Excel.Export, CSV.Export, Image.Download
 > - 管理操作: PermissionsChanged, MasterDataChanged
 

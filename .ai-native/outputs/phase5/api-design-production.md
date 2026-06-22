@@ -22,10 +22,13 @@
 > | `PINST-002` | 生産指示 SKU重複 | PI-01 |
 > | `PINST-003` | 品番にSKU未展開/family不一致 | PI-01 |
 > | `PINST-004` | 中止済生産指示の編集不可 | PI-03 |
+> | `PINST-005` | 採番リトライ上限超過（再試行を促す） | PI-01 |
 > | `MORD-001` | BOM未登録（素材発注の所要量展開不可） | MO-01 |
 > | `MORD-002` | 素材発注 数量/単価不正 | MO-01 |
 > | `MORD-003` | 中止済素材発注の編集不可 | MO-03 |
+> | `MORD-004` | 採番リトライ上限超過（再試行を促す） | MO-01 |
 > | `EXPORT-001`/`EXPORT-002` | Excel テンプレ不正/生成失敗（**既存コード再利用**） | PI-04/MO-04 |
+> | `AUDIT-001` | 機密閲覧監査の記録失敗のため開示不可（§2.3 ブロッキング監査） | MO 詳細/Excel |
 >
 > Phase 3 非機能 §7 のエラーコード接頭辞リストに `BOM/PINST/MORD` を追記。
 
@@ -93,7 +96,7 @@
 ```
 **処理:** 単一トランザクションで `production_instructions`(status=0)＋`production_instruction_lines` INSERT、`instruction_no`(YY-PI-NNNNN)を **advisory lock + リトライ**で採番（data-design §5）、`planned_quantity`＝明細合計を整合、SKUスナップショット凍結、audit。`Idempotency-Key` で二重作成防止。
 **Response 201:** `Location`。
-**エラー:** 422 `PINST-001`（数量0）、422 `PINST-002`（同一product_id重複）、422 `PINST-003`（品番にSKU未展開/family不一致）。
+**エラー:** 422 `PINST-001`（数量0）、422 `PINST-002`（同一product_id重複）、422 `PINST-003`（品番にSKU未展開/family不一致）、409 `PINST-005`（採番リトライ上限超過、再試行）。
 
 #### GET /api/v1/production-instructions
 **クエリ:** `?q=`（指示番号/品番/品名/加工先名）、`?filter[status]=Draft,Issued,Completed,Cancelled`、`?filter[factory_supplier_id]=`、`?filter[due_from]=&filter[due_to]=`、`?filter[product_family_id]=`、`?sort=-created_at`、`?page=&per_page=`、`?view=table|card`
@@ -142,22 +145,22 @@
 ```
 **処理:** **独立トランザクション**（1リクエスト=1発注=1採番、監査C-4/M-1: 複数仕入先は逐次POST）で `material_orders`(status=0)＋`material_order_lines` INSERT、`order_no`(YY-MO-NNNNN)を advisory lock + リトライで採番、素材名スナップショット、audit。`Idempotency-Key` 必須。
 **Response 201:** `Location`。
-**エラー:** 422 `MORD-002`（数量0/単価負）、422 `MORD-001`（production_instruction_id 指定だが由来品番にBOMなし）。
+**エラー:** 422 `MORD-002`（数量0/単価負）、422 `MORD-001`（production_instruction_id 指定だが由来品番にBOMなし）、409 `MORD-004`（採番リトライ上限超過、再試行）。
 
 #### POST /{id}/order
 status 0→1、`instructed_at`=now → 当該明細の由来品番の「素材発注=済」。冪等。audit(MaterialOrder.Order)。
 
 #### GET /{id} / /excel
 - 詳細: `unit_price`/`subtotal` を含むため `price:read` 必須。**単価未確定(NULL)明細の subtotal は 0**（data-design Mi-2）。`MaterialPrice.View` 監査（ブロッキング）。
-- Excel: 単価を帳票に出すため `price:read` 必須。初回時に仕入先スナップショット凍結＋`first_exported_at`。`Excel.Export`＋`MaterialPrice.View` 監査（ブロッキング）。
+- Excel: 単価を帳票に出すため `price:read` 必須。初回時に仕入先スナップショット凍結＋`first_exported_at`。`Excel.Export`＋`MaterialPrice.View` 監査（ブロッキング、専用短命Tx＋2sタイムアウト、永続失敗時 `AUDIT-001` で出力拒否＝data §6。可用性トレードオフはオペレーター確認可）。
 
 ### 2.4 品番ごと未/済（PS-01）
 
 | メソッド | パス | 用途 | 認可 |
 |---|---|---|---|
-| `GET` | `/api/v1/products?include=production_status&filter[material_order_state]=undone&filter[production_instruction_state]=done` | 商品一覧に未/済バッジ＋フィルタ | `product:read` |
+| `GET` | `/api/v1/products?include=production_status&filter[material_order_state]=undone&filter[production_instruction_state]=done` | 商品一覧に未/済バッジ＋フィルタ | `product:read`（商品一覧本体）＋ **`purchase_order:read`（生産バッジ付与の条件、監査Major-2）** |
 
-**処理:** `include=production_status` 指定時、各 family 行に EXISTS×2 を SQL で算出（data-design §7.2、**明細 is_deleted は参照せず**親 `mo.status=1 AND mo.is_deleted=FALSE` / `pi.status IN(1,2) AND pi.is_deleted=FALSE`、`idx_pi_family_active`/`idx_mol_family`/`idx_mo_active` 利用、N+1なし）。
+**処理:** `include=production_status` は **`purchase_order:read` 保有時のみ有効**（非保有なら生産バッジ・production_status を付与しない＝情報非対称/導線403回避、監査Major-2）。各 family 行に EXISTS×2 を SQL で算出（data-design §7.2、**明細 is_deleted は参照せず**親 `mo.status=1 AND mo.is_deleted=FALSE` / `pi.status IN(1,2) AND pi.is_deleted=FALSE`、生産指示は `idx_pi_family_active`、素材発注は `idx_mol_family`＋mo の PK lookup で判定、N+1なし）。「未」バッジからの作成導線は `purchase_order:write` 保有時のみ活性。
 **Response 200（data[] に追加）:**
 ```json
 { "family_id": 100, "sku9": "NA1001A40", "product_name_1": "...",
@@ -238,3 +241,4 @@ POST /material-orders/prepare {product_family_id:100} → 422 MORD-001（BOM未�
 |---|---|
 | 2026-06-22 | 初版 |
 | 2026-06-22 v2 | 認可を既存実在トークン(product/purchase_order/price)へ是正＋§2全件反映（監査C-1）/ 素材単価にprice権限AND・デフォルトマスク・MaterialPrice.Viewブロッキング監査（監査C-2/M-4）/ エラーコード接頭辞をBOM/PINST/MORD＋EXPORT再利用に独立化（コードレビュアーC-2）/ 採番をadvisory lock+リトライ・複数発注は独立Tx逐次（監査C-4/M-1）/ prepareは金額非返却/ BOM差分upsert・3FK書戻しなし（監査M-3）/ ロス率任意（M-1）/ 出力履歴audit集約（M-2）/ 未/済クエリの明細is_deleted非参照（コードレビュアーC-1）|
+| 2026-06-22 v3 | 2周目反映: PS-01生産バッジを purchase_order:read 条件・導線は purchase_order:write 活性（SA Major-2）/ 採番リトライ上限 PINST-005/MORD-004・機密監査失敗 AUDIT-001 をエラーコード表と各endpointに追加（SA Minor-3/Major-3）/ 未/済処理から idx_mo_active 参照除去し実行計画記述（CR Major-2）|

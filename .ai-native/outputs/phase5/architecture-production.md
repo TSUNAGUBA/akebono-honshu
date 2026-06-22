@@ -41,7 +41,7 @@ src/Backend/
 ```
 - 依存方向は既存通り（Presentation→Application→Domain←Infrastructure）。
 - 権限: **既存実在トークンのみ使用**（`production_info:*` は不使用＝監査C-1）。BOM=`product:*`、生産指示/素材発注=`purchase_order:*`、素材単価開示/設定=`price:read/write` を AND（data-design §12, functional §4）。CI Lint は既存R-6（全API `[Authorize]`）に加え、**指定ポリシー名が登録済みポリシー集合に存在するかを検証**（属性有無だけでなく名前解決、監査M-2）。
-- 監査: 既存 `audit.LogAsync` / Interceptor に生産系 action（§data-design §6）を追加。**機密閲覧（MaterialPrice.View）・Excel.Export はブロッキング監査**（記録失敗時は開示拒否、一般C/U/Dは非ブロッキング、監査M-4）。
+- 監査: 既存 `audit.LogAsync` / Interceptor に生産系 action（§data-design §6）を追加。**機密閲覧（MaterialPrice.View）・Excel.Export はブロッキング監査**（読取GETは書込Txを経由しないため Interceptor でなく**明示サービス層INSERT**、専用短命Tx＋2sタイムアウト、永続失敗時 `AUDIT-001` で開示拒否、一般C/U/Dは非ブロッキング、監査M-4/Major-3）。`MaterialPrice.View` は action 定義SoTの既存 `data-design.md §6.1` へ追記済。
 - Excel: 既存 `IPurchaseOrderExcelService`（ClosedXML）と同パターンで2サービス追加。テンプレ未入手のため当面は動的生成（既存 Iter3 仮テンプレ同様）、実帳票入手後にテンプレファイル方式へ差替（I/F不変、Iter3知見#5）。
 
 ### A.2 フロントエンド（既存 Nuxt 構成に追加）

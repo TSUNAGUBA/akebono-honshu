@@ -166,7 +166,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除 |
 | 共通監査4列 ＋ `legacy_id` | | |
 
-**インデックス:** `idx_mo_order_no (order_no)`、`idx_mo_supplier (material_supplier_id)`、`idx_mo_instruction (production_instruction_id) WHERE production_instruction_id IS NOT NULL`、`idx_mo_status (status, due_date)`、`idx_mo_dates (created_at DESC)`、`idx_mo_active (id) WHERE status = 1 AND is_deleted = FALSE`（未/済=済 判定の補助）
+**インデックス:** `idx_mo_order_no (order_no)`、`idx_mo_supplier (material_supplier_id)`、`idx_mo_instruction (production_instruction_id) WHERE production_instruction_id IS NOT NULL`、`idx_mo_status (status, due_date)`、`idx_mo_dates (created_at DESC)`（未/済=済 判定は §7.2 の想定実行計画参照。`idx_mol_family` で mol を引き親 mo を PK lookup＋status フィルタ。`(id) WHERE status=1` の部分インデックスは PK 等価結合で選ばれず非効率なため**設けない**＝監査CR Major-2反映）
 **CHECK:** `chk_mo_status CHECK (status IN (0,1,9))`、`chk_mo_ordered_consistency CHECK ((status = 1) = (instructed_at IS NOT NULL))`、`chk_mo_last_after_first CHECK (last_exported_at IS NULL OR first_exported_at IS NOT NULL)`、`chk_mo_cancelled CHECK ((status = 9) = (cancelled_at IS NOT NULL))`
 
 ### 4.5 `material_order_lines` — 素材発注明細（所要量展開）
@@ -178,7 +178,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | `line_no` | `SMALLINT NOT NULL` | 明細番号 |
 | `material_id` | `BIGINT NOT NULL REFERENCES materials(id)` | 素材 |
 | `material_name_snapshot` | `VARCHAR(255) NOT NULL` | 素材名スナップショット |
-| `product_family_id` | `BIGINT NULL REFERENCES product_families(id)` | 由来品番（未/済ロールアップに使用、NULL可） |
+| `product_family_id` | `BIGINT NULL REFERENCES product_families(id)` | 由来品番（未/済ロールアップに使用）。**prepare 経由で作成された明細は必ず充足**。完全手動明細で NULL の場合は未/済に寄与しない（仕様、BR-P6・監査CR Minor-2反映） |
 | `source_pi_line_id` | `BIGINT NULL REFERENCES production_instruction_lines(id)` | 由来の生産指示明細（トレース、NULL可） |
 | `required_quantity` | `NUMERIC(14,4) NOT NULL` | 発注数量（推奨= `Σ所要量×生産数量`、loss_rate設定時 `×(1+loss_rate)`、手調整可） |
 | `unit` | `VARCHAR(8) NOT NULL` | 単位 |
@@ -207,8 +207,8 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 
 > **同時実行安全な採番方式（監査C-4反映、`MAX()+1`単独＋例外頼みを廃止）:**
 > - 採番は**トランザクション内で `pg_advisory_xact_lock(hashtext(<doc_type>||<年度>))` を取得してから** その年度の最大連番+1を確定（App Runner 複数インスタンス・並行作成でも (doc_type, 年度) 単位で直列化）。
-> - **防御多重化:** UNIQUE 制約違反を捕捉した場合は採番を再取得して**自動リトライ**（最大3回、Application 層）。
-> - **複数素材発注の連続作成（1生産指示→複数仕入先、M-1デッドロック対策）:** 各 `POST /material-orders` を**独立トランザクション**で処理（1リクエスト=1発注=1採番）。フロントは仕入先別に逐次 POST（並列禁止）。これにより同一Tx内での複数採番ロック競合・番号穴・部分失敗を回避。
+> - **防御多重化:** UNIQUE 制約違反を捕捉した場合は採番を再取得して**自動リトライ**（最大3回、Application 層）。**リトライ上限超過時は `PINST-005`/`MORD-004`（採番競合、再試行を促す）を返し、トランザクション全体をロールバック**（明細の部分作成なし、監査Minor-3反映）。advisory lock により競合は逐次化されるため上限超過は実質発生しない想定。
+> - **複数素材発注の連続作成（1生産指示→複数仕入先、M-1デッドロック対策）:** 各 `POST /material-orders` を**独立トランザクション**で処理（1リクエスト=1発注=1採番）。フロントは仕入先別に逐次 POST（並列禁止）。これにより同一Tx内での複数採番ロック競合・番号穴・部分失敗を回避。採番Txは「番号確定→即コミット」の最小スコープに保ち、Excel生成等の重処理をロック保持中に含めない（監査Minor-1）。
 > - 年度プレフィックスは採番時点の年度。年度切替時は連番リセット（advisory lock のキーに年度を含むため安全）。
 >
 > **既存 mgmt_no/order_no（完成品発注）との関係:** 既存は `MAX()+1`＋UNIQUE 方式（Iter2知見#2）。本増分の生産系は上記の advisory lock 方式を採用し、既存方式の並行リスクを持ち込まない。**既存の採番方式も同様の改善余地がある旨をオペレーターに申し送る**（本増分のスコープ外、別Issue）。
@@ -223,10 +223,17 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | 生産指示・素材発注（数量・納期・加工先・素材仕入先） | 中 | アクセス制御（§12）＋監査（C/U/D） |
 | BOM（素材構成・所要量・ロス率＝歩留り） | 中 | アクセス制御（§12 product権限）＋監査。**歩留り情報の閲覧範囲はオペレーター確認推奨**（監査I-2、§13 D-prod-8） |
 
-**監査ログ action 追加（既存 `audit_logs.action` 体系に追加）:**
+**監査ログ action 追加（既存 `audit_logs.action` 体系に追加。CR Major-1反映: action 定義の SoT である既存 `data-design.md §6.1` の例示一覧と §9 にも本 action を追記すること）:**
 `ProductMaterial.Create/Update/Delete`、`ProductionInstruction.Create/Issue/Complete/Cancel`、`MaterialOrder.Create/Order/Cancel`、`Excel.Export`（entity で区別: ProductionInstruction / MaterialOrder）、`MaterialPrice.View`。
 
-> **機密閲覧監査のブロッキング性（監査M-4反映）:** `MaterialPrice.View`（素材単価の開示）と `Excel.Export`（単価を含む帳票出力）の監査記録は、一般の C/U/D 監査（非ブロッキング・原則4）と区別し、**主処理の一部として保証**する（同一トランザクション、記録失敗時は開示・出力を拒否）。営業秘密の閲覧証跡欠落（不競法・SEC）を防ぐ。一般の C/U/D・参照監査は従来どおり非ブロッキング。
+> **`MaterialPrice.View` を新設する理由（CR Major-1反映）:** 既存の製品仕入単価閲覧は `Price.View`。素材単価は別エンティティ（material_order_lines）で監査・分析上区別したいため**別 action 名 `MaterialPrice.View` を新設**（entity_type=MaterialOrder で更に区別）。既存 `data-design.md §6.1`（action 定義の SoT）に追記して一貫性を保つ（原則5）。
+
+> **機密閲覧監査のブロッキング実装（監査M-4/Major-3反映）:** 既存の `AuditLogInterceptor` は SaveChanges Hook（書込Tx内・失敗時警告のみ＝非ブロッキング）だが、素材単価開示・Excel出力は**読取(GET)で書込Txを経由しない**ため、**明示的なサービス層 INSERT** で監査する（インターセプタに依存しない）。実装方針:
+> - `MaterialPrice.View` / `Excel.Export`（単価含む帳票）は、**専用の短命トランザクションで監査INSERTを先に確定してから**単価・ファイルを返す。
+> - 監査INSERT に**タイムアウト（2秒）**を設け主処理の無限待ちを防ぐ。失敗時は1回リトライ。
+> - 永続失敗時は `AUDIT-001`（監査記録失敗のため開示不可）を返し**開示・出力を拒否**（営業秘密の閲覧証跡欠落を防ぐ＝trail完全性優先）。監査INSERT障害は §M-5 監視対象（サイレント業務停止検知）。
+> - **可用性トレードオフ（オペレーター確認可）:** 上記は「証跡完全性 > 可用性」を採る既定。1-2名・低トラフィックの内部システムのため監査INSERT失敗は稀で実害は限定的。可用性優先なら「開示は許可しCRITICALアラート＋永続リトライキュー」に切替可（要オペレーター判断）。
+> - 一般の C/U/D 監査は従来どおり**非ブロッキング**（原則4、既存インターセプタ）。
 
 ---
 
@@ -243,9 +250,10 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 - 「品番ごと 素材発注 未/済 / 生産指示 未/済」は **派生算出**（`product_families` に状態列を追加しない＝同期バグ回避、原則2/6）。
 - 算出ロジック（一覧の各品番に対し SQL EXISTS、約2,000品番でインデックス有効）:
   - 生産指示 **済** = `EXISTS(SELECT 1 FROM production_instructions pi WHERE pi.product_family_id = pf.id AND pi.status IN (1,2) AND pi.is_deleted = FALSE)` （`idx_pi_family_active` 利用）
-  - 素材発注 **済** = `EXISTS(SELECT 1 FROM material_order_lines mol JOIN material_orders mo ON mol.material_order_id = mo.id WHERE mol.product_family_id = pf.id AND mo.status = 1 AND mo.is_deleted = FALSE)` （`idx_mol_family` ＋ `idx_mo_active` 利用）
+  - 素材発注 **済** = `EXISTS(SELECT 1 FROM material_order_lines mol JOIN material_orders mo ON mol.material_order_id = mo.id WHERE mol.product_family_id = pf.id AND mo.status = 1 AND mo.is_deleted = FALSE)` （`idx_mol_family` で mol を引き、親 mo を PK lookup＋`status=1`/`is_deleted=FALSE` フィルタ。下記想定実行計画参照）
 - **明細の `is_deleted` は参照しない**（明細は親CASCADEのみ、§2）。親 `mo.is_deleted=FALSE` ＋ `mo.status=1`（Ordered）で判定。
-- denormalized cache 列は持たない（SoT直読が単一真実源で安全）。2,000品番で 500ms 担保。大規模化時のみ cache を検討（D-prod-2）。
+- **想定実行計画（監査CR Major-2反映）:** 生産指示=済 は `idx_pi_family_active`（`product_family_id` WHERE status IN(1,2) AND not deleted）で family 起点に直接判定。素材発注=済 は `idx_mol_family` で当該 family の mol（通常少数）を引き、各 mol の親 mo を PK（`material_orders_pkey`）lookup して `status=1 AND is_deleted=FALSE` をフィルタ。EXISTS は最初の1件ヒットで打切り。
+- denormalized cache 列は持たない（SoT直読が単一真実源で安全）。2,000品番で 500ms 担保（実測再評価 D-prod-2）。大規模化時のみ cache を検討。
 
 ### 7.3 出力履歴の方式（コードレビュアーM-2反映）
 - 生産指示・素材発注は **専用の出力履歴テーブル（`*_export_logs`）を設けない**。既存完成品発注の `purchase_order_export_logs`（`is_first_export`/`excel_template_version` 付き）とは**異なる**。
@@ -316,20 +324,23 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 
 ---
 
-## 12. 認可割当（監査C-1反映・D-prod-7確定、既存実在トークンのみ）
+## 12. 認可割当（監査C-1/Major-1反映・D-prod-7確定、既存実在トークン・既存ヘルパー再利用）
 
-| 機能 | 認可（既存トークン） | RDS列（段階B直読） |
-|---|---|---|
-| BOM 参照（B-02） | `product:read` | product_ledger_permission ≥ 1（参照） |
-| BOM 更新（B-01） | `product:write` | product_ledger_permission ≥ 更新可能 |
-| 生産指示 参照（PI-02/03 GET, /excel） | `purchase_order:read` | purchase_order_create_permission ≥ 1 |
-| 生産指示 更新（PI-01/03 POST/PATCH/issue/complete/cancel） | `purchase_order:write` | purchase_order_create_permission ≥ 更新可能 |
-| 素材発注 参照（金額なし: MO-02一覧マスク, prepare） | `purchase_order:read` | 同上 |
-| **素材発注 金額開示（GET 詳細/一覧 ?include_amount, /excel）** | `purchase_order:read` **AND** `price:read` | ＋ 価格閲覧権限。`MaterialPrice.View` 監査（ブロッキング） |
-| **素材発注 更新（単価設定含む: MO-01/03）** | `purchase_order:write` **AND** `price:write` | ＋ 価格更新権限 |
-| 未/済 一覧（PS-01, products?include=production_status） | `product:read` | product_ledger_permission ≥ 1 |
+> **権限値の非単調エンコード注意（監査Major-1反映、最重要）:** RDS権限列は単調増加ではない。`product_ledger_permission`: 0=なし/1=更新可能/2=参照のみ/3=参照のみ(制限)。`purchase_order_create_permission`: 0=なし/1=更新可能/2=参照のみ。**「値が大きい＝高権限」ではない**ため `≥` で read/write を導出してはならない。**本増分は判定ロジックを新発明せず既存実装を再利用する**: write 系は既存 `CheckMasterEditAsync`（`ProductLedgerPermission >= 1` を要求、現行MVPの2値簡素化＝Iter1知見#7、ラベル"更新可能"）／`CheckOrderEditAsync`（`PurchaseOrderCreatePermission >= 1`）をそのまま使う。read 系は既存の参照系エンドポイント同様、認証済アクティブユーザに開放（フロントで編集UIを権限制御）。段階Cで Custom Claims 化する際の write/read 厳密導出（1=更新可能 vs 2=参照のみ の解釈の精緻化）は**既存と歩調を合わせて一括で実施**する（本増分単独では既存の2値運用を踏襲し、独自の値解釈を持ち込まない）。
 
-> 既存「発注情報管理権限」(`purchase_order_info`, 2値) ではなく「発注書作成権限」(`purchase_order_create`, 3値 write/read 区別可) を生産系に割当（write/read を分離でき、生産指示・素材発注が**作成/編集を伴う書込操作**であるため整合）。素材単価は既存 `price` 権限と AND 評価（既存仕入単価と同一保護、監査C-2）。**この割当はオペレーター確認で `purchase_order_info` や `process_record` への変更も可**（D-prod-7）。
+| 機能 | 認可（既存トークン/ヘルパー） |
+|---|---|
+| BOM 参照（B-02, GET materials/requirements） | 認証済アクティブユーザ（既存read系と同等）＝`product:read` 相当 |
+| BOM 更新（B-01, PUT materials） | 既存 `CheckMasterEditAsync`（`product_ledger_permission >= 1`）を再利用＝`product:write` 相当 |
+| 生産指示 参照（PI-02/03 GET, /excel） | 認証済（既存read系と同等）＝`purchase_order:read` 相当 |
+| 生産指示 更新（PI-01/03 POST/PATCH/issue/complete/cancel） | 既存 `CheckOrderEditAsync`（`purchase_order_create_permission >= 1`）を再利用＝`purchase_order:write` 相当 |
+| 素材発注 参照（金額なし: MO-02一覧マスク, prepare） | 認証済＝`purchase_order:read` 相当 |
+| **素材発注 金額開示（GET 詳細/一覧 ?include_amount, /excel）** | 上記 ＋ `price:read`（既存仕入単価マスクと同方式、Custom Claims。段階Bでの price 強制は既存 api-design.md §2.5 の price 運用に追従）。`MaterialPrice.View` 監査（§6 ブロッキング） |
+| **素材発注 更新（単価設定含む: MO-01/03）** | `CheckOrderEditAsync`（write）＋ `price:write` |
+| 未/済 バッジ（PS-01, products?`include=production_status`） | **`purchase_order:read` 相当**（生産手配情報のため。`product:read` のみのユーザには生産バッジ列を出さない＝情報非対称・導線403を回避、監査Major-2） |
+
+> **割当根拠:** 生産指示・素材発注は作成/編集を伴う書込操作のため、既存「発注書作成権限」(`purchase_order_create`) の write gate（`CheckOrderEditAsync`）を再利用（既存パターン、原則3）。BOMは品番属性のため「品番台帳管理権限」(`product_ledger`) の `CheckMasterEditAsync` を再利用。素材単価は既存 `price` 権限と AND（既存仕入単価と同一保護、監査C-2）。**`purchase_order_info`/`process_record` への変更もオペレーター確認で可**（D-prod-7）。
+> **PS-01 の権限整合（監査Major-2反映）:** 商品一覧本体は `product:read`。生産手配バッジ（`include=production_status`）は `purchase_order:read` 保有時のみ付与。「未」バッジからの作成画面導線は `purchase_order:write` 保有時のみ活性（非保有時は `aria-disabled`＋理由ツールチップ、403 を未然防止、screen §2.7）。
 
 ---
 
@@ -338,3 +349,4 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 |---|---|
 | 2026-06-22 | 初版（5テーブル） |
 | 2026-06-22 v2 | 独立レビュー1周目反映: 明細 is_deleted 非保持を明記し未/済クエリ修正（C-1）/ 認可を既存実在トークンに是正＋§12新設（監査C-1）/ 素材単価のprice権限AND・デフォルトマスク・MaterialPrice.Viewブロッキング監査（監査C-2/M-4）/ 移行はBOM自動生成せず誤発注防止（監査C-3）/ 採番をadvisory lock+リトライ・複数発注は独立Tx（監査C-4/M-1）/ BOM↔3FK疎結合化・差分upsert・単一Tx（監査M-3）/ ロス率を任意DEFAULT0でMVP基本式統一（M-1）/ 出力履歴はaudit_logs集約を明記（M-2）/ subtotal精度根拠（Mi-1）/ NULL単価subtotal=0意味論＋注記（Mi-2）/ CHECK括弧明示（Mi-3）/ ERDにlast_exported_at（Ni-1） |
+| 2026-06-22 v3 | 独立レビュー2周目反映: §12 権限値の非単調エンコード是正＝既存 CheckMasterEditAsync/CheckOrderEditAsync 再利用（SA Major-1）/ PS-01生産バッジ権限を purchase_order:read に整合（SA Major-2）/ MaterialPrice.View を既存 data-design.md §6.1/§9 へ追記＋新設理由（CR Major-1）/ ブロッキング監査の読取系=明示サービス層INSERT＋2sタイムアウト＋AUDIT-001（SA Major-3）/ idx_mo_active 廃止＋§7.2 想定実行計画（CR Major-2）/ 採番リトライ上限 PINST-005/MORD-004（SA Minor-3）/ product_family_id NULL ロールアップ仕様（CR Minor-2）/ 採番Tx最小化・EC2単一実体注記（SA Minor-1） |

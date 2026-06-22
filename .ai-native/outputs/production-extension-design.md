@@ -70,7 +70,8 @@ CLAUDE.md 原則9／方法論SP-8に基づき、独立ロール（コードレ�
 | 周回 | コードレビュアー | システム監査官 | 状態 |
 |---|---|---|---|
 | 1周目 | ISSUE: Critical 2 / Major 2 / Minor 3 / Nit 2 | FAIL: Critical 2 / Major 5 / INFO 5 | **全指摘を反映済**（data/api/functional/screen/arch/flow/index）。下記§6 |
-| 2周目 | （再レビュー実施予定） | （再監査実施予定） | — |
+| 2周目 | ISSUE: Critical 1 / Major 2 / Minor 2 / Nit 1 | 条件付きOK: Critical 0 / Major 3 | **全指摘を反映済**。下記§7 |
+| 3周目 | （再レビュー実施予定） | （再監査実施予定） | — |
 
 ### 6. 1周目 指摘と対応（要約）
 
@@ -89,3 +90,15 @@ CLAUDE.md 原則9／方法論SP-8に基づき、独立ロール（コードレ�
 | BOM→3FK同期の失敗時/全置換のトレース寸断 | SA M-3 | 疎結合化（書戻しなし）＋差分upsert＋単一Tx |
 | 機密閲覧監査の非ブロッキング化リスク | SA M-4 | MaterialPrice.View/Excel.Export はブロッキング監査、一般C/U/Dは非ブロッキング |
 | 新エラーコードの監視未登録 | SA M-5 | CloudWatch メトリクス/Alarm 対象に追加（arch RP-9）|
+
+### 7. 2周目 指摘と対応（要約）
+
+| 指摘 | ロール | 対応 |
+|---|---|---|
+| UC-PROD-1 だけ旧「3FK同期」記述が残存 | CR Crit-1 | UC-PROD-1 を疎結合（差分upsert・書戻しなし・初期シード）に修正、全文書で一貫 |
+| 権限値が非単調(1=更新可能/2=参照のみ)なのに `≥1` 誤マッピング | SA Major-1 | data §12 を是正＝既存 `CheckMasterEditAsync`/`CheckOrderEditAsync`(write gate `>=1`)を再利用、独自の値解釈を持ち込まない |
+| PS-01バッジ(product:read)と生産指示(purchase_order:read)の権限非対称・導線403 | SA Major-2 | 生産バッジは `purchase_order:read` 保有時のみ、導線は `purchase_order:write` 保有時のみ活性 |
+| MaterialPrice.View が既存 data-design.md の action定義に未追記 | CR Major-1 | 既存 §6.1/§9 に追記＋新設理由を明記 |
+| ブロッキング監査の読取系実装・可用性 | SA Major-3 | 明示サービス層INSERT＋短命Tx＋2sタイムアウト＋`AUDIT-001`、可用性トレードオフをオペレーター確認可と明記 |
+| idx_mo_active が EXISTS で効かない | CR Major-2 | 当該インデックス廃止、想定実行計画（idx_mol_family＋PK lookup）を明記 |
+| 移行でBOM未生成→全件「未」/採番リトライ上限/product_family_id NULL/App Runner表記 | Minor各 | BOM未登録 第3状態表示、`PINST-005`/`MORD-004`/`AUDIT-001` 追加、ロールアップ仕様明記、EC2実体注記 |
