@@ -15,7 +15,7 @@
 > なお `iter6-demo-data.sql` は **リアルなデモ業務データ**（商品・付属情報・発注・生産）を
 > 既存(稼働中)DB へ反映するシードです（`db/init/06-demo-data.sql` を `\ir` で取り込む単一 SoT、
 > 全 INSERT 冪等）。スキーマ変更ではありませんが、`init` は既存 DB で中止されるため、
-> 同じく `action=migrate` で適用されます。
+> 同じく `action=migrate` で適用されます。`iter7-ops-data.sql`（業務拡張モジュール: 販売管理/出荷/在庫管理のテーブル + サンプルデータ、`db/init/07-ops-data.sql` を `\ir` で取り込む）も同方式・冪等です。
 
 ---
 
