@@ -20,13 +20,25 @@ public record CreateOrderRequest(
     long? SubOrderer5UserId,
     long? SubOrderer6UserId,
     string? CommunicationText,
-    List<OrderLineInput> Lines);
+    List<OrderLineInput> Lines,
+    // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
+    bool IsOverseas = false,
+    string? LandingPlace = null,
+    string? CustomerRef = null,
+    DateOnly? FactoryShippingDate = null,
+    DateOnly? InspectionShippingDate = null,
+    DateOnly? OverseasDepartureDate = null,
+    long? Warehouse2Id = null,
+    long? Warehouse3Id = null);
 
 public record OrderLineInput(
     long ProductId,
     int Quantity,
     decimal UnitPriceSnapshot,
-    string CurrencyCodeSnapshot);
+    string CurrencyCodeSnapshot,
+    // 旧 発注明細 項目 (Phase B、任意)。仮番号は商品 family からコピーするため入力には含めない。
+    int? PackQuantity = null,
+    decimal? EstimateUnitPrice = null);
 
 // ─────────────────────────────────────────────────
 // 一覧 (GET /api/v1/orders、O-03)
@@ -87,7 +99,18 @@ public record OrderDetail(
     DateTime? LastExportedAt,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    List<OrderLineDetail> Lines);
+    List<OrderLineDetail> Lines,
+    // 旧 発注書 国内/海外 項目 (Phase B)。納入倉庫2/3 は表示用に名前も解決して返す (未設定時 null)。
+    bool IsOverseas = false,
+    string? LandingPlace = null,
+    string? CustomerRef = null,
+    DateOnly? FactoryShippingDate = null,
+    DateOnly? InspectionShippingDate = null,
+    DateOnly? OverseasDepartureDate = null,
+    long? Warehouse2Id = null,
+    string? Warehouse2Name = null,
+    long? Warehouse3Id = null,
+    string? Warehouse3Name = null);
 
 public record OrderLineDetail(
     long Id,
@@ -100,7 +123,11 @@ public record OrderLineDetail(
     int Quantity,
     decimal UnitPriceSnapshot,
     string CurrencyCodeSnapshot,
-    decimal Subtotal);
+    decimal Subtotal,
+    // 旧 発注明細 項目 (Phase B、任意)
+    int? PackQuantity = null,
+    decimal? EstimateUnitPrice = null,
+    string? ProvisionalNumberSnapshot = null);
 
 // ─────────────────────────────────────────────────
 // 更新 (PATCH /api/v1/orders/{id}、O-04、edit_reason 必須 F-16)
@@ -122,14 +149,26 @@ public record UpdateOrderRequest(
     long? SubOrderer5UserId,
     long? SubOrderer6UserId,
     string? CommunicationText,
-    List<UpdateLineInput> Lines);
+    List<UpdateLineInput> Lines,
+    // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
+    bool IsOverseas = false,
+    string? LandingPlace = null,
+    string? CustomerRef = null,
+    DateOnly? FactoryShippingDate = null,
+    DateOnly? InspectionShippingDate = null,
+    DateOnly? OverseasDepartureDate = null,
+    long? Warehouse2Id = null,
+    long? Warehouse3Id = null);
 
 public record UpdateLineInput(
     long? Id,
     long ProductId,
     int Quantity,
     decimal UnitPriceSnapshot,
-    string CurrencyCodeSnapshot);
+    string CurrencyCodeSnapshot,
+    // 旧 発注明細 項目 (Phase B、任意)。仮番号は商品 family からコピーするため入力には含めない。
+    int? PackQuantity = null,
+    decimal? EstimateUnitPrice = null);
 
 // ─────────────────────────────────────────────────
 // 中止 (POST /api/v1/orders/{id}/cancel、O-05)

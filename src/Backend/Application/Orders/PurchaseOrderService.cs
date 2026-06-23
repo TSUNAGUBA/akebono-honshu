@@ -46,6 +46,15 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                 SubOrderer4UserId = req.SubOrderer4UserId,
                 SubOrderer5UserId = req.SubOrderer5UserId,
                 SubOrderer6UserId = req.SubOrderer6UserId,
+                // 旧 発注書 国内/海外 項目 (Phase B)
+                IsOverseas = req.IsOverseas,
+                LandingPlace = req.LandingPlace,
+                CustomerRef = req.CustomerRef,
+                FactoryShippingDate = req.FactoryShippingDate,
+                InspectionShippingDate = req.InspectionShippingDate,
+                OverseasDepartureDate = req.OverseasDepartureDate,
+                Warehouse2Id = req.Warehouse2Id,
+                Warehouse3Id = req.Warehouse3Id,
                 CommunicationText = req.CommunicationText,
                 CreatedAt = now, UpdatedAt = now,
                 CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
@@ -68,6 +77,11 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                     ProductId = product.Id,
                     SkuSnapshot = product.Sku,
                     ProductNameSnapshot = product.ProductFamily?.ProductName1 ?? "?",
+                    // 旧 発注明細 項目 (Phase B)。仮番号は商品 family.ProvisionalNumber を発注時点で
+                    // 凍結コピー (ProductNameSnapshot と同じ snapshot-copy 方式)。入数・見積単価は入力値。
+                    ProvisionalNumberSnapshot = product.ProductFamily?.ProvisionalNumber,
+                    PackQuantity = l.PackQuantity,
+                    EstimateUnitPrice = l.EstimateUnitPrice,
                     Quantity = l.Quantity,
                     UnitPriceSnapshot = l.UnitPriceSnapshot,
                     CurrencyCodeSnapshot = l.CurrencyCodeSnapshot,
@@ -137,6 +151,9 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             .Include(o => o.DeliveryDestination)
             .Include(o => o.Department)
             .Include(o => o.Warehouse)
+            // 旧 発注書 国内/海外 項目の表示名解決 (Phase B): 納入倉庫2/3
+            .Include(o => o.Warehouse2)
+            .Include(o => o.Warehouse3)
             .Include(o => o.Orderer)
             .Include(o => o.Manager)
             .FirstOrDefaultAsync(o => o.Id == id, ct);
@@ -173,7 +190,18 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             lines.Select(l => new OrderLineDetail(
                 l.Id, l.LineNo, l.ProductId, l.SkuSnapshot, l.ProductNameSnapshot,
                 l.Product?.Color?.Name ?? "?", l.Product?.Size?.Name ?? "?",
-                l.Quantity, l.UnitPriceSnapshot, l.CurrencyCodeSnapshot, l.Subtotal)).ToList());
+                l.Quantity, l.UnitPriceSnapshot, l.CurrencyCodeSnapshot, l.Subtotal,
+                // 旧 発注明細 項目 (Phase B)
+                l.PackQuantity, l.EstimateUnitPrice, l.ProvisionalNumberSnapshot)).ToList(),
+            // 旧 発注書 国内/海外 項目 (Phase B)。納入倉庫2/3 名は Include 済ナビから解決 (未設定時 null)。
+            order.IsOverseas,
+            order.LandingPlace,
+            order.CustomerRef,
+            order.FactoryShippingDate,
+            order.InspectionShippingDate,
+            order.OverseasDepartureDate,
+            order.Warehouse2Id, order.Warehouse2?.Name,
+            order.Warehouse3Id, order.Warehouse3?.Name);
     }
 
     /// <summary>編集 (O-04)。F-16 edit_reason 必須、audit_logs.changes に before/after 記録。</summary>
@@ -203,6 +231,15 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             order.SubOrderer4UserId = req.SubOrderer4UserId;
             order.SubOrderer5UserId = req.SubOrderer5UserId;
             order.SubOrderer6UserId = req.SubOrderer6UserId;
+            // 旧 発注書 国内/海外 項目 (Phase B)
+            order.IsOverseas = req.IsOverseas;
+            order.LandingPlace = req.LandingPlace;
+            order.CustomerRef = req.CustomerRef;
+            order.FactoryShippingDate = req.FactoryShippingDate;
+            order.InspectionShippingDate = req.InspectionShippingDate;
+            order.OverseasDepartureDate = req.OverseasDepartureDate;
+            order.Warehouse2Id = req.Warehouse2Id;
+            order.Warehouse3Id = req.Warehouse3Id;
             order.CommunicationText = req.CommunicationText;
             order.UpdatedAt = now;
             order.UpdatedByUserId = actorUserId;
@@ -226,6 +263,11 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                     ProductId = product.Id,
                     SkuSnapshot = product.Sku,
                     ProductNameSnapshot = product.ProductFamily?.ProductName1 ?? "?",
+                    // 旧 発注明細 項目 (Phase B)。仮番号は商品 family.ProvisionalNumber を再凍結コピー
+                    // (明細は全削除→再 INSERT 方式のため、編集時も最新 family 値で凍結し直す)。
+                    ProvisionalNumberSnapshot = product.ProductFamily?.ProvisionalNumber,
+                    PackQuantity = l.PackQuantity,
+                    EstimateUnitPrice = l.EstimateUnitPrice,
                     Quantity = l.Quantity,
                     UnitPriceSnapshot = l.UnitPriceSnapshot,
                     CurrencyCodeSnapshot = l.CurrencyCodeSnapshot,

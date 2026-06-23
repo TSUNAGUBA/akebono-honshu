@@ -52,6 +52,15 @@ const form = ref({
   subOrderer5UserId: null as number | null,
   subOrderer6UserId: null as number | null,
   communicationText: '',
+  // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
+  isOverseas: false,
+  landingPlace: '',
+  customerRef: '',
+  factoryShippingDate: '',
+  inspectionShippingDate: '',
+  overseasDepartureDate: '',
+  warehouse2Id: null as number | null,
+  warehouse3Id: null as number | null,
 })
 
 interface LineRow {
@@ -59,9 +68,12 @@ interface LineRow {
   quantity: number
   unitPriceSnapshot: number
   currencyCodeSnapshot: string
+  // 旧 発注明細 項目 (Phase B、任意)
+  packQuantity: number | null
+  estimateUnitPrice: number | null
 }
 const lines = ref<LineRow[]>([
-  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY' },
+  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, estimateUnitPrice: null },
 ])
 
 // --- オートコンプリート選択肢（マスタ参照を部分一致検索可能に） ---
@@ -131,6 +143,8 @@ const addLine = () => {
     quantity: 1,
     unitPriceSnapshot: 0,
     currencyCodeSnapshot: 'JPY',
+    packQuantity: null,
+    estimateUnitPrice: null,
   })
 }
 
@@ -184,7 +198,18 @@ const onSubmit = async () => {
         quantity: Number(l.quantity),
         unitPriceSnapshot: Number(l.unitPriceSnapshot),
         currencyCodeSnapshot: l.currencyCodeSnapshot,
+        packQuantity: l.packQuantity != null ? Number(l.packQuantity) : null,
+        estimateUnitPrice: l.estimateUnitPrice != null ? Number(l.estimateUnitPrice) : null,
       })),
+      // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
+      isOverseas: form.value.isOverseas,
+      landingPlace: form.value.isOverseas ? (form.value.landingPlace.trim() || null) : null,
+      customerRef: form.value.isOverseas ? (form.value.customerRef.trim() || null) : null,
+      factoryShippingDate: form.value.isOverseas ? (form.value.factoryShippingDate || null) : null,
+      inspectionShippingDate: form.value.isOverseas ? (form.value.inspectionShippingDate || null) : null,
+      overseasDepartureDate: form.value.isOverseas ? (form.value.overseasDepartureDate || null) : null,
+      warehouse2Id: form.value.isOverseas ? form.value.warehouse2Id : null,
+      warehouse3Id: form.value.isOverseas ? form.value.warehouse3Id : null,
     }
     const res = await create(payload)
     await navigateTo(`/orders/${res.id}`)
@@ -226,8 +251,25 @@ const onSubmit = async () => {
       <form v-else class="space-y-6" @submit.prevent="onSubmit">
         <!-- 発注書ヘッダ -->
         <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 class="mb-4 border-b border-gray-100 pb-2 font-semibold">発注書ヘッダ</h2>
-          <div class="grid grid-cols-2 gap-4 text-sm">
+          <div class="mb-4 flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 class="font-semibold">発注書ヘッダ</h2>
+            <!-- 発注区分 国内/海外 セグメントトグル (is_overseas、二択モードスイッチ) -->
+            <div class="inline-flex self-start overflow-hidden rounded-md border border-gray-300 text-sm">
+              <button
+                type="button"
+                class="px-4 py-1.5 font-medium transition-colors"
+                :class="!form.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                @click="form.isOverseas = false"
+              >国内</button>
+              <button
+                type="button"
+                class="border-l border-gray-300 px-4 py-1.5 font-medium transition-colors"
+                :class="form.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                @click="form.isOverseas = true"
+              >海外</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
             <label class="flex flex-col gap-1">
               <span class="font-medium">仕入先 <span class="text-red-500">*</span></span>
               <MasterSelect v-model="form.supplierId" :items="suppliers" />
@@ -270,6 +312,53 @@ const onSubmit = async () => {
           </div>
         </section>
 
+        <!-- 海外発注情報 (is_overseas=true のときのみ表示、Phase B) -->
+        <section v-if="form.isOverseas" class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 class="mb-4 border-b border-gray-100 pb-2 font-semibold">海外発注情報</h2>
+          <div class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">荷揚地</span>
+              <input v-model="form.landingPlace" type="text" maxlength="128" placeholder="Port of entry" class="rounded-md border border-gray-300 px-3 py-2" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">得意先</span>
+              <input v-model="form.customerRef" type="text" maxlength="128" placeholder="得意先 / 受注先" class="rounded-md border border-gray-300 px-3 py-2" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">工場出荷日</span>
+              <input v-model="form.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">検品所出荷日</span>
+              <input v-model="form.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">海外出港日</span>
+              <input v-model="form.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">納入倉庫2</span>
+              <MasterSelect
+                v-model="form.warehouse2Id"
+                :items="warehouses"
+                allow-empty
+                empty-label="（なし）"
+                placeholder="（任意）"
+              />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">納入倉庫3</span>
+              <MasterSelect
+                v-model="form.warehouse3Id"
+                :items="warehouses"
+                allow-empty
+                empty-label="（なし）"
+                placeholder="（任意）"
+              />
+            </label>
+          </div>
+        </section>
+
         <!-- 明細 -->
         <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <div class="mb-4 flex items-center justify-between border-b border-gray-100 pb-2">
@@ -281,7 +370,9 @@ const onSubmit = async () => {
               <tr>
                 <th class="px-2 py-2 text-left">SKU</th>
                 <th class="px-2 py-2 text-right">数量</th>
+                <th class="px-2 py-2 text-right">入数</th>
                 <th class="px-2 py-2 text-right">単価</th>
+                <th class="px-2 py-2 text-right">見積単価</th>
                 <th class="px-2 py-2 text-left">通貨</th>
                 <th class="px-2 py-2 text-right">小計</th>
                 <th class="px-2 py-2 text-right"></th>
@@ -296,7 +387,13 @@ const onSubmit = async () => {
                   <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
                 <td class="px-2 py-2 text-right">
+                  <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                </td>
+                <td class="px-2 py-2 text-right">
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                </td>
+                <td class="px-2 py-2 text-right">
+                  <input v-model.number="l.estimateUnitPrice" type="number" min="0" step="0.01" placeholder="—" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
                 <td class="px-2 py-2">
                   <div class="w-20">

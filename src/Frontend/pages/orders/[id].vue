@@ -17,9 +17,24 @@ const downloading = ref(false)
 
 // 編集モード
 const editing = ref(false)
-const editLines = ref<{ id: number | null; productId: number; sku: string; productName: string; quantity: number; unitPriceSnapshot: number; currencyCodeSnapshot: string }[]>([])
+const editLines = ref<{ id: number | null; productId: number; sku: string; productName: string; quantity: number; unitPriceSnapshot: number; currencyCodeSnapshot: string; packQuantity: number | null; estimateUnitPrice: number | null; provisionalNumberSnapshot: string | null }[]>([])
 const editReason = ref<EditReason>('quantity')
 const editNote = ref('')
+
+// 旧 発注書 国内/海外 項目 (Phase B) の編集状態。reload 時に detail から初期化する。
+const editHeader = ref({
+  isOverseas: false,
+  landingPlace: '' as string,
+  customerRef: '' as string,
+  factoryShippingDate: '' as string,
+  inspectionShippingDate: '' as string,
+  overseasDepartureDate: '' as string,
+  warehouse2Id: null as number | null,
+  warehouse3Id: null as number | null,
+})
+// 納入倉庫2/3 編集用にマスタを読み込む
+const { list: listMasters } = useMasters()
+const warehouses = ref<{ id: number; code?: string | null; name?: string | null }[]>([])
 
 // 中止モーダル
 const showCancelForm = ref(false)
@@ -34,7 +49,19 @@ const reload = async () => {
       editLines.value = detail.value.lines.map((l) => ({
         id: l.id, productId: l.productId, sku: l.sku, productName: l.productName,
         quantity: l.quantity, unitPriceSnapshot: l.unitPriceSnapshot, currencyCodeSnapshot: l.currencyCodeSnapshot,
+        packQuantity: l.packQuantity, estimateUnitPrice: l.estimateUnitPrice, provisionalNumberSnapshot: l.provisionalNumberSnapshot,
       }))
+      // 旧 発注書 国内/海外 項目 (Phase B) の編集状態を detail から初期化 (null → 空文字に正規化)
+      editHeader.value = {
+        isOverseas: detail.value.isOverseas,
+        landingPlace: detail.value.landingPlace ?? '',
+        customerRef: detail.value.customerRef ?? '',
+        factoryShippingDate: detail.value.factoryShippingDate ?? '',
+        inspectionShippingDate: detail.value.inspectionShippingDate ?? '',
+        overseasDepartureDate: detail.value.overseasDepartureDate ?? '',
+        warehouse2Id: detail.value.warehouse2Id,
+        warehouse3Id: detail.value.warehouse3Id,
+      }
     }
   } catch (e) {
     const err = e as { statusCode?: number }
@@ -44,7 +71,15 @@ const reload = async () => {
   }
 }
 
-onMounted(reload)
+onMounted(async () => {
+  // 納入倉庫2/3 編集用マスタを読み込む (失敗しても本体表示は継続、原則 4 非ブロッキング)
+  try {
+    warehouses.value = await listMasters('warehouses')
+  } catch {
+    warehouses.value = []
+  }
+  await reload()
+})
 
 const totalAmount = computed(() => detail.value?.lines.reduce((s, l) => s + l.subtotal, 0) ?? 0)
 
@@ -87,7 +122,18 @@ const onSaveEdit = async () => {
         quantity: Number(l.quantity),
         unitPriceSnapshot: Number(l.unitPriceSnapshot),
         currencyCodeSnapshot: l.currencyCodeSnapshot,
+        packQuantity: l.packQuantity != null ? Number(l.packQuantity) : null,
+        estimateUnitPrice: l.estimateUnitPrice != null ? Number(l.estimateUnitPrice) : null,
       })),
+      // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
+      isOverseas: editHeader.value.isOverseas,
+      landingPlace: editHeader.value.isOverseas ? (editHeader.value.landingPlace.trim() || null) : null,
+      customerRef: editHeader.value.isOverseas ? (editHeader.value.customerRef.trim() || null) : null,
+      factoryShippingDate: editHeader.value.isOverseas ? (editHeader.value.factoryShippingDate || null) : null,
+      inspectionShippingDate: editHeader.value.isOverseas ? (editHeader.value.inspectionShippingDate || null) : null,
+      overseasDepartureDate: editHeader.value.isOverseas ? (editHeader.value.overseasDepartureDate || null) : null,
+      warehouse2Id: editHeader.value.isOverseas ? editHeader.value.warehouse2Id : null,
+      warehouse3Id: editHeader.value.isOverseas ? editHeader.value.warehouse3Id : null,
     })
     successMessage.value = '更新しました'
     editing.value = false
@@ -212,8 +258,15 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
 
       <!-- ヘッダ情報 -->
       <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">発注書情報</h2>
-        <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+        <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
+          <h2 class="font-semibold">発注書情報</h2>
+          <!-- 発注区分 国内/海外 バッジ (Phase B、is_overseas) -->
+          <span
+            :class="detail.isOverseas ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'"
+            class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium"
+          >{{ detail.isOverseas ? '海外' : '国内' }}</span>
+        </div>
+        <div class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
           <div><span class="text-gray-500">仕入先:</span> {{ detail.supplierCode }} {{ detail.supplierName }}</div>
           <div><span class="text-gray-500">納品先:</span> {{ detail.deliveryDestinationName }}</div>
           <div><span class="text-gray-500">事業部:</span> {{ detail.departmentName }}</div>
@@ -222,6 +275,20 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <div><span class="text-gray-500">発注担当:</span> {{ detail.ordererName }}</div>
           <div><span class="text-gray-500">発注管理者:</span> {{ detail.managerName }}</div>
           <div><span class="text-gray-500">作成日:</span> {{ new Date(detail.createdAt).toLocaleString('ja-JP') }}</div>
+        </div>
+
+        <!-- 海外発注情報 (is_overseas=true のときのみ、Phase B) -->
+        <div v-if="detail.isOverseas" class="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2">
+          <div class="mb-1 text-xs font-semibold text-indigo-800">海外発注情報</div>
+          <div class="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+            <div><span class="text-gray-500">荷揚地:</span> {{ detail.landingPlace || '—' }}</div>
+            <div><span class="text-gray-500">得意先:</span> {{ detail.customerRef || '—' }}</div>
+            <div><span class="text-gray-500">工場出荷日:</span> {{ detail.factoryShippingDate || '—' }}</div>
+            <div><span class="text-gray-500">検品所出荷日:</span> {{ detail.inspectionShippingDate || '—' }}</div>
+            <div><span class="text-gray-500">海外出港日:</span> {{ detail.overseasDepartureDate || '—' }}</div>
+            <div><span class="text-gray-500">納入倉庫2:</span> {{ detail.warehouse2Name || '—' }}</div>
+            <div><span class="text-gray-500">納入倉庫3:</span> {{ detail.warehouse3Name || '—' }}</div>
+          </div>
         </div>
         <div v-if="detail.firstExportedAt" class="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
           <div><strong>初回 Excel 出力:</strong> {{ new Date(detail.firstExportedAt).toLocaleString('ja-JP') }}</div>
@@ -252,8 +319,11 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
               <th class="px-3 py-2 text-left">No</th>
               <th class="px-3 py-2 text-left">SKU</th>
               <th class="px-3 py-2 text-left">商品名 / 色 / サイズ</th>
+              <th class="px-3 py-2 text-left">仮番号</th>
               <th class="px-3 py-2 text-right">数量</th>
+              <th class="px-3 py-2 text-right">入数</th>
               <th class="px-3 py-2 text-right">単価</th>
+              <th class="px-3 py-2 text-right">見積単価</th>
               <th class="px-3 py-2 text-right">小計</th>
             </tr>
           </thead>
@@ -262,8 +332,11 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
               <td class="px-3 py-2 font-mono">{{ l.lineNo }}</td>
               <td class="px-3 py-2 font-mono">{{ l.sku }}</td>
               <td class="px-3 py-2">{{ l.productName }} / {{ l.colorName }} / {{ l.sizeName }}</td>
+              <td class="px-3 py-2 font-mono">{{ l.provisionalNumberSnapshot || '—' }}</td>
               <td class="px-3 py-2 text-right font-mono">{{ l.quantity }}</td>
+              <td class="px-3 py-2 text-right font-mono">{{ l.packQuantity != null ? l.packQuantity.toLocaleString() : '—' }}</td>
               <td class="px-3 py-2 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ l.unitPriceSnapshot.toLocaleString() }}</td>
+              <td class="px-3 py-2 text-right font-mono">{{ l.estimateUnitPrice != null ? l.estimateUnitPrice.toLocaleString() : '—' }}</td>
               <td class="px-3 py-2 text-right font-mono">{{ l.subtotal.toLocaleString() }}</td>
             </tr>
           </tbody>
@@ -275,24 +348,85 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <thead class="border-b border-gray-200 bg-gray-50">
               <tr>
                 <th class="px-2 py-2 text-left">SKU</th>
+                <th class="px-2 py-2 text-left">仮番号</th>
                 <th class="px-2 py-2 text-right">数量</th>
+                <th class="px-2 py-2 text-right">入数</th>
                 <th class="px-2 py-2 text-right">単価</th>
+                <th class="px-2 py-2 text-right">見積単価</th>
                 <th class="px-2 py-2 text-right">小計</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(l, idx) in editLines" :key="idx" class="border-b border-gray-100 last:border-0">
                 <td class="px-2 py-2 font-mono">{{ l.sku }}</td>
+                <td class="px-2 py-2 font-mono text-gray-500">{{ l.provisionalNumberSnapshot || '—' }}</td>
                 <td class="px-2 py-2 text-right">
                   <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
                 <td class="px-2 py-2 text-right">
+                  <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                </td>
+                <td class="px-2 py-2 text-right">
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                </td>
+                <td class="px-2 py-2 text-right">
+                  <input v-model.number="l.estimateUnitPrice" type="number" min="0" step="0.01" placeholder="—" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
                 <td class="px-2 py-2 text-right font-mono">{{ (l.quantity * l.unitPriceSnapshot).toLocaleString() }}</td>
               </tr>
             </tbody>
           </table>
+
+          <!-- 発注区分 + 海外発注情報 編集 (Phase B) -->
+          <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+            <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <span class="font-semibold text-gray-700">発注区分</span>
+              <div class="inline-flex self-start overflow-hidden rounded-md border border-gray-300 text-sm">
+                <button
+                  type="button"
+                  class="px-4 py-1.5 font-medium transition-colors"
+                  :class="!editHeader.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                  @click="editHeader.isOverseas = false"
+                >国内</button>
+                <button
+                  type="button"
+                  class="border-l border-gray-300 px-4 py-1.5 font-medium transition-colors"
+                  :class="editHeader.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                  @click="editHeader.isOverseas = true"
+                >海外</button>
+              </div>
+            </div>
+            <div v-if="editHeader.isOverseas" class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">荷揚地</span>
+                <input v-model="editHeader.landingPlace" type="text" maxlength="128" class="rounded-md border border-gray-300 px-3 py-2" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">得意先</span>
+                <input v-model="editHeader.customerRef" type="text" maxlength="128" class="rounded-md border border-gray-300 px-3 py-2" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">工場出荷日</span>
+                <input v-model="editHeader.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">検品所出荷日</span>
+                <input v-model="editHeader.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">海外出港日</span>
+                <input v-model="editHeader.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">納入倉庫2</span>
+                <MasterSelect v-model="editHeader.warehouse2Id" :items="warehouses" allow-empty empty-label="（なし）" placeholder="（任意）" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">納入倉庫3</span>
+                <MasterSelect v-model="editHeader.warehouse3Id" :items="warehouses" allow-empty empty-label="（なし）" placeholder="（任意）" />
+              </label>
+            </div>
+          </div>
 
           <!-- F-16 EditReason 必須 -->
           <div class="mt-4 rounded-md bg-yellow-50 p-4">
