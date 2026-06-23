@@ -311,6 +311,15 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.SubOrderer5UserId).HasColumnName("sub_orderer_5_user_id");
             b.Property(x => x.SubOrderer6UserId).HasColumnName("sub_orderer_6_user_id");
             b.Property(x => x.ManagerUserId).HasColumnName("manager_user_id");
+            // 旧 発注書 国内/海外 項目 (Phase B、is_overseas のみ NOT NULL、他は NULL 許容)
+            b.Property(x => x.IsOverseas).HasColumnName("is_overseas");
+            b.Property(x => x.LandingPlace).HasColumnName("landing_place").HasMaxLength(128);
+            b.Property(x => x.CustomerRef).HasColumnName("customer_ref").HasMaxLength(128);
+            b.Property(x => x.FactoryShippingDate).HasColumnName("factory_shipping_date");
+            b.Property(x => x.InspectionShippingDate).HasColumnName("inspection_shipping_date");
+            b.Property(x => x.OverseasDepartureDate).HasColumnName("overseas_departure_date");
+            b.Property(x => x.Warehouse2Id).HasColumnName("warehouse2_id");
+            b.Property(x => x.Warehouse3Id).HasColumnName("warehouse3_id");
             b.Property(x => x.CommunicationText).HasColumnName("communication_text");
             b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
             b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
@@ -324,6 +333,11 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasOne(x => x.DeliveryDestination).WithMany().HasForeignKey(x => x.DeliveryDestinationId);
             b.HasOne(x => x.Department).WithMany().HasForeignKey(x => x.DepartmentId);
             b.HasOne(x => x.Warehouse).WithMany().HasForeignKey(x => x.WarehouseId);
+            // 旧 発注書 国内/海外 項目の任意参照 FK (Phase B、納入倉庫2/3)。
+            // nullable FK = 任意参照、cascade なし (既定 ClientSetNull)。HasForeignKey を明示して
+            // shadow FK 列を作らない。既存 warehouse_id 関係とは別ナビ・別 FK 列のため衝突しない。
+            b.HasOne(x => x.Warehouse2).WithMany().HasForeignKey(x => x.Warehouse2Id);
+            b.HasOne(x => x.Warehouse3).WithMany().HasForeignKey(x => x.Warehouse3Id);
             b.HasOne(x => x.Orderer).WithMany().HasForeignKey(x => x.OrdererUserId);
             b.HasOne(x => x.Manager).WithMany().HasForeignKey(x => x.ManagerUserId);
             b.HasMany(x => x.Lines).WithOne(l => l.PurchaseOrder!).HasForeignKey(l => l.PurchaseOrderId).OnDelete(DeleteBehavior.Cascade);
@@ -345,6 +359,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.Quantity).HasColumnName("quantity");
             b.Property(x => x.UnitPriceSnapshot).HasColumnName("unit_price_snapshot").HasColumnType("numeric(12,2)");
             b.Property(x => x.CurrencyCodeSnapshot).HasColumnName("currency_code_snapshot").IsRequired().HasMaxLength(3).IsFixedLength();
+            // 旧 発注明細 項目 (Phase B、全 NULL 許容)
+            b.Property(x => x.PackQuantity).HasColumnName("pack_quantity");
+            b.Property(x => x.EstimateUnitPrice).HasColumnName("estimate_unit_price").HasColumnType("numeric(12,2)");
+            b.Property(x => x.ProvisionalNumberSnapshot).HasColumnName("provisional_number_snapshot").HasMaxLength(64);
             b.Property(x => x.Subtotal)
                 .HasColumnName("subtotal")
                 .HasColumnType("numeric(14,2)")

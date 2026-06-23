@@ -44,6 +44,24 @@ public class PurchaseOrder
     public long? SubOrderer6UserId { get; set; }
     public long ManagerUserId { get; set; }
 
+    // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外 NULL 許容 = 既存行は NULL のまま下位互換)
+    /// <summary>発注区分 (国内=false/海外=true)。NOT NULL DEFAULT FALSE。</summary>
+    public bool IsOverseas { get; set; }
+    /// <summary>荷揚地 / Port of entry</summary>
+    public string? LandingPlace { get; set; }
+    /// <summary>得意先 / 受注先</summary>
+    public string? CustomerRef { get; set; }
+    /// <summary>工場出荷日</summary>
+    public DateOnly? FactoryShippingDate { get; set; }
+    /// <summary>検品所出荷日</summary>
+    public DateOnly? InspectionShippingDate { get; set; }
+    /// <summary>海外出港日</summary>
+    public DateOnly? OverseasDepartureDate { get; set; }
+    /// <summary>納入倉庫2 (warehouses.id)</summary>
+    public long? Warehouse2Id { get; set; }
+    /// <summary>納入倉庫3 (warehouses.id)</summary>
+    public long? Warehouse3Id { get; set; }
+
     public string? CommunicationText { get; set; }
     public DateTime? FirstExportedAt { get; set; }
     public DateTime? LastExportedAt { get; set; }
@@ -59,6 +77,9 @@ public class PurchaseOrder
     public DeliveryDestination? DeliveryDestination { get; set; }
     public Department? Department { get; set; }
     public Warehouse? Warehouse { get; set; }
+    // 旧 発注書 国内/海外 項目のナビプロパティ (Phase B、納入倉庫2/3)
+    public Warehouse? Warehouse2 { get; set; }
+    public Warehouse? Warehouse3 { get; set; }
     public User? Orderer { get; set; }
     public User? Manager { get; set; }
     public List<PurchaseOrderLine> Lines { get; set; } = new();

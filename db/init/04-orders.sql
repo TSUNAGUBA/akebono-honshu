@@ -36,6 +36,16 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     sub_orderer_6_user_id           BIGINT       NULL REFERENCES users(id),
     manager_user_id                 BIGINT       NOT NULL REFERENCES users(id),
 
+    -- 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外 NULL 許容)
+    is_overseas                     BOOLEAN      NOT NULL DEFAULT FALSE,                    -- 発注区分 (国内=false/海外=true)
+    landing_place                   VARCHAR(128) NULL,                                      -- 荷揚地 / Port of entry
+    customer_ref                    VARCHAR(128) NULL,                                      -- 得意先 / 受注先
+    factory_shipping_date           DATE         NULL,                                      -- 工場出荷日
+    inspection_shipping_date        DATE         NULL,                                      -- 検品所出荷日
+    overseas_departure_date         DATE         NULL,                                      -- 海外出港日
+    warehouse2_id                   BIGINT       NULL REFERENCES warehouses(id),            -- 納入倉庫2
+    warehouse3_id                   BIGINT       NULL REFERENCES warehouses(id),            -- 納入倉庫3
+
     communication_text              TEXT         NULL,
     first_exported_at               TIMESTAMP    NULL,
     last_exported_at                TIMESTAMP    NULL,
@@ -74,6 +84,10 @@ CREATE TABLE IF NOT EXISTS purchase_order_lines (
     quantity                        INTEGER       NOT NULL,
     unit_price_snapshot             NUMERIC(12,2) NOT NULL,
     currency_code_snapshot          CHAR(3)       NOT NULL,
+    -- 旧 発注明細 項目 (Phase B、全 NULL 許容)
+    pack_quantity                   INTEGER       NULL,                                     -- 倉庫1入数 / 入数
+    estimate_unit_price             NUMERIC(12,2) NULL,                                     -- 見積単価
+    provisional_number_snapshot     VARCHAR(64)   NULL,                                     -- 仮番号 (商品 family からコピー)
     subtotal                        NUMERIC(14,2) GENERATED ALWAYS AS (quantity * unit_price_snapshot) STORED,
     created_at                      TIMESTAMP     NOT NULL DEFAULT NOW(),
     created_by_user_id              BIGINT        NOT NULL REFERENCES users(id),

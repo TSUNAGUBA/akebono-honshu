@@ -19,6 +19,14 @@ public class PurchaseOrderLine
     public decimal UnitPriceSnapshot { get; set; }
     public string CurrencyCodeSnapshot { get; set; } = "JPY";
 
+    // 旧 発注明細 項目 (Phase B、全 NULL 許容 = 既存行は NULL のまま下位互換)
+    /// <summary>倉庫1入数 / 入数</summary>
+    public int? PackQuantity { get; set; }
+    /// <summary>見積単価</summary>
+    public decimal? EstimateUnitPrice { get; set; }
+    /// <summary>仮番号 (発注時点の商品 family.ProvisionalNumber をコピーして凍結)</summary>
+    public string? ProvisionalNumberSnapshot { get; set; }
+
     /// <summary>DB の GENERATED 計算列 (quantity * unit_price_snapshot)。EF Core では読み取り専用。</summary>
     public decimal Subtotal { get; set; }
 

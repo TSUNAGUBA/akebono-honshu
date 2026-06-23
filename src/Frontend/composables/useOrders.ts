@@ -48,6 +48,10 @@ export interface OrderLineDetail {
   unitPriceSnapshot: number
   currencyCodeSnapshot: string
   subtotal: number
+  // 旧 発注明細 項目 (Phase B)
+  packQuantity: number | null
+  estimateUnitPrice: number | null
+  provisionalNumberSnapshot: string | null
 }
 
 export interface OrderDetail {
@@ -86,6 +90,17 @@ export interface OrderDetail {
   createdAt: string
   updatedAt: string
   lines: OrderLineDetail[]
+  // 旧 発注書 国内/海外 項目 (Phase B)
+  isOverseas: boolean
+  landingPlace: string | null
+  customerRef: string | null
+  factoryShippingDate: string | null
+  inspectionShippingDate: string | null
+  overseasDepartureDate: string | null
+  warehouse2Id: number | null
+  warehouse2Name: string | null
+  warehouse3Id: number | null
+  warehouse3Name: string | null
 }
 
 export interface CreateOrderPayload {
@@ -108,7 +123,19 @@ export interface CreateOrderPayload {
     quantity: number
     unitPriceSnapshot: number
     currencyCodeSnapshot: string
+    // 旧 発注明細 項目 (Phase B、任意)
+    packQuantity: number | null
+    estimateUnitPrice: number | null
   }[]
+  // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
+  isOverseas: boolean
+  landingPlace: string | null
+  customerRef: string | null
+  factoryShippingDate: string | null
+  inspectionShippingDate: string | null
+  overseasDepartureDate: string | null
+  warehouse2Id: number | null
+  warehouse3Id: number | null
 }
 
 export interface UpdateOrderPayload extends CreateOrderPayload {
