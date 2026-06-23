@@ -88,6 +88,18 @@ public class ProductFamilyService(
                 OutsoleMaterialId = req.Family.OutsoleMaterialId,
                 ProductName1 = req.Family.ProductName1,
                 ProductName2 = req.Family.ProductName2,
+                // 旧 品番台帳 項目 (Phase A、任意)
+                ProductYear = req.Family.ProductYear,
+                ManagementSeasonId = req.Family.ManagementSeasonId,
+                PlannerUserId = req.Family.PlannerUserId,
+                ProvisionalNumber = req.Family.ProvisionalNumber,
+                SampleApprovalDate = req.Family.SampleApprovalDate,
+                RetailPrice = req.Family.RetailPrice,
+                DeliveryPrice = req.Family.DeliveryPrice,
+                PlanningCost = req.Family.PlanningCost,
+                BrandCost = req.Family.BrandCost,
+                RoyaltyTarget = req.Family.RoyaltyTarget,
+                RoyaltyRate = req.Family.RoyaltyRate,
                 Status = 1, // Active
                 CreatedAt = now, UpdatedAt = now,
                 CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
@@ -288,6 +300,9 @@ public class ProductFamilyService(
             .Include(pf => pf.UpperMaterial)
             .Include(pf => pf.InsoleMaterial)
             .Include(pf => pf.OutsoleMaterial)
+            // 旧 品番台帳 項目の表示名解決 (Phase A): 管理季節名・企画者名
+            .Include(pf => pf.ManagementSeason)
+            .Include(pf => pf.Planner)
             .FirstOrDefaultAsync(pf => pf.Id == familyId, ct);
         if (family is null) return null;
 
@@ -340,7 +355,15 @@ public class ProductFamilyService(
                 family.OutsoleMaterialId, family.OutsoleMaterial?.Name ?? "?",
                 family.ProductName1, family.ProductName2,
                 family.Status, family.IsDeleted,
-                family.CreatedAt, family.UpdatedAt),
+                family.CreatedAt, family.UpdatedAt,
+                // 旧 品番台帳 項目 (Phase A)。管理季節名・企画者名は Include 済ナビから解決 (未設定時 null)。
+                family.ProductYear,
+                family.ManagementSeasonId, family.ManagementSeason?.Name,
+                family.PlannerUserId, family.Planner?.DisplayName,
+                family.ProvisionalNumber, family.SampleApprovalDate,
+                family.RetailPrice, family.DeliveryPrice,
+                family.PlanningCost, family.BrandCost,
+                family.RoyaltyTarget, family.RoyaltyRate),
             products.Select(p => new SkuSummary(
                 p.Id, p.Sku, p.ColorId, p.Color?.Code ?? "?", p.Color?.Name ?? "?",
                 p.SizeId, p.Size?.Code ?? "?", p.Size?.Name ?? "?", p.IsDeleted)).ToList(),
@@ -365,6 +388,18 @@ public class ProductFamilyService(
         family.ProductName1 = req.ProductName1;
         family.ProductName2 = req.ProductName2;
         family.Status = req.Status;
+        // 旧 品番台帳 項目 (Phase A、任意)
+        family.ProductYear = req.ProductYear;
+        family.ManagementSeasonId = req.ManagementSeasonId;
+        family.PlannerUserId = req.PlannerUserId;
+        family.ProvisionalNumber = req.ProvisionalNumber;
+        family.SampleApprovalDate = req.SampleApprovalDate;
+        family.RetailPrice = req.RetailPrice;
+        family.DeliveryPrice = req.DeliveryPrice;
+        family.PlanningCost = req.PlanningCost;
+        family.BrandCost = req.BrandCost;
+        family.RoyaltyTarget = req.RoyaltyTarget;
+        family.RoyaltyRate = req.RoyaltyRate;
         family.UpdatedAt = SystemTime.Now;
         family.UpdatedByUserId = actorUserId;
 

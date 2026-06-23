@@ -22,6 +22,18 @@ CREATE TABLE IF NOT EXISTS product_families (
     outsole_material_id   BIGINT       NOT NULL REFERENCES materials(id),
     product_name_1        VARCHAR(255) NOT NULL,
     product_name_2        VARCHAR(255) NULL,
+    -- 旧 品番台帳 項目 (Phase A、全 NULL 許容 = 既存行は NULL のまま下位互換)
+    product_year          SMALLINT     NULL,                                       -- 商品年度 (9999=通年)
+    management_season_id  BIGINT       NULL     REFERENCES product_seasons(id),    -- 管理季節
+    planner_user_id       BIGINT       NULL     REFERENCES users(id),              -- 企画者
+    provisional_number    VARCHAR(64)  NULL,                                       -- 仮番号
+    sample_approval_date  DATE         NULL,                                       -- サンプル合格日
+    retail_price          NUMERIC(12,2) NULL,                                      -- 小売価格
+    delivery_price        NUMERIC(12,2) NULL,                                      -- 納品価格
+    planning_cost         NUMERIC(12,2) NULL,                                      -- 企画費
+    brand_cost            NUMERIC(12,2) NULL,                                      -- ブランド費
+    royalty_target        SMALLINT     NULL,                                       -- 版権対象 (1=小売価格, 2=納品価格)
+    royalty_rate          NUMERIC(5,2) NULL,                                       -- 版権料率(%)
     status                SMALLINT     NOT NULL DEFAULT 0,
     is_deleted            BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
@@ -31,6 +43,7 @@ CREATE TABLE IF NOT EXISTS product_families (
     legacy_id             VARCHAR(64)  NULL,
     CONSTRAINT chk_pf_planned_year_code CHECK (planned_year_code IN ('A','B','C','D','E','F','G','H','I','J','K','N','Z')),
     CONSTRAINT chk_pf_status CHECK (status BETWEEN 0 AND 2),
+    CONSTRAINT chk_pf_royalty_target CHECK (royalty_target IS NULL OR royalty_target IN (1,2)),
     CONSTRAINT uq_product_families UNIQUE (planned_year_code, product_type_id, product_season_id, sequence_no, factory_supplier_id)
 );
 CREATE INDEX IF NOT EXISTS idx_pf_status_deleted ON product_families (status, is_deleted);

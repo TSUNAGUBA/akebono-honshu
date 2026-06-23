@@ -180,6 +180,18 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.OutsoleMaterialId).HasColumnName("outsole_material_id");
             b.Property(x => x.ProductName1).HasColumnName("product_name_1").IsRequired().HasMaxLength(255);
             b.Property(x => x.ProductName2).HasColumnName("product_name_2").HasMaxLength(255);
+            // 旧 品番台帳 項目 (Phase A、全 NULL 許容)
+            b.Property(x => x.ProductYear).HasColumnName("product_year");
+            b.Property(x => x.ManagementSeasonId).HasColumnName("management_season_id");
+            b.Property(x => x.PlannerUserId).HasColumnName("planner_user_id");
+            b.Property(x => x.ProvisionalNumber).HasColumnName("provisional_number").HasMaxLength(64);
+            b.Property(x => x.SampleApprovalDate).HasColumnName("sample_approval_date");
+            b.Property(x => x.RetailPrice).HasColumnName("retail_price").HasColumnType("numeric(12,2)");
+            b.Property(x => x.DeliveryPrice).HasColumnName("delivery_price").HasColumnType("numeric(12,2)");
+            b.Property(x => x.PlanningCost).HasColumnName("planning_cost").HasColumnType("numeric(12,2)");
+            b.Property(x => x.BrandCost).HasColumnName("brand_cost").HasColumnType("numeric(12,2)");
+            b.Property(x => x.RoyaltyTarget).HasColumnName("royalty_target");
+            b.Property(x => x.RoyaltyRate).HasColumnName("royalty_rate").HasColumnType("numeric(5,2)");
             b.Property(x => x.Status).HasColumnName("status");
             b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
@@ -197,6 +209,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasOne(x => x.UpperMaterial).WithMany().HasForeignKey(x => x.UpperMaterialId);
             b.HasOne(x => x.InsoleMaterial).WithMany().HasForeignKey(x => x.InsoleMaterialId);
             b.HasOne(x => x.OutsoleMaterial).WithMany().HasForeignKey(x => x.OutsoleMaterialId);
+            // 旧 品番台帳 項目の任意参照 FK (Phase A)。Function と同じく nullable FK = 任意参照、
+            // cascade なし (既定 ClientSetNull)。HasForeignKey を明示して shadow FK 列を作らない。
+            b.HasOne(x => x.ManagementSeason).WithMany().HasForeignKey(x => x.ManagementSeasonId);
+            b.HasOne(x => x.Planner).WithMany().HasForeignKey(x => x.PlannerUserId);
 
             b.HasMany(x => x.Products).WithOne(p => p.ProductFamily!).HasForeignKey(p => p.ProductFamilyId);
             b.HasMany(x => x.Images).WithOne(i => i.ProductFamily!).HasForeignKey(i => i.ProductFamilyId);
