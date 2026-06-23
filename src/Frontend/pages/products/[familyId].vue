@@ -39,6 +39,7 @@ const priceForm = ref({
   supplierId: 0,
   unitPrice: 0,
   currencyCode: 'JPY',
+  exchangeRate: null as number | null,
   effectiveFrom: new Date().toISOString().split('T')[0],
   decidedAt: new Date().toISOString().split('T')[0],
 })
@@ -155,7 +156,7 @@ const onAddPrice = async () => {
       supplierId: priceForm.value.supplierId,
       unitPrice: Number(priceForm.value.unitPrice),
       currencyCode: priceForm.value.currencyCode,
-      exchangeRate: null,
+      exchangeRate: priceForm.value.currencyCode === 'JPY' ? null : priceForm.value.exchangeRate,
       effectiveFrom: priceForm.value.effectiveFrom,
       decidedAt: priceForm.value.decidedAt,
     })
@@ -304,48 +305,31 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
         <form v-else class="grid grid-cols-2 gap-4 text-sm" @submit.prevent="onSaveEdit">
           <label class="flex flex-col gap-1">
             <span class="font-medium">ブランド</span>
-            <select v-model.number="editForm.brandId" class="rounded-md border border-gray-300 px-3 py-2">
-              <option v-for="b in brands" :key="b.id" :value="b.id">{{ b.code }} - {{ b.name }}</option>
-            </select>
+            <MasterSelect :model-value="editForm.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => editForm.brandId = v ?? 0" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">機能</span>
-            <select v-model.number="editForm.functionId" class="rounded-md border border-gray-300 px-3 py-2">
-              <option :value="null">(なし)</option>
-              <option v-for="f in functions_" :key="f.id" :value="f.id">{{ f.code }} - {{ f.name }}</option>
-            </select>
+            <MasterSelect :model-value="editForm.functionId" :items="functions_" allow-empty empty-label="(なし)" placeholder="機能を検索…" @update:model-value="(v) => editForm.functionId = v" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">商品群</span>
-            <select v-model.number="editForm.productGroupId" class="rounded-md border border-gray-300 px-3 py-2">
-              <option v-for="g in productGroups" :key="g.id" :value="g.id">{{ g.code }} - {{ g.name }}</option>
-            </select>
+            <MasterSelect :model-value="editForm.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => editForm.productGroupId = v ?? 0" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">状態</span>
-            <select v-model.number="editForm.status" class="rounded-md border border-gray-300 px-3 py-2">
-              <option :value="0">Draft</option>
-              <option :value="1">Active</option>
-              <option :value="2">Discontinued</option>
-            </select>
+            <AutoComplete :model-value="String(editForm.status)" :options="[{ value: '0', label: 'Draft' }, { value: '1', label: 'Active' }, { value: '2', label: 'Discontinued' }]" :allow-empty="false" placeholder="状態を選択…" @update:model-value="(v) => editForm.status = Number(v)" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">甲皮素材</span>
-            <select v-model.number="editForm.upperMaterialId" class="rounded-md border border-gray-300 px-3 py-2">
-              <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.code }} - {{ m.name }}</option>
-            </select>
+            <MasterSelect :model-value="editForm.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => editForm.upperMaterialId = v ?? 0" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">中底素材</span>
-            <select v-model.number="editForm.insoleMaterialId" class="rounded-md border border-gray-300 px-3 py-2">
-              <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.code }} - {{ m.name }}</option>
-            </select>
+            <MasterSelect :model-value="editForm.insoleMaterialId" :items="materials" placeholder="中底素材を検索…" @update:model-value="(v) => editForm.insoleMaterialId = v ?? 0" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">底素材</span>
-            <select v-model.number="editForm.outsoleMaterialId" class="rounded-md border border-gray-300 px-3 py-2">
-              <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.code }} - {{ m.name }}</option>
-            </select>
+            <MasterSelect :model-value="editForm.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => editForm.outsoleMaterialId = v ?? 0" />
           </label>
           <label class="col-span-2 flex flex-col gap-1">
             <span class="font-medium">商品名 1</span>
@@ -403,21 +387,21 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
         <form v-if="showPriceForm" class="mb-4 grid grid-cols-4 gap-3 rounded-md bg-gray-50 p-4 text-sm" @submit.prevent="onAddPrice">
           <label class="flex flex-col gap-1">
             <span class="font-medium">仕入先</span>
-            <select v-model.number="priceForm.supplierId" class="rounded-md border border-gray-300 px-2 py-1.5">
-              <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.code }} - {{ s.name }}</option>
-            </select>
+            <MasterSelect :model-value="priceForm.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => priceForm.supplierId = v ?? 0" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">単価</span>
             <div class="flex gap-1">
               <input v-model.number="priceForm.unitPrice" type="number" step="0.01" min="0.01"
                      class="flex-1 rounded-md border border-gray-300 px-2 py-1.5" />
-              <select v-model="priceForm.currencyCode" class="w-20 rounded-md border border-gray-300 px-1 py-1.5">
-                <option value="JPY">JPY</option>
-                <option value="USD">USD</option>
-                <option value="CNY">CNY</option>
-              </select>
+              <div class="w-20">
+                <AutoComplete :model-value="priceForm.currencyCode" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => priceForm.currencyCode = v" />
+              </div>
             </div>
+          </label>
+          <label v-if="priceForm.currencyCode !== 'JPY'" class="flex flex-col gap-1">
+            <span class="font-medium">為替レート <span class="text-xs font-normal text-gray-400">(円換算)</span></span>
+            <input v-model.number="priceForm.exchangeRate" type="number" min="0" step="0.0001" placeholder="例: 21.5" class="rounded-md border border-gray-300 px-2 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">有効開始</span>
@@ -437,6 +421,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <tr>
               <th class="px-3 py-2 text-left">仕入先</th>
               <th class="px-3 py-2 text-right">単価</th>
+              <th class="px-3 py-2 text-right">為替レート</th>
               <th class="px-3 py-2 text-left">有効開始</th>
               <th class="px-3 py-2 text-left">決定日</th>
             </tr>
@@ -445,11 +430,12 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <tr v-for="p in detail.currentSupplierPrices" :key="p.id" class="border-b border-gray-100 last:border-0">
               <td class="px-3 py-2">{{ p.supplierCode }} {{ p.supplierName }}</td>
               <td class="px-3 py-2 text-right font-mono">{{ p.currencyCode }} {{ p.unitPrice.toLocaleString() }}</td>
+              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.exchangeRate != null ? p.exchangeRate.toLocaleString() : '—' }}</td>
               <td class="px-3 py-2">{{ p.effectiveFrom }}</td>
               <td class="px-3 py-2">{{ p.decidedAt }}</td>
             </tr>
             <tr v-if="detail.currentSupplierPrices.length === 0">
-              <td colspan="4" class="px-3 py-4 text-center text-gray-500">単価が登録されていません</td>
+              <td colspan="5" class="px-3 py-4 text-center text-gray-500">単価が登録されていません</td>
             </tr>
           </tbody>
         </table>

@@ -64,6 +64,14 @@ const lines = ref<LineRow[]>([
   { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY' },
 ])
 
+// --- オートコンプリート選択肢（マスタ参照を部分一致検索可能に） ---
+const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
+const skuOptions = computed(() => skus.value.map((s) => ({ id: s.id, label: `${s.sku} - ${s.productName} (${s.colorName}/${s.sizeName})`, code: s.sku })))
+// 副担当者 1〜6（DTO に存在するが従来 UI が無く未入力だった項目を補完）
+const subKeys = ['subOrderer1UserId', 'subOrderer2UserId', 'subOrderer3UserId', 'subOrderer4UserId', 'subOrderer5UserId', 'subOrderer6UserId'] as const
+const subOrdererValue = (n: number): number | null => form.value[subKeys[n - 1]]
+const setSubOrderer = (n: number, v: number | null) => { form.value[subKeys[n - 1]] = v }
+
 onMounted(async () => {
   try {
     const [sup, dest, dept, wh, comm, family, usrRes] = await Promise.all([
@@ -222,27 +230,19 @@ const onSubmit = async () => {
           <div class="grid grid-cols-2 gap-4 text-sm">
             <label class="flex flex-col gap-1">
               <span class="font-medium">仕入先 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.supplierId" class="rounded-md border border-gray-300 px-3 py-2">
-                <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.code }} - {{ s.name }}</option>
-              </select>
+              <MasterSelect v-model="form.supplierId" :items="suppliers" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納品先 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.deliveryDestinationId" class="rounded-md border border-gray-300 px-3 py-2">
-                <option v-for="d in destinations" :key="d.id" :value="d.id">{{ d.code }} - {{ d.name }}</option>
-              </select>
+              <MasterSelect v-model="form.deliveryDestinationId" :items="destinations" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">事業部 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.departmentId" class="rounded-md border border-gray-300 px-3 py-2">
-                <option v-for="d in departments" :key="d.id" :value="d.id">{{ d.code }} - {{ d.name }}</option>
-              </select>
+              <MasterSelect v-model="form.departmentId" :items="departments" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納入倉庫 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.warehouseId" class="rounded-md border border-gray-300 px-3 py-2">
-                <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.code }} - {{ w.name }}</option>
-              </select>
+              <MasterSelect v-model="form.warehouseId" :items="warehouses" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納入日 <span class="text-red-500">*</span></span>
@@ -250,15 +250,22 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注担当 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.ordererUserId" class="rounded-md border border-gray-300 px-3 py-2">
-                <option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }} ({{ u.loginId }})</option>
-              </select>
+              <MasterSelect v-model="form.ordererUserId" :items="userOptions" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注管理者 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.managerUserId" class="rounded-md border border-gray-300 px-3 py-2">
-                <option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }} ({{ u.loginId }})</option>
-              </select>
+              <MasterSelect v-model="form.managerUserId" :items="userOptions" />
+            </label>
+            <label v-for="n in 6" :key="n" class="flex flex-col gap-1">
+              <span class="font-medium">副担当者{{ n }}</span>
+              <MasterSelect
+                :model-value="subOrdererValue(n)"
+                :items="userOptions"
+                allow-empty
+                empty-label="（なし）"
+                placeholder="（任意）"
+                @update:model-value="(v) => setSubOrderer(n, v)"
+              />
             </label>
           </div>
         </section>
@@ -283,11 +290,7 @@ const onSubmit = async () => {
             <tbody>
               <tr v-for="(l, idx) in lines" :key="idx" class="border-b border-gray-100 last:border-0">
                 <td class="px-2 py-2">
-                  <select v-model.number="l.productId" class="w-full rounded-md border border-gray-300 px-2 py-1 text-xs">
-                    <option v-for="s in skus" :key="s.id" :value="s.id">
-                      {{ s.sku }} - {{ s.productName }} ({{ s.colorName }}/{{ s.sizeName }})
-                    </option>
-                  </select>
+                  <MasterSelect v-model="l.productId" :items="skuOptions" placeholder="SKU・品名で検索…" />
                 </td>
                 <td class="px-2 py-2 text-right">
                   <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
@@ -296,11 +299,9 @@ const onSubmit = async () => {
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
                 <td class="px-2 py-2">
-                  <select v-model="l.currencyCodeSnapshot" class="w-20 rounded-md border border-gray-300 px-1 py-1">
-                    <option value="JPY">JPY</option>
-                    <option value="USD">USD</option>
-                    <option value="CNY">CNY</option>
-                  </select>
+                  <div class="w-20">
+                    <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => l.currencyCodeSnapshot = v" />
+                  </div>
                 </td>
                 <td class="px-2 py-2 text-right font-mono">{{ lineSubtotal(l).toLocaleString() }}</td>
                 <td class="px-2 py-2 text-right">

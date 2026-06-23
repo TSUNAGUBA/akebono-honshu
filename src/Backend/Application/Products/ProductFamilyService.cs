@@ -347,7 +347,7 @@ public class ProductFamilyService(
             imageSummaries,
             currentPrices.Select(p => new CurrentSupplierPrice(
                 p.Id, p.SupplierId, p.Supplier?.Code ?? "?", p.Supplier?.Name ?? "?",
-                p.UnitPrice, p.CurrencyCode, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt)).ToList());
+                p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt)).ToList());
     }
 
     /// <summary>商品企画更新 (P-05)。属性カラムのみ。FK 構成 (planned_year/type/season/seq/factory) は不変。</summary>

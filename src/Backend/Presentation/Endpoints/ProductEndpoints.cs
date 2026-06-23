@@ -112,7 +112,7 @@ public static class ProductEndpoints
             var items = await svc.ListHistoryAsync(id, actorId, ct);
             var data = items.Select(p => new CurrentSupplierPrice(
                 p.Id, p.SupplierId, p.Supplier?.Code ?? "?", p.Supplier?.Name ?? "?",
-                p.UnitPrice, p.CurrencyCode, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt));
+                p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt));
             return Results.Ok(new { data });
         });
 

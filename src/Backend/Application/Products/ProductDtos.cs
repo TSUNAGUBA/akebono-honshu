@@ -156,6 +156,7 @@ public record CurrentSupplierPrice(
     string SupplierName,
     decimal UnitPrice,
     string CurrencyCode,
+    decimal? ExchangeRate,
     DateOnly EffectiveFrom,
     DateOnly? EffectiveTo,
     DateOnly DecidedAt);

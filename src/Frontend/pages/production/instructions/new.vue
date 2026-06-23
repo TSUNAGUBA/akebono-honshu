@@ -78,10 +78,9 @@ const submit = async () => {
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <label class="block text-sm">
             <span class="text-gray-600">加工先 (工場)</span>
-            <select v-model.number="form.factorySupplierId" class="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm">
-              <option :value="0" disabled>選択してください</option>
-              <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.code }} {{ s.name }}</option>
-            </select>
+            <div class="mt-1">
+              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="加工先を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? 0" />
+            </div>
           </label>
           <label class="block text-sm">
             <span class="text-gray-600">希望納期</span>
