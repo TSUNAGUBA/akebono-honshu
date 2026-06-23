@@ -145,8 +145,25 @@ const onClickOutside = (e: MouseEvent) => {
   query.value = ''
 }
 
-onMounted(() => document.addEventListener('mousedown', onClickOutside))
-onUnmounted(() => document.removeEventListener('mousedown', onClickOutside))
+// 選択肢窓の外でスクロールが起きたらドロップダウンを閉じる。
+// Teleport ドロップダウンは fixed 位置を開いた瞬間に計算するため、ページスクロールすると
+// 入力欄から乖離して浮いて見える（気持ち悪い）。外側スクロールで閉じることでこれを防ぐ。
+// 選択肢リスト自身（dropdownRef 内）のスクロールは閉じない。scroll はバブルしないため capture で捕捉。
+const onScrollOutside = (e: Event) => {
+  if (!showDropdown.value) return
+  if (dropdownRef.value?.contains(e.target as Node)) return
+  showDropdown.value = false
+  query.value = ''
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onClickOutside)
+  document.addEventListener('scroll', onScrollOutside, true)
+})
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onClickOutside)
+  document.removeEventListener('scroll', onScrollOutside, true)
+})
 </script>
 
 <template>

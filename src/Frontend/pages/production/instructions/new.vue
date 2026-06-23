@@ -63,8 +63,8 @@ const submit = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-5xl px-4 py-8">
-    <header class="mb-6">
+  <main class="mx-auto max-w-screen-2xl px-4 py-5">
+    <header class="mb-4">
       <h1 class="text-2xl font-bold">生産指示書 新規作成</h1>
       <p class="mt-1 text-sm text-gray-500">PI-01 商品マスタ＋生産数量を起点に、加工先へ生産を指示します。</p>
     </header>
@@ -75,7 +75,7 @@ const submit = async () => {
     <template v-else-if="family">
       <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div class="mb-3 text-sm"><span class="text-gray-500">品番:</span> <strong>{{ family.family.productName1 }}</strong></div>
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
           <label class="block text-sm">
             <span class="text-gray-600">加工先 (工場)</span>
             <div class="mt-1">
@@ -94,22 +94,22 @@ const submit = async () => {
         </label>
       </section>
 
-      <section class="mb-4 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
         <table class="w-full">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th class="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-600">品番(SKU)</th>
-              <th class="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-600">色</th>
-              <th class="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-600">サイズ</th>
-              <th class="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-600">生産数量</th>
+              <th class="px-3 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">品番(SKU)</th>
+              <th class="px-3 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">色</th>
+              <th class="px-3 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">サイズ</th>
+              <th class="px-3 py-1.5 text-right text-xs font-semibold uppercase text-gray-600">生産数量</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="p in family.products" :key="p.id" class="border-b border-gray-100 last:border-0">
-              <td class="px-4 py-2 font-mono text-sm">{{ p.sku }}</td>
-              <td class="px-4 py-2 text-sm">{{ p.colorName }}</td>
-              <td class="px-4 py-2 text-sm">{{ p.sizeName }}</td>
-              <td class="px-4 py-2 text-right">
+              <td class="px-3 py-1.5 font-mono text-sm">{{ p.sku }}</td>
+              <td class="px-3 py-1.5 text-sm">{{ p.colorName }}</td>
+              <td class="px-3 py-1.5 text-sm">{{ p.sizeName }}</td>
+              <td class="px-3 py-1.5 text-right">
                 <input v-model.number="qty[p.id]" type="number" min="0" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" />
               </td>
             </tr>
