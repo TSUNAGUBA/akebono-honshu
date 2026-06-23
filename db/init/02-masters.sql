@@ -360,17 +360,28 @@ BEGIN
 
     SELECT id INTO mc_natural FROM material_classifications WHERE code = '001';
 
-    -- brands
+    -- brands (旧確定値 §A-3 を反映。既存 001/002 は demo 参照のため残置し、旧 code を追加)
     INSERT INTO brands (code, name, created_by_user_id, updated_by_user_id) VALUES
         ('001', 'akebono',  owner_id, owner_id),
-        ('002', 'プライベート', owner_id, owner_id)
+        ('002', 'プライベート', owner_id, owner_id),
+        ('000', 'ホンシュPB',        owner_id, owner_id),
+        ('004', 'PLANT',             owner_id, owner_id),
+        ('005', 'ディズニー',         owner_id, owner_id),
+        ('006', 'リラックマ',         owner_id, owner_id),
+        ('011', 'ガチャピン',         owner_id, owner_id),
+        ('013', 'ONE PIECE',         owner_id, owner_id),
+        ('017', 'HKWL(ヒロココシノ)', owner_id, owner_id)
     ON CONFLICT (code) DO NOTHING;
 
-    -- functions
+    -- functions (旧確定値 §A-2 を反映)
     INSERT INTO functions (code, name, created_by_user_id, updated_by_user_id) VALUES
-        ('001', '通常',     owner_id, owner_id),
-        ('002', '防水',     owner_id, owner_id),
-        ('003', '防臭',     owner_id, owner_id)
+        ('001', '静音',          owner_id, owner_id),
+        ('002', '脱げにくい',     owner_id, owner_id),
+        ('003', 'からだにいい岩', owner_id, owner_id),
+        ('004', '足つぼ',         owner_id, owner_id),
+        ('005', 'むじゅうりょく', owner_id, owner_id),
+        ('006', '超軽量',         owner_id, owner_id),
+        ('007', 'メタボリッパ',   owner_id, owner_id)
     ON CONFLICT (code) DO NOTHING;
 
     -- departments
@@ -393,10 +404,15 @@ BEGIN
         ('003', '通年', '0', owner_id, owner_id)
     ON CONFLICT (code) DO NOTHING;
 
-    -- product_groups
+    -- product_groups (旧確定値 §A-2 を反映。planning_fee は本確定値に含まれないため
+    --   既存サンプル額を踏襲し、追加分は DEFAULT 0)
     INSERT INTO product_groups (code, name, planning_fee, created_by_user_id, updated_by_user_id) VALUES
-        ('001', 'ベーシック', 1000.00, owner_id, owner_id),
-        ('002', 'プレミアム', 2500.00, owner_id, owner_id)
+        ('001', '第1プロパー', 1000.00, owner_id, owner_id),
+        ('002', '第2プロパー', 2500.00, owner_id, owner_id),
+        ('003', '第1他商品',   0.00,    owner_id, owner_id),
+        ('004', '第2他商品',   0.00,    owner_id, owner_id),
+        ('005', '第1バーゲン', 0.00,    owner_id, owner_id),
+        ('999', 'その他',       0.00,    owner_id, owner_id)
     ON CONFLICT (code) DO NOTHING;
 
     -- colors
