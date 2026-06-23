@@ -13,6 +13,7 @@ const {
   addSupplierPrice, uploadImage, deleteImage,
 } = useProducts()
 const { list } = useMasters()
+const { apiFetch } = useApi()
 
 const detail = ref<FamilyDetail | null>(null)
 const loading = ref(true)
@@ -31,6 +32,18 @@ const editForm = ref({
   productName1: '',
   productName2: '',
   status: 1,
+  // 旧 品番台帳 項目 (Phase A、全て任意)
+  productYear: null as number | null,
+  managementSeasonId: null as number | null,
+  plannerUserId: null as number | null,
+  provisionalNumber: '',
+  sampleApprovalDate: '',
+  retailPrice: null as number | null,
+  deliveryPrice: null as number | null,
+  planningCost: null as number | null,
+  brandCost: null as number | null,
+  royaltyTarget: null as number | null,
+  royaltyRate: null as number | null,
 })
 
 // 単価追加フォーム
@@ -50,6 +63,14 @@ const functions_ = ref<MasterItem[]>([])
 const productGroups = ref<MasterItem[]>([])
 const materials = ref<MasterItem[]>([])
 const suppliers = ref<MasterItem[]>([])
+// 旧 品番台帳 項目 (Phase A): 管理季節・企画者の選択肢
+const productSeasons = ref<MasterItem[]>([])
+interface UserOption { id: number; loginId: string; displayName: string }
+const users = ref<UserOption[]>([])
+const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
+const royaltyTargetOptions = [{ value: '1', label: '小売価格' }, { value: '2', label: '納品価格' }]
+const royaltyTargetLabel = (t: number | null): string =>
+  t === 1 ? '小売価格' : t === 2 ? '納品価格' : '—'
 
 // 画像アップロード
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -71,6 +92,18 @@ const reload = async () => {
         productName1: detail.value.family.productName1,
         productName2: detail.value.family.productName2 ?? '',
         status: detail.value.family.status,
+        // 旧 品番台帳 項目 (Phase A)
+        productYear: detail.value.family.productYear,
+        managementSeasonId: detail.value.family.managementSeasonId,
+        plannerUserId: detail.value.family.plannerUserId,
+        provisionalNumber: detail.value.family.provisionalNumber ?? '',
+        sampleApprovalDate: detail.value.family.sampleApprovalDate ?? '',
+        retailPrice: detail.value.family.retailPrice,
+        deliveryPrice: detail.value.family.deliveryPrice,
+        planningCost: detail.value.family.planningCost,
+        brandCost: detail.value.family.brandCost,
+        royaltyTarget: detail.value.family.royaltyTarget,
+        royaltyRate: detail.value.family.royaltyRate,
       }
     }
   } catch (e) {
@@ -87,15 +120,19 @@ onMounted(async () => {
   await Promise.all([
     reload(),
     (async () => {
-      const [br, fn, pg, mt, sup] = await Promise.all([
+      const [br, fn, pg, mt, sup, ps, usrRes] = await Promise.all([
         list('brands'), list('functions'), list('product-groups'),
         list('materials'), list('suppliers'),
+        list('product-seasons'),
+        apiFetch<{ data: UserOption[] }>('/users'),
       ])
       brands.value = br
       functions_.value = fn
       productGroups.value = pg
       materials.value = mt
       suppliers.value = sup
+      productSeasons.value = ps
+      users.value = usrRes.data
       if (sup.length) priceForm.value.supplierId = sup[0].id
     })(),
   ])
@@ -126,6 +163,18 @@ const onSaveEdit = async () => {
       productName1: editForm.value.productName1.trim(),
       productName2: editForm.value.productName2.trim() || null,
       status: Number(editForm.value.status),
+      // 旧 品番台帳 項目 (Phase A、未入力は null)
+      productYear: editForm.value.productYear,
+      managementSeasonId: editForm.value.managementSeasonId,
+      plannerUserId: editForm.value.plannerUserId,
+      provisionalNumber: editForm.value.provisionalNumber.trim() || null,
+      sampleApprovalDate: editForm.value.sampleApprovalDate || null,
+      retailPrice: editForm.value.retailPrice,
+      deliveryPrice: editForm.value.deliveryPrice,
+      planningCost: editForm.value.planningCost,
+      brandCost: editForm.value.brandCost,
+      royaltyTarget: editForm.value.royaltyTarget,
+      royaltyRate: editForm.value.royaltyRate,
     })
     successMessage.value = '更新しました'
     editing.value = false
@@ -300,6 +349,18 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <div><span class="text-gray-500">甲皮素材:</span> {{ detail.family.upperMaterialName }}</div>
           <div><span class="text-gray-500">中底素材:</span> {{ detail.family.insoleMaterialName }}</div>
           <div><span class="text-gray-500">底素材:</span> {{ detail.family.outsoleMaterialName }}</div>
+          <!-- 旧 品番台帳 項目 (Phase A、未設定は —) -->
+          <div><span class="text-gray-500">商品年度:</span> {{ detail.family.productYear ?? '—' }}</div>
+          <div><span class="text-gray-500">管理季節:</span> {{ detail.family.managementSeasonName ?? '—' }}</div>
+          <div><span class="text-gray-500">企画者:</span> {{ detail.family.plannerName ?? '—' }}</div>
+          <div><span class="text-gray-500">仮番号:</span> {{ detail.family.provisionalNumber ?? '—' }}</div>
+          <div><span class="text-gray-500">サンプル合格日:</span> {{ detail.family.sampleApprovalDate ?? '—' }}</div>
+          <div><span class="text-gray-500">小売価格:</span> {{ detail.family.retailPrice != null ? detail.family.retailPrice.toLocaleString() : '—' }}</div>
+          <div><span class="text-gray-500">納品価格:</span> {{ detail.family.deliveryPrice != null ? detail.family.deliveryPrice.toLocaleString() : '—' }}</div>
+          <div><span class="text-gray-500">企画費:</span> {{ detail.family.planningCost != null ? detail.family.planningCost.toLocaleString() : '—' }}</div>
+          <div><span class="text-gray-500">ブランド費:</span> {{ detail.family.brandCost != null ? detail.family.brandCost.toLocaleString() : '—' }}</div>
+          <div><span class="text-gray-500">版権対象:</span> {{ royaltyTargetLabel(detail.family.royaltyTarget) }}</div>
+          <div><span class="text-gray-500">版権料率:</span> {{ detail.family.royaltyRate != null ? `${detail.family.royaltyRate}%` : '—' }}</div>
         </div>
 
         <form v-else class="grid grid-cols-2 gap-4 text-sm" @submit.prevent="onSaveEdit">
@@ -331,6 +392,53 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <span class="font-medium">底素材</span>
             <MasterSelect :model-value="editForm.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => editForm.outsoleMaterialId = v ?? 0" />
           </label>
+
+          <!-- 旧 品番台帳 項目 (Phase A、全て任意) -->
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">商品年度</span>
+            <input v-model.number="editForm.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">管理季節</span>
+            <MasterSelect :model-value="editForm.managementSeasonId" :items="productSeasons" allow-empty empty-label="(なし)" placeholder="管理季節を検索…" @update:model-value="(v) => editForm.managementSeasonId = v" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">企画者</span>
+            <MasterSelect :model-value="editForm.plannerUserId" :items="userOptions" allow-empty empty-label="(なし)" placeholder="企画者を検索…" @update:model-value="(v) => editForm.plannerUserId = v" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">仮番号</span>
+            <input v-model="editForm.provisionalNumber" type="text" maxlength="64" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">サンプル合格日</span>
+            <input v-model="editForm.sampleApprovalDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">版権対象</span>
+            <AutoComplete :model-value="editForm.royaltyTarget != null ? String(editForm.royaltyTarget) : ''" :options="royaltyTargetOptions" allow-empty empty-label="(なし)" placeholder="版権対象を選択…" @update:model-value="(v) => editForm.royaltyTarget = v === '' ? null : Number(v)" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">版権料率 (%)</span>
+            <input v-model.number="editForm.royaltyRate" type="number" min="0" step="0.01" placeholder="例: 5.00" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">小売価格</span>
+            <input v-model.number="editForm.retailPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">納品価格</span>
+            <input v-model.number="editForm.deliveryPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">企画費</span>
+            <input v-model.number="editForm.planningCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">ブランド費</span>
+            <input v-model.number="editForm.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+          </label>
+
           <label class="col-span-2 flex flex-col gap-1">
             <span class="font-medium">商品名 1</span>
             <input v-model="editForm.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-3 py-2" />

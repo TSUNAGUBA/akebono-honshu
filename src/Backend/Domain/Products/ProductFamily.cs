@@ -28,6 +28,30 @@ public class ProductFamily
     public string ProductName1 { get; set; } = string.Empty;
     public string? ProductName2 { get; set; }
 
+    // 旧 品番台帳 項目 (Phase A、全て NULL 許容 = 既存行は NULL のまま下位互換)
+    /// <summary>商品年度 (9999=通年)</summary>
+    public short? ProductYear { get; set; }
+    /// <summary>管理季節 (product_seasons.id)</summary>
+    public long? ManagementSeasonId { get; set; }
+    /// <summary>企画者 (users.id)</summary>
+    public long? PlannerUserId { get; set; }
+    /// <summary>仮番号</summary>
+    public string? ProvisionalNumber { get; set; }
+    /// <summary>サンプル合格日</summary>
+    public DateOnly? SampleApprovalDate { get; set; }
+    /// <summary>小売価格</summary>
+    public decimal? RetailPrice { get; set; }
+    /// <summary>納品価格</summary>
+    public decimal? DeliveryPrice { get; set; }
+    /// <summary>企画費</summary>
+    public decimal? PlanningCost { get; set; }
+    /// <summary>ブランド費</summary>
+    public decimal? BrandCost { get; set; }
+    /// <summary>版権対象 (1=小売価格, 2=納品価格)</summary>
+    public short? RoyaltyTarget { get; set; }
+    /// <summary>版権料率(%)</summary>
+    public decimal? RoyaltyRate { get; set; }
+
     /// <summary>0=Draft, 1=Active, 2=Discontinued</summary>
     public short Status { get; set; }
 
@@ -48,6 +72,10 @@ public class ProductFamily
     public Material? UpperMaterial { get; set; }
     public Material? InsoleMaterial { get; set; }
     public Material? OutsoleMaterial { get; set; }
+
+    // 旧 品番台帳 項目のナビプロパティ (Phase A)
+    public ProductSeason? ManagementSeason { get; set; }
+    public User? Planner { get; set; }
 
     public List<Product> Products { get; set; } = new();
     public List<ProductImage> Images { get; set; } = new();

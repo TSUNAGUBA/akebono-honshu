@@ -5,6 +5,7 @@ import type { CompleteFamilyPayload } from '~/composables/useProducts'
 const { canEditMaster } = useAuth()
 const { list } = useMasters()
 const { createComplete } = useProducts()
+const { apiFetch } = useApi()
 
 // マスタ参照データ
 const productTypes = ref<MasterItem[]>([])
@@ -16,6 +17,13 @@ const productGroups = ref<MasterItem[]>([])
 const materials = ref<MasterItem[]>([])
 const colors = ref<MasterItem[]>([])
 const sizes = ref<MasterItem[]>([])
+
+// ユーザ候補 (企画者用)。orders/new.vue と同じ /users から取得。
+interface UserOption { id: number; loginId: string; displayName: string }
+const users = ref<UserOption[]>([])
+const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
+// 版権対象 (1=小売価格, 2=納品価格)。AutoComplete は string 値で扱う。
+const royaltyTargetOptions = [{ value: '1', label: '小売価格' }, { value: '2', label: '納品価格' }]
 
 const loading = ref(true)
 const submitting = ref(false)
@@ -37,6 +45,18 @@ const form = ref({
   outsoleMaterialId: 0,
   productName1: '',
   productName2: '',
+  // 旧 品番台帳 項目 (Phase A、全て任意)
+  productYear: null as number | null,
+  managementSeasonId: null as number | null,
+  plannerUserId: null as number | null,
+  provisionalNumber: '',
+  sampleApprovalDate: '',
+  retailPrice: null as number | null,
+  deliveryPrice: null as number | null,
+  planningCost: null as number | null,
+  brandCost: null as number | null,
+  royaltyTarget: null as number | null,
+  royaltyRate: null as number | null,
 })
 
 const expansion = ref({
@@ -55,7 +75,7 @@ const supplierPrice = ref({
 
 onMounted(async () => {
   try {
-    const [pt, ps, sup, br, fn, pg, mt, co, sz] = await Promise.all([
+    const [pt, ps, sup, br, fn, pg, mt, co, sz, usrRes] = await Promise.all([
       list('product-types'),
       list('product-seasons'),
       list('suppliers'),
@@ -65,6 +85,7 @@ onMounted(async () => {
       list('materials'),
       list('colors'),
       list('sizes'),
+      apiFetch<{ data: UserOption[] }>('/users'),
     ])
     productTypes.value = pt
     productSeasons.value = ps
@@ -75,6 +96,7 @@ onMounted(async () => {
     materials.value = mt
     colors.value = co
     sizes.value = sz
+    users.value = usrRes.data
 
     // 初期値設定
     if (pt.length) form.value.productTypeId = pt[0].id
@@ -141,6 +163,18 @@ const onSubmit = async () => {
         outsoleMaterialId: form.value.outsoleMaterialId,
         productName1: form.value.productName1.trim(),
         productName2: form.value.productName2.trim() || null,
+        // 旧 品番台帳 項目 (Phase A、未入力は null)
+        productYear: form.value.productYear,
+        managementSeasonId: form.value.managementSeasonId,
+        plannerUserId: form.value.plannerUserId,
+        provisionalNumber: form.value.provisionalNumber.trim() || null,
+        sampleApprovalDate: form.value.sampleApprovalDate || null,
+        retailPrice: form.value.retailPrice,
+        deliveryPrice: form.value.deliveryPrice,
+        planningCost: form.value.planningCost,
+        brandCost: form.value.brandCost,
+        royaltyTarget: form.value.royaltyTarget,
+        royaltyRate: form.value.royaltyRate,
       },
       expansion: {
         colorIds: [...expansion.value.colorIds],
@@ -261,6 +295,58 @@ const onSubmit = async () => {
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品名 2</span>
               <input v-model="form.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+          </div>
+
+          <!-- 旧 品番台帳 項目 (Phase A、全て任意) -->
+          <div class="mt-4 grid grid-cols-2 gap-4">
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">商品年度</span>
+              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">管理季節</span>
+              <MasterSelect :model-value="form.managementSeasonId" :items="productSeasons" allow-empty empty-label="(なし)" placeholder="管理季節を検索…" @update:model-value="(v) => form.managementSeasonId = v" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">企画者</span>
+              <MasterSelect :model-value="form.plannerUserId" :items="userOptions" allow-empty empty-label="(なし)" placeholder="企画者を検索…" @update:model-value="(v) => form.plannerUserId = v" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">仮番号</span>
+              <input v-model="form.provisionalNumber" type="text" maxlength="64" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">サンプル合格日</span>
+              <input v-model="form.sampleApprovalDate" type="date" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">版権対象</span>
+              <AutoComplete :model-value="form.royaltyTarget != null ? String(form.royaltyTarget) : ''" :options="royaltyTargetOptions" allow-empty empty-label="(なし)" placeholder="版権対象を選択…" @update:model-value="(v) => form.royaltyTarget = v === '' ? null : Number(v)" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">版権料率 (%)</span>
+              <input v-model.number="form.royaltyRate" type="number" min="0" step="0.01" placeholder="例: 5.00" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+          </div>
+
+          <!-- 価格 (旧 品番台帳 項目、全て任意) -->
+          <div class="mt-4 grid grid-cols-2 gap-4">
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">小売価格</span>
+              <input v-model.number="form.retailPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">納品価格</span>
+              <input v-model.number="form.deliveryPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">企画費</span>
+              <input v-model.number="form.planningCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">ブランド費</span>
+              <input v-model.number="form.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
             </label>
           </div>
         </section>

@@ -21,7 +21,19 @@ public record FamilyInput(
     long InsoleMaterialId,
     long OutsoleMaterialId,
     string ProductName1,
-    string? ProductName2);
+    string? ProductName2,
+    // 旧 品番台帳 項目 (Phase A、全て任意)
+    short? ProductYear = null,
+    long? ManagementSeasonId = null,
+    long? PlannerUserId = null,
+    string? ProvisionalNumber = null,
+    DateOnly? SampleApprovalDate = null,
+    decimal? RetailPrice = null,
+    decimal? DeliveryPrice = null,
+    decimal? PlanningCost = null,
+    decimal? BrandCost = null,
+    short? RoyaltyTarget = null,
+    decimal? RoyaltyRate = null);
 
 public record ExpansionInput(
     List<long> ColorIds,
@@ -119,7 +131,21 @@ public record FamilyFullInfo(
     short Status,
     bool IsDeleted,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    // 旧 品番台帳 項目 (Phase A、全て任意)。表示用に管理季節名・企画者名も解決して返す。
+    short? ProductYear,
+    long? ManagementSeasonId,
+    string? ManagementSeasonName,
+    long? PlannerUserId,
+    string? PlannerName,
+    string? ProvisionalNumber,
+    DateOnly? SampleApprovalDate,
+    decimal? RetailPrice,
+    decimal? DeliveryPrice,
+    decimal? PlanningCost,
+    decimal? BrandCost,
+    short? RoyaltyTarget,
+    decimal? RoyaltyRate);
 
 public record SkuSummary(
     long Id,
@@ -177,7 +203,19 @@ public record UpdateFamilyRequest(
     long OutsoleMaterialId,
     string ProductName1,
     string? ProductName2,
-    short Status);
+    short Status,
+    // 旧 品番台帳 項目 (Phase A、全て任意)
+    short? ProductYear = null,
+    long? ManagementSeasonId = null,
+    long? PlannerUserId = null,
+    string? ProvisionalNumber = null,
+    DateOnly? SampleApprovalDate = null,
+    decimal? RetailPrice = null,
+    decimal? DeliveryPrice = null,
+    decimal? PlanningCost = null,
+    decimal? BrandCost = null,
+    short? RoyaltyTarget = null,
+    decimal? RoyaltyRate = null);
 
 // ─────────────────────────────────────────────────
 // 新単価追加 (POST /api/v1/products/families/{id}/supplier-prices、BR-04 履歴管理)

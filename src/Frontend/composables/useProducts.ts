@@ -115,6 +115,33 @@ export interface FamilyFullInfo {
   isDeleted: boolean
   createdAt: string
   updatedAt: string
+  // 旧 品番台帳 項目 (Phase A、全て任意)
+  /** 商品年度 (9999=通年) */
+  productYear: number | null
+  /** 管理季節 (product_seasons.id) */
+  managementSeasonId: number | null
+  /** 管理季節名 (表示用) */
+  managementSeasonName: string | null
+  /** 企画者 (users.id) */
+  plannerUserId: number | null
+  /** 企画者名 (表示用) */
+  plannerName: string | null
+  /** 仮番号 */
+  provisionalNumber: string | null
+  /** サンプル合格日 (YYYY-MM-DD) */
+  sampleApprovalDate: string | null
+  /** 小売価格 */
+  retailPrice: number | null
+  /** 納品価格 */
+  deliveryPrice: number | null
+  /** 企画費 */
+  planningCost: number | null
+  /** ブランド費 */
+  brandCost: number | null
+  /** 版権対象 (1=小売価格, 2=納品価格) */
+  royaltyTarget: number | null
+  /** 版権料率(%) */
+  royaltyRate: number | null
 }
 
 export interface FamilyDetail {
@@ -138,6 +165,18 @@ export interface CompleteFamilyPayload {
     outsoleMaterialId: number
     productName1: string
     productName2: string | null
+    // 旧 品番台帳 項目 (Phase A、全て任意)
+    productYear: number | null
+    managementSeasonId: number | null
+    plannerUserId: number | null
+    provisionalNumber: string | null
+    sampleApprovalDate: string | null
+    retailPrice: number | null
+    deliveryPrice: number | null
+    planningCost: number | null
+    brandCost: number | null
+    royaltyTarget: number | null
+    royaltyRate: number | null
   }
   expansion: {
     colorIds: number[]
@@ -200,6 +239,18 @@ export const useProducts = () => {
     productName1: string
     productName2: string | null
     status: number
+    // 旧 品番台帳 項目 (Phase A、全て任意)
+    productYear: number | null
+    managementSeasonId: number | null
+    plannerUserId: number | null
+    provisionalNumber: string | null
+    sampleApprovalDate: string | null
+    retailPrice: number | null
+    deliveryPrice: number | null
+    planningCost: number | null
+    brandCost: number | null
+    royaltyTarget: number | null
+    royaltyRate: number | null
   }) => {
     return await apiFetch<FamilyFullInfo>(`/products/families/${id}`, {
       method: 'PATCH',
