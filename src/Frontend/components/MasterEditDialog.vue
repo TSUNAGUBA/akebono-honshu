@@ -142,20 +142,12 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
               <span class="text-sm">有効</span>
             </label>
 
-            <select
+            <MasterSelect
               v-else-if="f.type === 'select-master'"
-              v-model.number="form[f.key] as number"
-              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-            >
-              <option :value="0" disabled>選択してください</option>
-              <option
-                v-for="r in referenceItemsFor(f.master ?? '')"
-                :key="r.id"
-                :value="r.id"
-              >
-                {{ r.code }} - {{ r.name }}
-              </option>
-            </select>
+              :model-value="(form[f.key] as number | null)"
+              :items="referenceItemsFor(f.master ?? '')"
+              @update:model-value="(v) => form[f.key] = v ?? 0"
+            />
 
             <p v-if="f.help" class="text-xs text-gray-500">{{ f.help }}</p>
           </div>

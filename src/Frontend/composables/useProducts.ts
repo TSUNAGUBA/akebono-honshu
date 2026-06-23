@@ -75,6 +75,7 @@ export interface CurrentSupplierPrice {
   supplierName: string
   unitPrice: number
   currencyCode: string
+  exchangeRate: number | null
   effectiveFrom: string
   effectiveTo: string | null
   decidedAt: string

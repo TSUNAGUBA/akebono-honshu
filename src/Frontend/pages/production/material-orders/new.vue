@@ -99,14 +99,15 @@ const createGroup = async (gi: number) => {
         <div class="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <label class="block text-sm">
             <span class="text-gray-600">素材仕入先</span>
-            <select v-model.number="g.supplierId" class="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm">
-              <option :value="0" disabled>選択してください</option>
-              <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.code }} {{ s.name }}</option>
-            </select>
+            <div class="mt-1">
+              <MasterSelect :model-value="g.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => g.supplierId = v ?? 0" />
+            </div>
           </label>
           <label class="block text-sm"><span class="text-gray-600">納入希望日</span><input v-model="g.dueDate" type="date" class="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" /></label>
           <label class="block text-sm"><span class="text-gray-600">通貨</span>
-            <select v-model="g.currency" class="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"><option>JPY</option><option>CNY</option><option>USD</option></select>
+            <div class="mt-1">
+              <AutoComplete :model-value="g.currency" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'CNY', label: 'CNY' }, { value: 'USD', label: 'USD' }]" :allow-empty="false" @update:model-value="(v) => g.currency = v" />
+            </div>
           </label>
         </div>
         <table class="w-full">

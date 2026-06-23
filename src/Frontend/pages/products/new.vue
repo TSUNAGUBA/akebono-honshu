@@ -48,6 +48,7 @@ const supplierPrice = ref({
   supplierId: 0,
   unitPrice: 0,
   currencyCode: 'JPY',
+  exchangeRate: null as number | null,
   effectiveFrom: new Date().toISOString().split('T')[0],
   decidedAt: new Date().toISOString().split('T')[0],
 })
@@ -150,7 +151,7 @@ const onSubmit = async () => {
           supplierId: supplierPrice.value.supplierId,
           unitPrice: Number(supplierPrice.value.unitPrice),
           currencyCode: supplierPrice.value.currencyCode,
-          exchangeRate: null,
+          exchangeRate: supplierPrice.value.currencyCode === 'JPY' ? null : supplierPrice.value.exchangeRate,
           effectiveFrom: supplierPrice.value.effectiveFrom,
           decidedAt: supplierPrice.value.decidedAt,
         },
@@ -201,34 +202,20 @@ const onSubmit = async () => {
           <div class="grid grid-cols-2 gap-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">年式 <span class="text-red-500">*</span></span>
-              <select v-model="form.plannedYearCode" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="y in yearCodes" :key="y" :value="y">{{ y }}</option>
-              </select>
+              <AutoComplete :model-value="form.plannedYearCode" :options="yearCodes.map((y) => ({ value: y, label: y }))" :allow-empty="false" placeholder="年式を検索…" @update:model-value="(v) => form.plannedYearCode = v" />
               <span class="text-xs text-gray-500">11 桁品番の 1 桁目 (A-K, N, Z)</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品タイプ <span class="text-red-500">*</span></span>
-              <select v-model.number="form.productTypeId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="p in productTypes" :key="p.id" :value="p.id">
-                  {{ p.code }} - {{ p.name }}
-                </option>
-              </select>
+              <MasterSelect :model-value="form.productTypeId" :items="productTypes" placeholder="商品タイプを検索…" @update:model-value="(v) => form.productTypeId = v ?? 0" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品季節 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.productSeasonId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="s in productSeasons" :key="s.id" :value="s.id">
-                  {{ s.code }} - {{ s.name }}
-                </option>
-              </select>
+              <MasterSelect :model-value="form.productSeasonId" :items="productSeasons" placeholder="商品季節を検索…" @update:model-value="(v) => form.productSeasonId = v ?? 0" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">工場 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.factorySupplierId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="s in suppliers" :key="s.id" :value="s.id">
-                  {{ s.code }} - {{ s.name }}
-                </option>
-              </select>
+              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? 0" />
               <span class="text-xs text-gray-500">11 桁品番の 7 桁目 (工場コード)</span>
             </label>
           </div>
@@ -241,42 +228,29 @@ const onSubmit = async () => {
           <div class="grid grid-cols-2 gap-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">ブランド <span class="text-red-500">*</span></span>
-              <select v-model.number="form.brandId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="b in brands" :key="b.id" :value="b.id">{{ b.code }} - {{ b.name }}</option>
-              </select>
+              <MasterSelect :model-value="form.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? 0" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">機能</span>
-              <select v-model.number="form.functionId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option :value="null">(なし)</option>
-                <option v-for="f in functions_" :key="f.id" :value="f.id">{{ f.code }} - {{ f.name }}</option>
-              </select>
+              <MasterSelect :model-value="form.functionId" :items="functions_" allow-empty empty-label="(なし)" placeholder="機能を検索…" @update:model-value="(v) => form.functionId = v" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品群 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.productGroupId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="g in productGroups" :key="g.id" :value="g.id">{{ g.code }} - {{ g.name }}</option>
-              </select>
+              <MasterSelect :model-value="form.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => form.productGroupId = v ?? 0" />
             </label>
           </div>
           <div class="mt-4 grid grid-cols-3 gap-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">甲皮素材 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.upperMaterialId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.code }} - {{ m.name }}</option>
-              </select>
+              <MasterSelect :model-value="form.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => form.upperMaterialId = v ?? 0" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">中底素材 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.insoleMaterialId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.code }} - {{ m.name }}</option>
-              </select>
+              <MasterSelect :model-value="form.insoleMaterialId" :items="materials" placeholder="中底素材を検索…" @update:model-value="(v) => form.insoleMaterialId = v ?? 0" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">底素材 <span class="text-red-500">*</span></span>
-              <select v-model.number="form.outsoleMaterialId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.code }} - {{ m.name }}</option>
-              </select>
+              <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? 0" />
             </label>
           </div>
           <div class="mt-4 grid grid-cols-2 gap-4">
@@ -340,9 +314,7 @@ const onSubmit = async () => {
           <div class="grid grid-cols-2 gap-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">仕入先 <span class="text-red-500">*</span></span>
-              <select v-model.number="supplierPrice.supplierId" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.code }} - {{ s.name }}</option>
-              </select>
+              <MasterSelect :model-value="supplierPrice.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => supplierPrice.supplierId = v ?? 0" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">単価 <span class="text-red-500">*</span></span>
@@ -354,12 +326,14 @@ const onSubmit = async () => {
                   step="0.01"
                   class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
                 />
-                <select v-model="supplierPrice.currencyCode" class="w-24 rounded-md border border-gray-300 px-2 py-2 text-sm">
-                  <option value="JPY">JPY</option>
-                  <option value="USD">USD</option>
-                  <option value="CNY">CNY</option>
-                </select>
+                <div class="w-24">
+                  <AutoComplete :model-value="supplierPrice.currencyCode" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => supplierPrice.currencyCode = v" />
+                </div>
               </div>
+            </label>
+            <label v-if="supplierPrice.currencyCode !== 'JPY'" class="flex flex-col gap-1">
+              <span class="text-sm font-medium">為替レート <span class="text-xs text-gray-400">(外貨単価 → 円換算)</span></span>
+              <input v-model.number="supplierPrice.exchangeRate" type="number" min="0" step="0.0001" placeholder="例: 21.5" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">有効開始日 <span class="text-red-500">*</span></span>

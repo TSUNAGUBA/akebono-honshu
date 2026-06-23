@@ -300,9 +300,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <div class="grid grid-cols-2 gap-3 text-sm">
               <label class="flex flex-col gap-1">
                 <span class="font-medium">理由 <span class="text-red-500">*</span></span>
-                <select v-model="editReason" class="rounded-md border border-gray-300 px-3 py-2">
-                  <option v-for="r in editReasonOptions" :key="r" :value="r">{{ editReasonLabel(r) }}</option>
-                </select>
+                <AutoComplete :model-value="editReason" :options="editReasonOptions.map((r) => ({ value: r, label: editReasonLabel(r) }))" :allow-empty="false" placeholder="理由を選択…" @update:model-value="(v) => editReason = v as EditReason" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">メモ (任意)</span>
