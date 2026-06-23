@@ -197,6 +197,10 @@ psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=re
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/06-demo-data.sql
 
+# 業務拡張モジュール (販売管理/出荷/在庫管理) のテーブル + サンプルデータ。冪等 (再実行可)
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/07-ops-data.sql
+
 # 動作確認
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -c "SELECT id, login_id, display_name FROM users;"

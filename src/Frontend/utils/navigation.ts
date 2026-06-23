@@ -177,6 +177,80 @@ export const NAV_CATEGORIES: NavCategory[] = [
     ],
   },
   {
+    id: 'sales',
+    label: '販売管理',
+    icon: 'cart',
+    description: '取引先からの受注・売上を管理する',
+    sections: [
+      {
+        id: 'sales-main',
+        label: '販売管理',
+        icon: 'cart',
+        description: '受注・売上の一覧',
+        links: [
+          { path: '/sales', label: '受注一覧', icon: 'cart' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'shipping',
+    label: '出荷',
+    icon: 'truck',
+    description: 'データ受信・ピッキング・帳票出力・ASN送信',
+    sections: [
+      {
+        id: 'shipping-main',
+        label: '出荷',
+        icon: 'truck',
+        description: '出荷業務一式',
+        links: [
+          { path: '/shipping/receive', label: 'データ受信', icon: 'inbox' },
+          { path: '/shipping/picking', label: 'ピッキングリスト', icon: 'list' },
+          { path: '/shipping/reports', label: '帳票出力', icon: 'file-text' },
+          { path: '/shipping/asn', label: 'ASN送信', icon: 'send' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'inventory',
+    label: '在庫管理',
+    icon: 'boxes',
+    description: '入荷・出荷情報、在庫調整・棚卸調整',
+    sections: [
+      {
+        id: 'inventory-main',
+        label: '在庫管理',
+        icon: 'boxes',
+        description: '在庫業務一式',
+        links: [
+          { path: '/inventory/inbound', label: '入荷情報', icon: 'inbox' },
+          { path: '/inventory/outbound', label: '出荷情報', icon: 'truck' },
+          { path: '/inventory/adjustment', label: '在庫調整', icon: 'sliders' },
+          { path: '/inventory/stocktaking', label: '棚卸調整', icon: 'clipboard-check' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'analytics',
+    label: '分析',
+    icon: 'chart',
+    description: '商品・発注・生産の状況を KPI で把握する',
+    sections: [
+      {
+        id: 'analytics-main',
+        label: '分析',
+        icon: 'chart',
+        description: 'KPI ダッシュボード',
+        links: [
+          { path: '/analytics', label: '分析ダッシュボード', icon: 'chart' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'masters',
     label: 'マスタ',
     icon: 'sliders',

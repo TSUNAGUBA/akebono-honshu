@@ -83,6 +83,34 @@ defineProps<{ name: string }>()
       <path d="m16 17 5-5-5-5" />
       <path d="M21 12H9" />
     </template>
+    <template v-else-if="name === 'cart'">
+      <path d="M3 4h2l2.2 11.1a1 1 0 0 0 1 .8h8.5a1 1 0 0 0 1-.8L20 8H6.2" />
+      <circle cx="9.5" cy="20" r="1.3" />
+      <circle cx="17" cy="20" r="1.3" />
+    </template>
+    <template v-else-if="name === 'truck'">
+      <path d="M2 7a1 1 0 0 1 1-1h10v9H2z" />
+      <path d="M13 9h4l4 4v2h-8z" />
+      <circle cx="6.5" cy="18" r="1.6" />
+      <circle cx="17.5" cy="18" r="1.6" />
+    </template>
+    <template v-else-if="name === 'boxes'">
+      <rect x="3" y="9" width="8" height="7" rx="1" />
+      <rect x="13" y="9" width="8" height="7" rx="1" />
+      <rect x="8" y="3" width="8" height="6" rx="1" />
+    </template>
+    <template v-else-if="name === 'chart'">
+      <path d="M3 3v18h18" />
+      <path d="M7 16v-4M12 16V8M17 16v-7" />
+    </template>
+    <template v-else-if="name === 'send'">
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4z" />
+    </template>
+    <template v-else-if="name === 'inbox'">
+      <path d="M22 12h-6l-2 3h-4l-2-3H2" />
+      <path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6z" />
+    </template>
     <template v-else>
       <circle cx="12" cy="12" r="2.5" />
     </template>
