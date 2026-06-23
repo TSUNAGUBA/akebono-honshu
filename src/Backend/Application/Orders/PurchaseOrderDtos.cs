@@ -59,7 +59,9 @@ public record OrderListItem(
     DateTime? FirstExportedAt,
     DateTime? LastExportedAt,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    // 発注区分 国内/海外 (Phase B、is_overseas)。一覧でのタブ絞込・区分バッジ表示用。
+    bool IsOverseas = false);
 
 // ─────────────────────────────────────────────────
 // 詳細 (GET /api/v1/orders/{id}、O-04 編集画面ベース)

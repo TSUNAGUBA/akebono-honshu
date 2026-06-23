@@ -140,7 +140,9 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             x.LineCount,
             x.TotalAmount, x.CurrencyCode,
             x.Order.FirstExportedAt, x.Order.LastExportedAt,
-            x.Order.CreatedAt, x.Order.UpdatedAt)).ToList();
+            x.Order.CreatedAt, x.Order.UpdatedAt,
+            // 発注区分 国内/海外 (Phase B、is_overseas)
+            x.Order.IsOverseas)).ToList();
     }
 
     /// <summary>詳細 (O-04 編集画面ベース)。</summary>

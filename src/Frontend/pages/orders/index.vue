@@ -11,6 +11,14 @@ const loading = ref(true)
 const errorMessage = ref('')
 const includeCancelled = ref(false)
 const search = ref('')
+// 発注区分タブ (全件 / 国内 / 海外、is_overseas でクライアント側絞込)
+type RegionTab = 'all' | 'domestic' | 'overseas'
+const regionTab = ref<RegionTab>('all')
+const regionTabs: { key: RegionTab; label: string }[] = [
+  { key: 'all', label: '全件' },
+  { key: 'domestic', label: '国内' },
+  { key: 'overseas', label: '海外' },
+]
 
 const reload = async () => {
   loading.value = true
@@ -31,9 +39,14 @@ watch(includeCancelled, reload)
 onMounted(reload)
 
 const filtered = computed(() => {
+  // 発注区分タブ (国内/海外) でまず絞込
+  let base = items.value
+  if (regionTab.value === 'domestic') base = base.filter((i) => !i.isOverseas)
+  else if (regionTab.value === 'overseas') base = base.filter((i) => i.isOverseas)
+
   const q = search.value.trim().toLowerCase()
-  if (!q) return items.value
-  return items.value.filter(
+  if (!q) return base
+  return base.filter(
     (i) =>
       i.mgmtNo.toLowerCase().includes(q) ||
       (i.orderNo ?? '').toLowerCase().includes(q) ||
@@ -41,6 +54,19 @@ const filtered = computed(() => {
       i.deliveryDestinationName.toLowerCase().includes(q),
   )
 })
+
+// 各タブの件数 (区分絞込のみ、検索語は無視してタブ自体のラベルに件数表示)
+const regionCount = (key: RegionTab): number => {
+  if (key === 'domestic') return items.value.filter((i) => !i.isOverseas).length
+  if (key === 'overseas') return items.value.filter((i) => i.isOverseas).length
+  return items.value.length
+}
+
+// 発注区分バッジ (国内: グレー / 海外: インディゴ。詳細画面 [id].vue と配色を統一)
+const regionBadge = (i: OrderListItem): { label: string; cls: string } =>
+  i.isOverseas
+    ? { label: '海外', cls: 'bg-indigo-100 text-indigo-700' }
+    : { label: '国内', cls: 'bg-gray-100 text-gray-600' }
 
 const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
   if (!i.firstExportedAt) return { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
@@ -73,6 +99,27 @@ const statusBadge = (s: number): { label: string; cls: string } =>
       <span v-else class="text-xs text-gray-400">参照のみ (発注書作成権限なし)</span>
     </header>
 
+    <!-- 発注区分タブ (全件 / 国内 / 海外、is_overseas でクライアント側絞込) -->
+    <div class="mb-3 inline-flex overflow-hidden rounded-md border border-gray-300 text-sm">
+      <button
+        v-for="(t, ti) in regionTabs"
+        :key="t.key"
+        type="button"
+        class="px-4 py-1.5 font-medium transition-colors"
+        :class="[
+          ti > 0 ? 'border-l border-gray-300' : '',
+          regionTab === t.key ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50',
+        ]"
+        @click="regionTab = t.key"
+      >
+        {{ t.label }}
+        <span
+          class="ml-1 text-xs"
+          :class="regionTab === t.key ? 'text-blue-100' : 'text-gray-400'"
+        >({{ regionCount(t.key) }})</span>
+      </button>
+    </div>
+
     <div class="mb-3 flex items-center gap-4">
       <input
         v-model="search"
@@ -100,6 +147,7 @@ const statusBadge = (s: number): { label: string; cls: string } =>
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">管理番号</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">区分</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">発注番号</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">仕入先</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">納品先</th>
@@ -112,7 +160,7 @@ const statusBadge = (s: number): { label: string; cls: string } =>
         </thead>
         <tbody>
           <tr v-if="filtered.length === 0">
-            <td colspan="9" class="px-4 py-8 text-center text-sm text-gray-500">
+            <td colspan="10" class="px-4 py-8 text-center text-sm text-gray-500">
               {{ search ? '検索条件に一致するデータがありません' : 'データがありません' }}
             </td>
           </tr>
@@ -123,6 +171,11 @@ const statusBadge = (s: number): { label: string; cls: string } =>
             @click="navigateTo(`/orders/${i.id}`)"
           >
             <td class="px-4 py-3 font-mono text-sm">{{ i.mgmtNo }}</td>
+            <td class="px-4 py-3 text-sm">
+              <span :class="regionBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
+                {{ regionBadge(i).label }}
+              </span>
+            </td>
             <td class="px-4 py-3 font-mono text-sm">{{ i.orderNo ?? '—' }}</td>
             <td class="px-4 py-3 text-sm">
               <div class="font-medium">{{ i.supplierName }}</div>
