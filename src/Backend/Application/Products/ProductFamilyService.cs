@@ -140,6 +140,16 @@ public class ProductFamilyService(
                 UnitPrice = p.UnitPrice,
                 CurrencyCode = p.CurrencyCode,
                 ExchangeRate = p.ExchangeRate,
+                // 旧 仕入コスト計算明細 項目 (Phase C、任意)
+                EstimateUnitPrice = p.EstimateUnitPrice,
+                EstimateReceivedDate = p.EstimateReceivedDate,
+                EstimateCost = p.EstimateCost,
+                EstimateMarginRate = p.EstimateMarginRate,
+                PurchaseCost = p.PurchaseCost,
+                PurchaseMarginRate = p.PurchaseMarginRate,
+                LossCost = p.LossCost,
+                TrayCost = p.TrayCost,
+                TaxRate = p.TaxRate,
                 EffectiveFrom = p.EffectiveFrom,
                 EffectiveTo = null,
                 DecidedAt = p.DecidedAt,
@@ -370,7 +380,10 @@ public class ProductFamilyService(
             imageSummaries,
             currentPrices.Select(p => new CurrentSupplierPrice(
                 p.Id, p.SupplierId, p.Supplier?.Code ?? "?", p.Supplier?.Name ?? "?",
-                p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt)).ToList());
+                p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt,
+                // 旧 仕入コスト計算明細 項目 (Phase C)
+                p.EstimateUnitPrice, p.EstimateReceivedDate, p.EstimateCost, p.EstimateMarginRate,
+                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.TrayCost, p.TaxRate)).ToList());
     }
 
     /// <summary>商品企画更新 (P-05)。属性カラムのみ。FK 構成 (planned_year/type/season/seq/factory) は不変。</summary>

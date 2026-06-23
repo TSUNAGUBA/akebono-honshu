@@ -107,6 +107,16 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
     unit_price            NUMERIC(12,2)  NOT NULL,
     currency_code         CHAR(3)        NOT NULL DEFAULT 'JPY',
     exchange_rate         NUMERIC(10,4)  NULL,
+    -- 旧 仕入コスト計算明細 項目 (Phase C、全 NULL 許容)
+    estimate_unit_price   NUMERIC(12,2)  NULL,  -- 見積単価
+    estimate_received_date DATE          NULL,  -- 見積単価受領日
+    estimate_cost         NUMERIC(12,2)  NULL,  -- 見積原価
+    estimate_margin_rate  NUMERIC(5,2)   NULL,  -- 見積利益率(%)
+    purchase_cost         NUMERIC(12,2)  NULL,  -- 仕入原価
+    purchase_margin_rate  NUMERIC(5,2)   NULL,  -- 仕入利益率(%)
+    loss_cost             NUMERIC(12,2)  NULL,  -- ロス費
+    tray_cost             NUMERIC(12,2)  NULL,  -- トレー代
+    tax_rate              NUMERIC(5,2)   NULL,  -- 税率(%)
     effective_from        DATE           NOT NULL,
     effective_to          DATE           NULL,
     decided_at            DATE           NOT NULL,

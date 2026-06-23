@@ -79,6 +79,25 @@ export interface CurrentSupplierPrice {
   effectiveFrom: string
   effectiveTo: string | null
   decidedAt: string
+  // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+  /** 見積単価 */
+  estimateUnitPrice: number | null
+  /** 見積単価受領日 (YYYY-MM-DD) */
+  estimateReceivedDate: string | null
+  /** 見積原価 */
+  estimateCost: number | null
+  /** 見積利益率(%) */
+  estimateMarginRate: number | null
+  /** 仕入原価 */
+  purchaseCost: number | null
+  /** 仕入利益率(%) */
+  purchaseMarginRate: number | null
+  /** ロス費 */
+  lossCost: number | null
+  /** トレー代 */
+  trayCost: number | null
+  /** 税率(%) */
+  taxRate: number | null
 }
 
 export interface FamilyFullInfo {
@@ -189,6 +208,16 @@ export interface CompleteFamilyPayload {
     exchangeRate: number | null
     effectiveFrom: string
     decidedAt: string
+    // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+    estimateUnitPrice: number | null
+    estimateReceivedDate: string | null
+    estimateCost: number | null
+    estimateMarginRate: number | null
+    purchaseCost: number | null
+    purchaseMarginRate: number | null
+    lossCost: number | null
+    trayCost: number | null
+    taxRate: number | null
   }[]
 }
 
@@ -269,6 +298,16 @@ export const useProducts = () => {
     exchangeRate: number | null
     effectiveFrom: string
     decidedAt: string
+    // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+    estimateUnitPrice: number | null
+    estimateReceivedDate: string | null
+    estimateCost: number | null
+    estimateMarginRate: number | null
+    purchaseCost: number | null
+    purchaseMarginRate: number | null
+    lossCost: number | null
+    trayCost: number | null
+    taxRate: number | null
   }) => {
     return await apiFetch<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string }>(
       `/products/families/${id}/supplier-prices`,

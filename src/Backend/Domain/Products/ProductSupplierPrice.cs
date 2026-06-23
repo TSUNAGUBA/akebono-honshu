@@ -18,6 +18,16 @@ public class ProductSupplierPrice
     public decimal UnitPrice { get; set; }
     public string CurrencyCode { get; set; } = "JPY";
     public decimal? ExchangeRate { get; set; }
+    // 旧 仕入コスト計算明細 項目 (Phase C、全 NULL 許容)
+    public decimal? EstimateUnitPrice { get; set; }
+    public DateOnly? EstimateReceivedDate { get; set; }
+    public decimal? EstimateCost { get; set; }
+    public decimal? EstimateMarginRate { get; set; }
+    public decimal? PurchaseCost { get; set; }
+    public decimal? PurchaseMarginRate { get; set; }
+    public decimal? LossCost { get; set; }
+    public decimal? TrayCost { get; set; }
+    public decimal? TaxRate { get; set; }
     public DateOnly EffectiveFrom { get; set; }
     public DateOnly? EffectiveTo { get; set; }
     public DateOnly DecidedAt { get; set; }

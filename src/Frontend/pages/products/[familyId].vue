@@ -55,6 +55,16 @@ const priceForm = ref({
   exchangeRate: null as number | null,
   effectiveFrom: new Date().toISOString().split('T')[0],
   decidedAt: new Date().toISOString().split('T')[0],
+  // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+  estimateUnitPrice: null as number | null,
+  estimateReceivedDate: '',
+  estimateCost: null as number | null,
+  estimateMarginRate: null as number | null,
+  purchaseCost: null as number | null,
+  purchaseMarginRate: null as number | null,
+  lossCost: null as number | null,
+  trayCost: null as number | null,
+  taxRate: null as number | null,
 })
 
 // マスタ参照
@@ -208,9 +218,29 @@ const onAddPrice = async () => {
       exchangeRate: priceForm.value.currencyCode === 'JPY' ? null : priceForm.value.exchangeRate,
       effectiveFrom: priceForm.value.effectiveFrom,
       decidedAt: priceForm.value.decidedAt,
+      // 旧 仕入コスト計算明細 項目 (Phase C、未入力は null)
+      estimateUnitPrice: priceForm.value.estimateUnitPrice,
+      estimateReceivedDate: priceForm.value.estimateReceivedDate || null,
+      estimateCost: priceForm.value.estimateCost,
+      estimateMarginRate: priceForm.value.estimateMarginRate,
+      purchaseCost: priceForm.value.purchaseCost,
+      purchaseMarginRate: priceForm.value.purchaseMarginRate,
+      lossCost: priceForm.value.lossCost,
+      trayCost: priceForm.value.trayCost,
+      taxRate: priceForm.value.taxRate,
     })
     successMessage.value = '単価を追加しました (旧単価の有効終了日も自動更新済)'
     showPriceForm.value = false
+    // 原価明細フィールドをリセット (次の追加時に前回値が残らないように)
+    priceForm.value.estimateUnitPrice = null
+    priceForm.value.estimateReceivedDate = ''
+    priceForm.value.estimateCost = null
+    priceForm.value.estimateMarginRate = null
+    priceForm.value.purchaseCost = null
+    priceForm.value.purchaseMarginRate = null
+    priceForm.value.lossCost = null
+    priceForm.value.trayCost = null
+    priceForm.value.taxRate = null
     await reload()
   } catch (e) {
     const err = e as { data?: { detail?: string } }
@@ -519,6 +549,50 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <span class="font-medium">決定日</span>
             <input v-model="priceForm.decidedAt" type="date" class="rounded-md border border-gray-300 px-2 py-1.5" />
           </label>
+
+          <!-- 旧 仕入コスト計算明細 項目 (Phase C、全て任意) -->
+          <fieldset class="col-span-4 rounded-md border border-gray-200 bg-white p-3">
+            <legend class="px-1 text-xs font-semibold text-gray-600">原価明細 (任意)</legend>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">見積単価</span>
+                <input v-model.number="priceForm.estimateUnitPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">見積単価受領日</span>
+                <input v-model="priceForm.estimateReceivedDate" type="date" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">見積原価</span>
+                <input v-model.number="priceForm.estimateCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">見積利益率 (%)</span>
+                <input v-model.number="priceForm.estimateMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">仕入原価</span>
+                <input v-model.number="priceForm.purchaseCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">仕入利益率 (%)</span>
+                <input v-model.number="priceForm.purchaseMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">ロス費</span>
+                <input v-model.number="priceForm.lossCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">トレー代</span>
+                <input v-model.number="priceForm.trayCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="font-medium">税率 (%)</span>
+                <input v-model.number="priceForm.taxRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+              </label>
+            </div>
+          </fieldset>
+
           <div class="col-span-4 flex justify-end">
             <button type="submit" class="rounded-md bg-blue-600 px-4 py-1.5 text-white hover:bg-blue-700">追加</button>
           </div>
@@ -530,6 +604,9 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
               <th class="px-3 py-2 text-left">仕入先</th>
               <th class="px-3 py-2 text-right">単価</th>
               <th class="px-3 py-2 text-right">為替レート</th>
+              <th class="px-3 py-2 text-right">見積単価</th>
+              <th class="px-3 py-2 text-right">仕入原価</th>
+              <th class="px-3 py-2 text-right">税率</th>
               <th class="px-3 py-2 text-left">有効開始</th>
               <th class="px-3 py-2 text-left">決定日</th>
             </tr>
@@ -539,11 +616,14 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
               <td class="px-3 py-2">{{ p.supplierCode }} {{ p.supplierName }}</td>
               <td class="px-3 py-2 text-right font-mono">{{ p.currencyCode }} {{ p.unitPrice.toLocaleString() }}</td>
               <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.exchangeRate != null ? p.exchangeRate.toLocaleString() : '—' }}</td>
+              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.estimateUnitPrice != null ? p.estimateUnitPrice.toLocaleString() : '—' }}</td>
+              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.purchaseCost != null ? p.purchaseCost.toLocaleString() : '—' }}</td>
+              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.taxRate != null ? `${p.taxRate}%` : '—' }}</td>
               <td class="px-3 py-2">{{ p.effectiveFrom }}</td>
               <td class="px-3 py-2">{{ p.decidedAt }}</td>
             </tr>
             <tr v-if="detail.currentSupplierPrices.length === 0">
-              <td colspan="5" class="px-3 py-4 text-center text-gray-500">単価が登録されていません</td>
+              <td colspan="8" class="px-3 py-4 text-center text-gray-500">単価が登録されていません</td>
             </tr>
           </tbody>
         </table>

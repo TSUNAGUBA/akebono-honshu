@@ -45,7 +45,17 @@ public record SupplierPriceInput(
     string CurrencyCode,
     decimal? ExchangeRate,
     DateOnly EffectiveFrom,
-    DateOnly DecidedAt);
+    DateOnly DecidedAt,
+    // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+    decimal? EstimateUnitPrice = null,
+    DateOnly? EstimateReceivedDate = null,
+    decimal? EstimateCost = null,
+    decimal? EstimateMarginRate = null,
+    decimal? PurchaseCost = null,
+    decimal? PurchaseMarginRate = null,
+    decimal? LossCost = null,
+    decimal? TrayCost = null,
+    decimal? TaxRate = null);
 
 public record CompleteFamilyResponse(
     FamilySummary Family,
@@ -185,7 +195,17 @@ public record CurrentSupplierPrice(
     decimal? ExchangeRate,
     DateOnly EffectiveFrom,
     DateOnly? EffectiveTo,
-    DateOnly DecidedAt);
+    DateOnly DecidedAt,
+    // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+    decimal? EstimateUnitPrice,
+    DateOnly? EstimateReceivedDate,
+    decimal? EstimateCost,
+    decimal? EstimateMarginRate,
+    decimal? PurchaseCost,
+    decimal? PurchaseMarginRate,
+    decimal? LossCost,
+    decimal? TrayCost,
+    decimal? TaxRate);
 
 public record FamilySummary(long Id, string SequenceNo, char PlannedYearCode);
 public record SupplierPriceSummary(long Id, long SupplierId, decimal UnitPrice, DateOnly EffectiveFrom);
@@ -227,4 +247,14 @@ public record AddSupplierPriceRequest(
     string CurrencyCode,
     decimal? ExchangeRate,
     DateOnly EffectiveFrom,
-    DateOnly DecidedAt);
+    DateOnly DecidedAt,
+    // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+    decimal? EstimateUnitPrice = null,
+    DateOnly? EstimateReceivedDate = null,
+    decimal? EstimateCost = null,
+    decimal? EstimateMarginRate = null,
+    decimal? PurchaseCost = null,
+    decimal? PurchaseMarginRate = null,
+    decimal? LossCost = null,
+    decimal? TrayCost = null,
+    decimal? TaxRate = null);

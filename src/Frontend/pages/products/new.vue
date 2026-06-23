@@ -71,6 +71,16 @@ const supplierPrice = ref({
   exchangeRate: null as number | null,
   effectiveFrom: new Date().toISOString().split('T')[0],
   decidedAt: new Date().toISOString().split('T')[0],
+  // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
+  estimateUnitPrice: null as number | null,
+  estimateReceivedDate: '',
+  estimateCost: null as number | null,
+  estimateMarginRate: null as number | null,
+  purchaseCost: null as number | null,
+  purchaseMarginRate: null as number | null,
+  lossCost: null as number | null,
+  trayCost: null as number | null,
+  taxRate: null as number | null,
 })
 
 onMounted(async () => {
@@ -188,6 +198,16 @@ const onSubmit = async () => {
           exchangeRate: supplierPrice.value.currencyCode === 'JPY' ? null : supplierPrice.value.exchangeRate,
           effectiveFrom: supplierPrice.value.effectiveFrom,
           decidedAt: supplierPrice.value.decidedAt,
+          // 旧 仕入コスト計算明細 項目 (Phase C、未入力は null)
+          estimateUnitPrice: supplierPrice.value.estimateUnitPrice,
+          estimateReceivedDate: supplierPrice.value.estimateReceivedDate || null,
+          estimateCost: supplierPrice.value.estimateCost,
+          estimateMarginRate: supplierPrice.value.estimateMarginRate,
+          purchaseCost: supplierPrice.value.purchaseCost,
+          purchaseMarginRate: supplierPrice.value.purchaseMarginRate,
+          lossCost: supplierPrice.value.lossCost,
+          trayCost: supplierPrice.value.trayCost,
+          taxRate: supplierPrice.value.taxRate,
         },
       ],
     }
@@ -430,6 +450,50 @@ const onSubmit = async () => {
               <input v-model="supplierPrice.decidedAt" type="date" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
             </label>
           </div>
+
+          <!-- 旧 仕入コスト計算明細 項目 (Phase C、全て任意)。clutter 回避のため折りたたみ。 -->
+          <details class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+            <summary class="cursor-pointer text-sm font-medium text-gray-700">原価明細 (任意)</summary>
+            <div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">見積単価</span>
+                <input v-model.number="supplierPrice.estimateUnitPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">見積単価受領日</span>
+                <input v-model="supplierPrice.estimateReceivedDate" type="date" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">見積原価</span>
+                <input v-model.number="supplierPrice.estimateCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">見積利益率 (%)</span>
+                <input v-model.number="supplierPrice.estimateMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">仕入原価</span>
+                <input v-model.number="supplierPrice.purchaseCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">仕入利益率 (%)</span>
+                <input v-model.number="supplierPrice.purchaseMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">ロス費</span>
+                <input v-model.number="supplierPrice.lossCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">トレー代</span>
+                <input v-model.number="supplierPrice.trayCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">税率 (%)</span>
+                <input v-model.number="supplierPrice.taxRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+            </div>
+          </details>
+
           <p class="mt-2 text-xs text-gray-500">追加の仕入先単価は、登録後の詳細画面から追加できます (BR-04 履歴管理)</p>
         </section>
 
