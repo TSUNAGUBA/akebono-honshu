@@ -75,7 +75,7 @@ const save = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-6xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-5">
     <header class="mb-4 flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold">素材構成 (BOM)</h1>
@@ -93,27 +93,27 @@ const save = async () => {
         <table class="w-full min-w-[820px]">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">部位</th>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">素材</th>
-              <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">所要量/足</th>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">単位</th>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">推奨仕入先</th>
-              <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">ロス率</th>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">備考</th>
-              <th class="px-3 py-2"></th>
+              <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">部位</th>
+              <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">素材</th>
+              <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase text-gray-600">所要量/足</th>
+              <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">単位</th>
+              <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">推奨仕入先</th>
+              <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase text-gray-600">ロス率</th>
+              <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">備考</th>
+              <th class="px-2 py-1.5"></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="rows.length === 0"><td colspan="8" class="px-3 py-6 text-center text-sm text-gray-500">行を追加してください</td></tr>
+            <tr v-if="rows.length === 0"><td colspan="8" class="px-2 py-6 text-center text-sm text-gray-500">行を追加してください</td></tr>
             <tr v-for="r in rows" :key="r._key" class="border-b border-gray-100 last:border-0">
-              <td class="px-3 py-2"><div class="w-28"><AutoComplete :model-value="String(r.materialRole)" :options="ROLES.map((ro) => ({ value: String(ro), label: materialRoleLabel(ro) }))" :allow-empty="false" :disabled="!canEdit" @update:model-value="(v) => r.materialRole = Number(v)" /></div></td>
-              <td class="px-3 py-2"><div class="w-44"><MasterSelect :model-value="r.materialId" :items="materials" :disabled="!canEdit" placeholder="素材を検索…" @update:model-value="(v) => r.materialId = v ?? 0" /></div></td>
-              <td class="px-3 py-2 text-right"><input v-model.number="r.requiredQtyPerUnit" :disabled="!canEdit" type="number" min="0" step="0.0001" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" /></td>
-              <td class="px-3 py-2"><div class="w-20"><AutoComplete :model-value="r.unit" :options="UNITS.map((u) => ({ value: u, label: u }))" :allow-empty="false" :disabled="!canEdit" @update:model-value="(v) => r.unit = v" /></div></td>
-              <td class="px-3 py-2"><div class="w-40"><MasterSelect :model-value="r.recommendedSupplierId" :items="suppliers" :disabled="!canEdit" allow-empty empty-label="(未指定)" placeholder="仕入先を検索…" @update:model-value="(v) => r.recommendedSupplierId = v" /></div></td>
-              <td class="px-3 py-2 text-right"><input v-model.number="r.lossRate" :disabled="!canEdit" type="number" min="0" max="0.99" step="0.01" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" /></td>
-              <td class="px-3 py-2"><input v-model="r.remark" :disabled="!canEdit" type="text" class="w-32 rounded-md border border-gray-300 px-2 py-1 text-sm" /></td>
-              <td class="px-3 py-2 text-right"><button v-if="canEdit" type="button" class="text-xs text-red-600 hover:underline" @click="removeRow(r._key)">削除</button></td>
+              <td class="px-2 py-1.5"><div class="w-28"><AutoComplete :model-value="String(r.materialRole)" :options="ROLES.map((ro) => ({ value: String(ro), label: materialRoleLabel(ro) }))" :allow-empty="false" :disabled="!canEdit" @update:model-value="(v) => r.materialRole = Number(v)" /></div></td>
+              <td class="px-2 py-1.5"><div class="w-44 lg:w-56"><MasterSelect :model-value="r.materialId" :items="materials" :disabled="!canEdit" placeholder="素材を検索…" @update:model-value="(v) => r.materialId = v ?? 0" /></div></td>
+              <td class="px-2 py-1.5 text-right"><input v-model.number="r.requiredQtyPerUnit" :disabled="!canEdit" type="number" min="0" step="0.0001" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" /></td>
+              <td class="px-2 py-1.5"><div class="w-20"><AutoComplete :model-value="r.unit" :options="UNITS.map((u) => ({ value: u, label: u }))" :allow-empty="false" :disabled="!canEdit" @update:model-value="(v) => r.unit = v" /></div></td>
+              <td class="px-2 py-1.5"><div class="w-40 lg:w-52"><MasterSelect :model-value="r.recommendedSupplierId" :items="suppliers" :disabled="!canEdit" allow-empty empty-label="(未指定)" placeholder="仕入先を検索…" @update:model-value="(v) => r.recommendedSupplierId = v" /></div></td>
+              <td class="px-2 py-1.5 text-right"><input v-model.number="r.lossRate" :disabled="!canEdit" type="number" min="0" max="0.99" step="0.01" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" /></td>
+              <td class="px-2 py-1.5"><input v-model="r.remark" :disabled="!canEdit" type="text" class="w-32 rounded-md border border-gray-300 px-2 py-1 text-sm lg:w-48" /></td>
+              <td class="px-2 py-1.5 text-right"><button v-if="canEdit" type="button" class="text-xs text-red-600 hover:underline" @click="removeRow(r._key)">削除</button></td>
             </tr>
           </tbody>
         </table>

@@ -78,8 +78,8 @@ const createGroup = async (gi: number) => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-5xl px-4 py-8">
-    <header class="mb-6">
+  <main class="mx-auto max-w-screen-2xl px-4 py-5">
+    <header class="mb-4">
       <h1 class="text-2xl font-bold">素材発注書 新規作成</h1>
       <p class="mt-1 text-sm text-gray-500">MO-01 BOM×生産数量で所要量を展開し、素材仕入先ごとに発注書を作成します。</p>
     </header>
@@ -95,8 +95,8 @@ const createGroup = async (gi: number) => {
 
     <template v-else-if="req">
       <p class="mb-4 text-sm text-gray-600">生産数量: <strong>{{ req.totalQuantity.toLocaleString() }}</strong> / 推奨仕入先ごとに {{ groups.length }} 件の発注書候補</p>
-      <section v-for="(g, gi) in groups" :key="gi" class="mb-5 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <div class="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <section v-for="(g, gi) in groups" :key="gi" class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="mb-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
           <label class="block text-sm">
             <span class="text-gray-600">素材仕入先</span>
             <div class="mt-1">
@@ -113,18 +113,18 @@ const createGroup = async (gi: number) => {
         <table class="w-full">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">素材</th>
-              <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">所要量</th>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">単位</th>
-              <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">単価(任意)</th>
+              <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">素材</th>
+              <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase text-gray-600">所要量</th>
+              <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">単位</th>
+              <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase text-gray-600">単価(任意)</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="(l, li) in g.lines" :key="li" class="border-b border-gray-100 last:border-0">
-              <td class="px-3 py-2 text-sm">{{ l.materialName }}</td>
-              <td class="px-3 py-2 text-right font-mono text-sm">{{ l.requiredQuantity.toLocaleString() }}</td>
-              <td class="px-3 py-2 text-sm">{{ l.unit }}</td>
-              <td class="px-3 py-2 text-right"><input v-model.number="l.unitPrice" type="number" min="0" step="0.01" placeholder="未設定" class="w-28 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" /></td>
+              <td class="px-2 py-1.5 text-sm">{{ l.materialName }}</td>
+              <td class="px-2 py-1.5 text-right font-mono text-sm">{{ l.requiredQuantity.toLocaleString() }}</td>
+              <td class="px-2 py-1.5 text-sm">{{ l.unit }}</td>
+              <td class="px-2 py-1.5 text-right"><input v-model.number="l.unitPrice" type="number" min="0" step="0.01" placeholder="未設定" class="w-28 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" /></td>
             </tr>
           </tbody>
         </table>

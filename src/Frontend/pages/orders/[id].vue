@@ -188,7 +188,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
 </script>
 
 <template>
-  <main class="mx-auto max-w-6xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-5">
     <div v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
     <div v-else-if="!detail" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
@@ -197,7 +197,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
     </div>
 
     <template v-else>
-      <header class="mb-6 flex items-start justify-between gap-4">
+      <header class="mb-4 flex items-start justify-between gap-4">
         <div>
           <div class="text-xs text-gray-500">
             <NuxtLink to="/orders" class="hover:underline">発注書</NuxtLink>
@@ -249,7 +249,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       <!-- 中止フォーム -->
       <div v-if="showCancelForm" class="mb-4 rounded-lg border border-orange-300 bg-orange-50 p-4">
         <div class="mb-2 font-semibold text-orange-800">発注書を中止</div>
-        <input v-model="cancelReason" type="text" placeholder="中止理由を入力 (必須)" class="mb-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+        <input v-model="cancelReason" type="text" placeholder="中止理由を入力 (必須)" class="mb-2 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
         <div class="flex justify-end gap-2">
           <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="showCancelForm = false">キャンセル</button>
           <button type="button" class="rounded-md bg-orange-600 px-3 py-1 text-sm text-white hover:bg-orange-700" @click="onCancelOrder">中止する</button>
@@ -257,7 +257,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </div>
 
       <!-- ヘッダ情報 -->
-      <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
           <h2 class="font-semibold">発注書情報</h2>
           <!-- 発注区分 国内/海外 バッジ (Phase B、is_overseas) -->
@@ -266,7 +266,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             class="inline-block rounded-full px-2.5 py-0.5 text-xs font-medium"
           >{{ detail.isOverseas ? '海外' : '国内' }}</span>
         </div>
-        <div class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+        <div class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <div><span class="text-gray-500">仕入先:</span> {{ detail.supplierCode }} {{ detail.supplierName }}</div>
           <div><span class="text-gray-500">納品先:</span> {{ detail.deliveryDestinationName }}</div>
           <div><span class="text-gray-500">事業部:</span> {{ detail.departmentName }}</div>
@@ -280,7 +280,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
         <!-- 海外発注情報 (is_overseas=true のときのみ、Phase B) -->
         <div v-if="detail.isOverseas" class="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2">
           <div class="mb-1 text-xs font-semibold text-indigo-800">海外発注情報</div>
-          <div class="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <div><span class="text-gray-500">荷揚地:</span> {{ detail.landingPlace || '—' }}</div>
             <div><span class="text-gray-500">得意先:</span> {{ detail.customerRef || '—' }}</div>
             <div><span class="text-gray-500">工場出荷日:</span> {{ detail.factoryShippingDate || '—' }}</div>
@@ -308,7 +308,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </section>
 
       <!-- 明細 -->
-      <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
           明細 ({{ detail.lines.length }} 件、合計 {{ detail.lines[0]?.currencyCodeSnapshot ?? 'JPY' }} {{ totalAmount.toLocaleString() }})
         </h2>
@@ -316,28 +316,28 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
         <table v-if="!editing" class="w-full text-sm">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th class="px-3 py-2 text-left">No</th>
-              <th class="px-3 py-2 text-left">SKU</th>
-              <th class="px-3 py-2 text-left">商品名 / 色 / サイズ</th>
-              <th class="px-3 py-2 text-left">仮番号</th>
-              <th class="px-3 py-2 text-right">数量</th>
-              <th class="px-3 py-2 text-right">入数</th>
-              <th class="px-3 py-2 text-right">単価</th>
-              <th class="px-3 py-2 text-right">見積単価</th>
-              <th class="px-3 py-2 text-right">小計</th>
+              <th class="px-2 py-1.5 text-left">No</th>
+              <th class="px-2 py-1.5 text-left">SKU</th>
+              <th class="px-2 py-1.5 text-left">商品名 / 色 / サイズ</th>
+              <th class="px-2 py-1.5 text-left">仮番号</th>
+              <th class="px-2 py-1.5 text-right">数量</th>
+              <th class="px-2 py-1.5 text-right">入数</th>
+              <th class="px-2 py-1.5 text-right">単価</th>
+              <th class="px-2 py-1.5 text-right">見積単価</th>
+              <th class="px-2 py-1.5 text-right">小計</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="l in detail.lines" :key="l.id" class="border-b border-gray-100 last:border-0">
-              <td class="px-3 py-2 font-mono">{{ l.lineNo }}</td>
-              <td class="px-3 py-2 font-mono">{{ l.sku }}</td>
-              <td class="px-3 py-2">{{ l.productName }} / {{ l.colorName }} / {{ l.sizeName }}</td>
-              <td class="px-3 py-2 font-mono">{{ l.provisionalNumberSnapshot || '—' }}</td>
-              <td class="px-3 py-2 text-right font-mono">{{ l.quantity }}</td>
-              <td class="px-3 py-2 text-right font-mono">{{ l.packQuantity != null ? l.packQuantity.toLocaleString() : '—' }}</td>
-              <td class="px-3 py-2 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ l.unitPriceSnapshot.toLocaleString() }}</td>
-              <td class="px-3 py-2 text-right font-mono">{{ l.estimateUnitPrice != null ? l.estimateUnitPrice.toLocaleString() : '—' }}</td>
-              <td class="px-3 py-2 text-right font-mono">{{ l.subtotal.toLocaleString() }}</td>
+              <td class="px-2 py-1.5 font-mono">{{ l.lineNo }}</td>
+              <td class="px-2 py-1.5 font-mono">{{ l.sku }}</td>
+              <td class="px-2 py-1.5">{{ l.productName }} / {{ l.colorName }} / {{ l.sizeName }}</td>
+              <td class="px-2 py-1.5 font-mono">{{ l.provisionalNumberSnapshot || '—' }}</td>
+              <td class="px-2 py-1.5 text-right font-mono">{{ l.quantity }}</td>
+              <td class="px-2 py-1.5 text-right font-mono">{{ l.packQuantity != null ? l.packQuantity.toLocaleString() : '—' }}</td>
+              <td class="px-2 py-1.5 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ l.unitPriceSnapshot.toLocaleString() }}</td>
+              <td class="px-2 py-1.5 text-right font-mono">{{ l.estimateUnitPrice != null ? l.estimateUnitPrice.toLocaleString() : '—' }}</td>
+              <td class="px-2 py-1.5 text-right font-mono">{{ l.subtotal.toLocaleString() }}</td>
             </tr>
           </tbody>
         </table>
@@ -347,32 +347,32 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <table class="w-full text-sm">
             <thead class="border-b border-gray-200 bg-gray-50">
               <tr>
-                <th class="px-2 py-2 text-left">SKU</th>
-                <th class="px-2 py-2 text-left">仮番号</th>
-                <th class="px-2 py-2 text-right">数量</th>
-                <th class="px-2 py-2 text-right">入数</th>
-                <th class="px-2 py-2 text-right">単価</th>
-                <th class="px-2 py-2 text-right">見積単価</th>
-                <th class="px-2 py-2 text-right">小計</th>
+                <th class="px-2 py-1.5 text-left">SKU</th>
+                <th class="px-2 py-1.5 text-left">仮番号</th>
+                <th class="px-2 py-1.5 text-right">数量</th>
+                <th class="px-2 py-1.5 text-right">入数</th>
+                <th class="px-2 py-1.5 text-right">単価</th>
+                <th class="px-2 py-1.5 text-right">見積単価</th>
+                <th class="px-2 py-1.5 text-right">小計</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(l, idx) in editLines" :key="idx" class="border-b border-gray-100 last:border-0">
-                <td class="px-2 py-2 font-mono">{{ l.sku }}</td>
-                <td class="px-2 py-2 font-mono text-gray-500">{{ l.provisionalNumberSnapshot || '—' }}</td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 font-mono">{{ l.sku }}</td>
+                <td class="px-2 py-1.5 font-mono text-gray-500">{{ l.provisionalNumberSnapshot || '—' }}</td>
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.estimateUnitPrice" type="number" min="0" step="0.01" placeholder="—" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2 text-right font-mono">{{ (l.quantity * l.unitPriceSnapshot).toLocaleString() }}</td>
+                <td class="px-2 py-1.5 text-right font-mono">{{ (l.quantity * l.unitPriceSnapshot).toLocaleString() }}</td>
               </tr>
             </tbody>
           </table>
@@ -396,26 +396,26 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 >海外</button>
               </div>
             </div>
-            <div v-if="editHeader.isOverseas" class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+            <div v-if="editHeader.isOverseas" class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
               <label class="flex flex-col gap-1">
                 <span class="font-medium">荷揚地</span>
-                <input v-model="editHeader.landingPlace" type="text" maxlength="128" class="rounded-md border border-gray-300 px-3 py-2" />
+                <input v-model="editHeader.landingPlace" type="text" maxlength="128" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">得意先</span>
-                <input v-model="editHeader.customerRef" type="text" maxlength="128" class="rounded-md border border-gray-300 px-3 py-2" />
+                <input v-model="editHeader.customerRef" type="text" maxlength="128" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">工場出荷日</span>
-                <input v-model="editHeader.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+                <input v-model="editHeader.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">検品所出荷日</span>
-                <input v-model="editHeader.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+                <input v-model="editHeader.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">海外出港日</span>
-                <input v-model="editHeader.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+                <input v-model="editHeader.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">納入倉庫2</span>
@@ -431,14 +431,14 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <!-- F-16 EditReason 必須 -->
           <div class="mt-4 rounded-md bg-yellow-50 p-4">
             <div class="mb-2 font-semibold text-yellow-800">編集理由 (F-16 必須)</div>
-            <div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
               <label class="flex flex-col gap-1">
                 <span class="font-medium">理由 <span class="text-red-500">*</span></span>
                 <AutoComplete :model-value="editReason" :options="editReasonOptions.map((r) => ({ value: r, label: editReasonLabel(r) }))" :allow-empty="false" placeholder="理由を選択…" @update:model-value="(v) => editReason = v as EditReason" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">メモ (任意)</span>
-                <input v-model="editNote" type="text" maxlength="255" placeholder="補足説明 (audit_logs に記録)" class="rounded-md border border-gray-300 px-3 py-2" />
+                <input v-model="editNote" type="text" maxlength="255" placeholder="補足説明 (audit_logs に記録)" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
             </div>
           </div>
@@ -451,7 +451,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </section>
 
       <!-- 連絡文章 -->
-      <section v-if="detail.communicationText" class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section v-if="detail.communicationText" class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">連絡文章</h2>
         <pre class="whitespace-pre-wrap text-sm">{{ detail.communicationText }}</pre>
       </section>

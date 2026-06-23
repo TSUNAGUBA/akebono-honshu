@@ -282,7 +282,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 </script>
 
 <template>
-  <main class="mx-auto max-w-6xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-5">
     <div v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
       読み込み中…
     </div>
@@ -295,7 +295,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
     </div>
 
     <template v-else>
-      <header class="mb-6 flex items-start justify-between gap-4">
+      <header class="mb-4 flex items-start justify-between gap-4">
         <div>
           <div class="text-xs text-gray-500">
             <span class="font-mono">品番 {{ detail.family.itemNumber }}</span>
@@ -331,7 +331,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       <!-- 次のアクション（操作導線）: この商品からの業務の次工程へ直接遷移する -->
       <section
         v-if="canEditMaster || canCreateOrder"
-        class="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+        class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
       >
         <h2 class="mb-3 text-sm font-semibold text-gray-700">次のアクション</h2>
         <div class="flex flex-wrap gap-2">
@@ -363,10 +363,10 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- 企画情報 -->
-      <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">企画情報</h2>
 
-        <div v-if="!editing" class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+        <div v-if="!editing" class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
           <div><span class="text-gray-500">年式:</span> <strong>{{ detail.family.plannedYearCode }}</strong></div>
           <div><span class="text-gray-500">連番:</span> <strong class="font-mono">{{ detail.family.sequenceNo }}</strong></div>
           <div><span class="text-gray-500">商品タイプ:</span> {{ detail.family.productTypeName }}</div>
@@ -393,7 +393,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <div><span class="text-gray-500">版権料率:</span> {{ detail.family.royaltyRate != null ? `${detail.family.royaltyRate}%` : '—' }}</div>
         </div>
 
-        <form v-else class="grid grid-cols-2 gap-4 text-sm" @submit.prevent="onSaveEdit">
+        <form v-else class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3" @submit.prevent="onSaveEdit">
           <label class="flex flex-col gap-1">
             <span class="font-medium">ブランド</span>
             <MasterSelect :model-value="editForm.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => editForm.brandId = v ?? 0" />
@@ -426,7 +426,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <!-- 旧 品番台帳 項目 (Phase A、全て任意) -->
           <label class="flex flex-col gap-1">
             <span class="font-medium">商品年度</span>
-            <input v-model.number="editForm.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model.number="editForm.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">管理季節</span>
@@ -438,11 +438,11 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">仮番号</span>
-            <input v-model="editForm.provisionalNumber" type="text" maxlength="64" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model="editForm.provisionalNumber" type="text" maxlength="64" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">サンプル合格日</span>
-            <input v-model="editForm.sampleApprovalDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model="editForm.sampleApprovalDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">版権対象</span>
@@ -450,34 +450,34 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">版権料率 (%)</span>
-            <input v-model.number="editForm.royaltyRate" type="number" min="0" step="0.01" placeholder="例: 5.00" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model.number="editForm.royaltyRate" type="number" min="0" step="0.01" placeholder="例: 5.00" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">小売価格</span>
-            <input v-model.number="editForm.retailPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model.number="editForm.retailPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">納品価格</span>
-            <input v-model.number="editForm.deliveryPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model.number="editForm.deliveryPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">企画費</span>
-            <input v-model.number="editForm.planningCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model.number="editForm.planningCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">ブランド費</span>
-            <input v-model.number="editForm.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model.number="editForm.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
 
-          <label class="col-span-2 flex flex-col gap-1">
+          <label class="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
             <span class="font-medium">商品名 1</span>
-            <input v-model="editForm.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model="editForm.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
-          <label class="col-span-2 flex flex-col gap-1">
+          <label class="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
             <span class="font-medium">商品名 2</span>
-            <input v-model="editForm.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-3 py-2" />
+            <input v-model="editForm.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
-          <div class="col-span-2 flex justify-end gap-2 pt-2">
+          <div class="flex justify-end gap-2 pt-2 sm:col-span-2 lg:col-span-3">
             <button type="button" class="rounded-md border border-gray-300 bg-white px-4 py-1.5 hover:bg-gray-50" @click="onCancelEdit">キャンセル</button>
             <button type="submit" class="rounded-md bg-blue-600 px-4 py-1.5 text-white hover:bg-blue-700">保存</button>
           </div>
@@ -485,31 +485,31 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- SKU 一覧 -->
-      <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">SKU 一覧 ({{ detail.products.length }} 件)</h2>
         <table class="w-full text-sm">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th class="px-3 py-2 text-left">SKU (11 桁)</th>
-              <th class="px-3 py-2 text-left">色</th>
-              <th class="px-3 py-2 text-left">サイズ</th>
-              <th class="px-3 py-2 text-left">状態</th>
+              <th class="px-2 py-1.5 text-left">SKU (11 桁)</th>
+              <th class="px-2 py-1.5 text-left">色</th>
+              <th class="px-2 py-1.5 text-left">サイズ</th>
+              <th class="px-2 py-1.5 text-left">状態</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="p in detail.products" :key="p.id" class="border-b border-gray-100 last:border-0"
                 :class="{ 'text-gray-400 bg-gray-50': p.isDeleted }">
-              <td class="px-3 py-2 font-mono">{{ p.sku }}</td>
-              <td class="px-3 py-2">{{ p.colorCode }} {{ p.colorName }}</td>
-              <td class="px-3 py-2">{{ p.sizeCode }} {{ p.sizeName }}</td>
-              <td class="px-3 py-2">{{ p.isDeleted ? '削除済' : '有効' }}</td>
+              <td class="px-2 py-1.5 font-mono">{{ p.sku }}</td>
+              <td class="px-2 py-1.5">{{ p.colorCode }} {{ p.colorName }}</td>
+              <td class="px-2 py-1.5">{{ p.sizeCode }} {{ p.sizeName }}</td>
+              <td class="px-2 py-1.5">{{ p.isDeleted ? '削除済' : '有効' }}</td>
             </tr>
           </tbody>
         </table>
       </section>
 
       <!-- 仕入単価 -->
-      <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
           <h2 class="font-semibold">現在有効な仕入単価 ({{ detail.currentSupplierPrices.length }} 件)</h2>
           <button
@@ -601,36 +601,36 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
         <table class="w-full text-sm">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th class="px-3 py-2 text-left">仕入先</th>
-              <th class="px-3 py-2 text-right">単価</th>
-              <th class="px-3 py-2 text-right">為替レート</th>
-              <th class="px-3 py-2 text-right">見積単価</th>
-              <th class="px-3 py-2 text-right">仕入原価</th>
-              <th class="px-3 py-2 text-right">税率</th>
-              <th class="px-3 py-2 text-left">有効開始</th>
-              <th class="px-3 py-2 text-left">決定日</th>
+              <th class="px-2 py-1.5 text-left">仕入先</th>
+              <th class="px-2 py-1.5 text-right">単価</th>
+              <th class="px-2 py-1.5 text-right">為替レート</th>
+              <th class="px-2 py-1.5 text-right">見積単価</th>
+              <th class="px-2 py-1.5 text-right">仕入原価</th>
+              <th class="px-2 py-1.5 text-right">税率</th>
+              <th class="px-2 py-1.5 text-left">有効開始</th>
+              <th class="px-2 py-1.5 text-left">決定日</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="p in detail.currentSupplierPrices" :key="p.id" class="border-b border-gray-100 last:border-0">
-              <td class="px-3 py-2">{{ p.supplierCode }} {{ p.supplierName }}</td>
-              <td class="px-3 py-2 text-right font-mono">{{ p.currencyCode }} {{ p.unitPrice.toLocaleString() }}</td>
-              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.exchangeRate != null ? p.exchangeRate.toLocaleString() : '—' }}</td>
-              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.estimateUnitPrice != null ? p.estimateUnitPrice.toLocaleString() : '—' }}</td>
-              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.purchaseCost != null ? p.purchaseCost.toLocaleString() : '—' }}</td>
-              <td class="px-3 py-2 text-right font-mono text-gray-500">{{ p.taxRate != null ? `${p.taxRate}%` : '—' }}</td>
-              <td class="px-3 py-2">{{ p.effectiveFrom }}</td>
-              <td class="px-3 py-2">{{ p.decidedAt }}</td>
+              <td class="px-2 py-1.5">{{ p.supplierCode }} {{ p.supplierName }}</td>
+              <td class="px-2 py-1.5 text-right font-mono">{{ p.currencyCode }} {{ p.unitPrice.toLocaleString() }}</td>
+              <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.exchangeRate != null ? p.exchangeRate.toLocaleString() : '—' }}</td>
+              <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.estimateUnitPrice != null ? p.estimateUnitPrice.toLocaleString() : '—' }}</td>
+              <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.purchaseCost != null ? p.purchaseCost.toLocaleString() : '—' }}</td>
+              <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.taxRate != null ? `${p.taxRate}%` : '—' }}</td>
+              <td class="px-2 py-1.5">{{ p.effectiveFrom }}</td>
+              <td class="px-2 py-1.5">{{ p.decidedAt }}</td>
             </tr>
             <tr v-if="detail.currentSupplierPrices.length === 0">
-              <td colspan="8" class="px-3 py-4 text-center text-gray-500">単価が登録されていません</td>
+              <td colspan="8" class="px-2 py-4 text-center text-gray-500">単価が登録されていません</td>
             </tr>
           </tbody>
         </table>
       </section>
 
       <!-- 画像管理 -->
-      <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
           <h2 class="font-semibold">画像 ({{ detail.images.length }} / 5 枚)</h2>
           <div v-if="canEditMaster && detail.images.length < 5">

@@ -224,7 +224,7 @@ const onSubmit = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-4xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-5">
     <div v-if="!canEditMaster" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
       品番台帳管理権限がないため、商品の新規登録はできません。
       <div class="mt-2">
@@ -233,7 +233,7 @@ const onSubmit = async () => {
     </div>
 
     <template v-else>
-      <header class="mb-6">
+      <header class="mb-4">
         <div class="text-xs text-gray-500">
           <NuxtLink to="/products" class="hover:underline">商品一覧</NuxtLink>
           <span class="mx-1">/</span>
@@ -249,11 +249,11 @@ const onSubmit = async () => {
         マスタ情報を読み込み中…
       </div>
 
-      <form v-else class="space-y-6" @submit.prevent="onSubmit">
+      <form v-else class="space-y-4" @submit.prevent="onSubmit">
         <!-- Section 1: 企画コード構成 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 class="mb-4 border-b border-gray-100 pb-2 font-semibold">① 企画コード構成 (11 桁品番の上位 9 桁)</h2>
-          <div class="grid grid-cols-2 gap-4">
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">① 企画コード構成 (11 桁品番の上位 9 桁)</h2>
+          <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">年式 <span class="text-red-500">*</span></span>
               <AutoComplete :model-value="form.plannedYearCode" :options="yearCodes.map((y) => ({ value: y, label: y }))" :allow-empty="false" placeholder="年式を検索…" @update:model-value="(v) => form.plannedYearCode = v" />
@@ -277,9 +277,9 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 2: 商品属性 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 class="mb-4 border-b border-gray-100 pb-2 font-semibold">② 商品属性</h2>
-          <div class="grid grid-cols-2 gap-4">
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">② 商品属性</h2>
+          <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">ブランド <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? 0" />
@@ -293,7 +293,7 @@ const onSubmit = async () => {
               <MasterSelect :model-value="form.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => form.productGroupId = v ?? 0" />
             </label>
           </div>
-          <div class="mt-4 grid grid-cols-3 gap-4">
+          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">甲皮素材 <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => form.upperMaterialId = v ?? 0" />
@@ -307,22 +307,22 @@ const onSubmit = async () => {
               <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? 0" />
             </label>
           </div>
-          <div class="mt-4 grid grid-cols-2 gap-4">
+          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品名 1 <span class="text-red-500">*</span></span>
-              <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品名 2</span>
-              <input v-model="form.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model="form.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
           </div>
 
           <!-- 旧 品番台帳 項目 (Phase A、全て任意) -->
-          <div class="mt-4 grid grid-cols-2 gap-4">
+          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品年度</span>
-              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">管理季節</span>
@@ -334,11 +334,11 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">仮番号</span>
-              <input v-model="form.provisionalNumber" type="text" maxlength="64" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model="form.provisionalNumber" type="text" maxlength="64" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">サンプル合格日</span>
-              <input v-model="form.sampleApprovalDate" type="date" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model="form.sampleApprovalDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">版権対象</span>
@@ -346,37 +346,37 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">版権料率 (%)</span>
-              <input v-model.number="form.royaltyRate" type="number" min="0" step="0.01" placeholder="例: 5.00" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model.number="form.royaltyRate" type="number" min="0" step="0.01" placeholder="例: 5.00" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
           </div>
 
           <!-- 価格 (旧 品番台帳 項目、全て任意) -->
-          <div class="mt-4 grid grid-cols-2 gap-4">
+          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">小売価格</span>
-              <input v-model.number="form.retailPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model.number="form.retailPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">納品価格</span>
-              <input v-model.number="form.deliveryPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model.number="form.deliveryPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">企画費</span>
-              <input v-model.number="form.planningCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model.number="form.planningCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">ブランド費</span>
-              <input v-model.number="form.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model.number="form.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
           </div>
         </section>
 
         <!-- Section 3: 色×サイズ展開 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 class="mb-4 border-b border-gray-100 pb-2 font-semibold">
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
             ③ 色 × サイズ展開 <span class="ml-2 text-xs text-gray-500">(SKU {{ skuCount }} 件が生成されます)</span>
           </h2>
-          <div class="grid grid-cols-2 gap-6">
+          <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <div>
               <div class="mb-2 text-sm font-medium">色 (複数選択)</div>
               <div class="flex flex-wrap gap-2">
@@ -415,9 +415,9 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 4: 仕入単価 (初回 1 件、追加は P-05 詳細画面で) -->
-        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 class="mb-4 border-b border-gray-100 pb-2 font-semibold">④ 仕入単価 (初回)</h2>
-          <div class="grid grid-cols-2 gap-4">
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">④ 仕入単価 (初回)</h2>
+          <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">仕入先 <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="supplierPrice.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => supplierPrice.supplierId = v ?? 0" />
@@ -430,7 +430,7 @@ const onSubmit = async () => {
                   type="number"
                   min="1"
                   step="0.01"
-                  class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  class="flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
                 />
                 <div class="w-24">
                   <AutoComplete :model-value="supplierPrice.currencyCode" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => supplierPrice.currencyCode = v" />
@@ -439,57 +439,57 @@ const onSubmit = async () => {
             </label>
             <label v-if="supplierPrice.currencyCode !== 'JPY'" class="flex flex-col gap-1">
               <span class="text-sm font-medium">為替レート <span class="text-xs text-gray-400">(外貨単価 → 円換算)</span></span>
-              <input v-model.number="supplierPrice.exchangeRate" type="number" min="0" step="0.0001" placeholder="例: 21.5" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model.number="supplierPrice.exchangeRate" type="number" min="0" step="0.0001" placeholder="例: 21.5" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">有効開始日 <span class="text-red-500">*</span></span>
-              <input v-model="supplierPrice.effectiveFrom" type="date" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model="supplierPrice.effectiveFrom" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">単価決定日 <span class="text-red-500">*</span></span>
-              <input v-model="supplierPrice.decidedAt" type="date" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input v-model="supplierPrice.decidedAt" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
           </div>
 
           <!-- 旧 仕入コスト計算明細 項目 (Phase C、全て任意)。clutter 回避のため折りたたみ。 -->
-          <details class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+          <details class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
             <summary class="cursor-pointer text-sm font-medium text-gray-700">原価明細 (任意)</summary>
-            <div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+            <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">見積単価</span>
-                <input v-model.number="supplierPrice.estimateUnitPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.estimateUnitPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">見積単価受領日</span>
-                <input v-model="supplierPrice.estimateReceivedDate" type="date" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model="supplierPrice.estimateReceivedDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">見積原価</span>
-                <input v-model.number="supplierPrice.estimateCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.estimateCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">見積利益率 (%)</span>
-                <input v-model.number="supplierPrice.estimateMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.estimateMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">仕入原価</span>
-                <input v-model.number="supplierPrice.purchaseCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.purchaseCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">仕入利益率 (%)</span>
-                <input v-model.number="supplierPrice.purchaseMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.purchaseMarginRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">ロス費</span>
-                <input v-model.number="supplierPrice.lossCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.lossCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">トレー代</span>
-                <input v-model.number="supplierPrice.trayCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.trayCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">税率 (%)</span>
-                <input v-model.number="supplierPrice.taxRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                <input v-model.number="supplierPrice.taxRate" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
             </div>
           </details>

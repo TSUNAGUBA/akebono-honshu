@@ -223,7 +223,7 @@ const onSubmit = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-5xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-5">
     <div v-if="!canCreateOrder" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
       発注書作成権限がありません。
       <div class="mt-2">
@@ -232,7 +232,7 @@ const onSubmit = async () => {
     </div>
 
     <template v-else>
-      <header class="mb-6">
+      <header class="mb-4">
         <div class="text-xs text-gray-500">
           <NuxtLink to="/orders" class="hover:underline">発注書</NuxtLink>
           <span class="mx-1">/</span>
@@ -248,10 +248,10 @@ const onSubmit = async () => {
         マスタ情報を読み込み中…
       </div>
 
-      <form v-else class="space-y-6" @submit.prevent="onSubmit">
+      <form v-else class="space-y-4" @submit.prevent="onSubmit">
         <!-- 発注書ヘッダ -->
-        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <div class="mb-4 flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div class="mb-3 flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">発注書ヘッダ</h2>
             <!-- 発注区分 国内/海外 セグメントトグル (is_overseas、二択モードスイッチ) -->
             <div class="inline-flex self-start overflow-hidden rounded-md border border-gray-300 text-sm">
@@ -269,7 +269,7 @@ const onSubmit = async () => {
               >海外</button>
             </div>
           </div>
-          <div class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">仕入先 <span class="text-red-500">*</span></span>
               <MasterSelect v-model="form.supplierId" :items="suppliers" />
@@ -288,7 +288,7 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納入日 <span class="text-red-500">*</span></span>
-              <input v-model="form.dueDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+              <input v-model="form.dueDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注担当 <span class="text-red-500">*</span></span>
@@ -313,28 +313,28 @@ const onSubmit = async () => {
         </section>
 
         <!-- 海外発注情報 (is_overseas=true のときのみ表示、Phase B) -->
-        <section v-if="form.isOverseas" class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 class="mb-4 border-b border-gray-100 pb-2 font-semibold">海外発注情報</h2>
-          <div class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+        <section v-if="form.isOverseas" class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">海外発注情報</h2>
+          <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">荷揚地</span>
-              <input v-model="form.landingPlace" type="text" maxlength="128" placeholder="Port of entry" class="rounded-md border border-gray-300 px-3 py-2" />
+              <input v-model="form.landingPlace" type="text" maxlength="128" placeholder="Port of entry" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">得意先</span>
-              <input v-model="form.customerRef" type="text" maxlength="128" placeholder="得意先 / 受注先" class="rounded-md border border-gray-300 px-3 py-2" />
+              <input v-model="form.customerRef" type="text" maxlength="128" placeholder="得意先 / 受注先" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">工場出荷日</span>
-              <input v-model="form.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+              <input v-model="form.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">検品所出荷日</span>
-              <input v-model="form.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+              <input v-model="form.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">海外出港日</span>
-              <input v-model="form.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-3 py-2" />
+              <input v-model="form.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納入倉庫2</span>
@@ -360,48 +360,48 @@ const onSubmit = async () => {
         </section>
 
         <!-- 明細 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <div class="mb-4 flex items-center justify-between border-b border-gray-100 pb-2">
+        <section class="overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
             <h2 class="font-semibold">明細 ({{ lines.length }} 件、合計 {{ totalAmount.toLocaleString() }} 円)</h2>
             <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="addLine">+ 明細追加</button>
           </div>
           <table class="w-full text-sm">
             <thead class="border-b border-gray-200 bg-gray-50">
               <tr>
-                <th class="px-2 py-2 text-left">SKU</th>
-                <th class="px-2 py-2 text-right">数量</th>
-                <th class="px-2 py-2 text-right">入数</th>
-                <th class="px-2 py-2 text-right">単価</th>
-                <th class="px-2 py-2 text-right">見積単価</th>
-                <th class="px-2 py-2 text-left">通貨</th>
-                <th class="px-2 py-2 text-right">小計</th>
-                <th class="px-2 py-2 text-right"></th>
+                <th class="px-2 py-1.5 text-left">SKU</th>
+                <th class="px-2 py-1.5 text-right">数量</th>
+                <th class="px-2 py-1.5 text-right">入数</th>
+                <th class="px-2 py-1.5 text-right">単価</th>
+                <th class="px-2 py-1.5 text-right">見積単価</th>
+                <th class="px-2 py-1.5 text-left">通貨</th>
+                <th class="px-2 py-1.5 text-right">小計</th>
+                <th class="px-2 py-1.5 text-right"></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(l, idx) in lines" :key="idx" class="border-b border-gray-100 last:border-0">
-                <td class="px-2 py-2">
+                <td class="px-2 py-1.5">
                   <MasterSelect v-model="l.productId" :items="skuOptions" placeholder="SKU・品名で検索…" />
                 </td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.estimateUnitPrice" type="number" min="0" step="0.01" placeholder="—" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-2">
+                <td class="px-2 py-1.5">
                   <div class="w-20">
                     <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => l.currencyCodeSnapshot = v" />
                   </div>
                 </td>
-                <td class="px-2 py-2 text-right font-mono">{{ lineSubtotal(l).toLocaleString() }}</td>
-                <td class="px-2 py-2 text-right">
+                <td class="px-2 py-1.5 text-right font-mono">{{ lineSubtotal(l).toLocaleString() }}</td>
+                <td class="px-2 py-1.5 text-right">
                   <button type="button" :disabled="lines.length <= 1" class="text-xs text-red-600 hover:underline disabled:opacity-30" @click="removeLine(idx)">削除</button>
                 </td>
               </tr>
@@ -410,7 +410,7 @@ const onSubmit = async () => {
         </section>
 
         <!-- 連絡文章 (O-07) -->
-        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
             <h2 class="font-semibold">連絡文章 (O-07)</h2>
             <div v-if="commTemplates.length > 0" class="text-xs text-gray-500">
@@ -426,7 +426,7 @@ const onSubmit = async () => {
               </button>
             </div>
           </div>
-          <textarea v-model="form.communicationText" rows="4" placeholder="発注先への連絡事項..." class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+          <textarea v-model="form.communicationText" rows="4" placeholder="発注先への連絡事項..." class="w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
         </section>
 
         <div v-if="errorMessage" class="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
