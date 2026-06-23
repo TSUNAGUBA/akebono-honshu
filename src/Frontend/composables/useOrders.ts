@@ -34,6 +34,8 @@ export interface OrderListItem {
   lastExportedAt: string | null
   createdAt: string
   updatedAt: string
+  // 発注区分 国内/海外 (Phase B、is_overseas)。一覧でのタブ絞込・区分バッジ表示用。
+  isOverseas: boolean
 }
 
 export interface OrderLineDetail {

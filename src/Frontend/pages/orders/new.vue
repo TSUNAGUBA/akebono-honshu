@@ -249,25 +249,37 @@ const onSubmit = async () => {
       </div>
 
       <form v-else class="space-y-4" @submit.prevent="onSubmit">
-        <!-- 発注書ヘッダ -->
+        <!-- ① 発注区分: 先頭の必須選択 (is_overseas、国内/海外 で以降のフォームが変化) -->
         <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <div class="mb-3 flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
-            <h2 class="font-semibold">発注書ヘッダ</h2>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 class="font-semibold">① 発注区分 <span class="text-red-500">*</span></h2>
+              <p class="mt-0.5 text-xs text-gray-500">
+                国内 / 海外 を選択してください。海外を選ぶと海外発注情報の入力欄が表示されます。
+              </p>
+            </div>
             <!-- 発注区分 国内/海外 セグメントトグル (is_overseas、二択モードスイッチ) -->
             <div class="inline-flex self-start overflow-hidden rounded-md border border-gray-300 text-sm">
               <button
                 type="button"
-                class="px-4 py-1.5 font-medium transition-colors"
+                class="px-6 py-1.5 font-medium transition-colors"
                 :class="!form.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
                 @click="form.isOverseas = false"
               >国内</button>
               <button
                 type="button"
-                class="border-l border-gray-300 px-4 py-1.5 font-medium transition-colors"
+                class="border-l border-gray-300 px-6 py-1.5 font-medium transition-colors"
                 :class="form.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
                 @click="form.isOverseas = true"
               >海外</button>
             </div>
+          </div>
+        </section>
+
+        <!-- ② 発注書ヘッダ -->
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div class="mb-3 flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 class="font-semibold">② 発注書ヘッダ</h2>
           </div>
           <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
@@ -312,9 +324,9 @@ const onSubmit = async () => {
           </div>
         </section>
 
-        <!-- 海外発注情報 (is_overseas=true のときのみ表示、Phase B) -->
+        <!-- ③ 海外発注情報 (is_overseas=true のときのみ表示、Phase B) -->
         <section v-if="form.isOverseas" class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">海外発注情報</h2>
+          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">③ 海外発注情報</h2>
           <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">荷揚地</span>
@@ -362,7 +374,7 @@ const onSubmit = async () => {
         <!-- 明細 -->
         <section class="overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
-            <h2 class="font-semibold">明細 ({{ lines.length }} 件、合計 {{ totalAmount.toLocaleString() }} 円)</h2>
+            <h2 class="font-semibold">④ 明細 ({{ lines.length }} 件、合計 {{ totalAmount.toLocaleString() }} 円)</h2>
             <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="addLine">+ 明細追加</button>
           </div>
           <table class="w-full text-sm">
@@ -412,7 +424,7 @@ const onSubmit = async () => {
         <!-- 連絡文章 (O-07) -->
         <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
-            <h2 class="font-semibold">連絡文章 (O-07)</h2>
+            <h2 class="font-semibold">⑤ 連絡文章 (O-07)</h2>
             <div v-if="commTemplates.length > 0" class="text-xs text-gray-500">
               テンプレ:
               <button
