@@ -271,6 +271,16 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UnitPrice).HasColumnName("unit_price").HasColumnType("numeric(12,2)");
             b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
             b.Property(x => x.ExchangeRate).HasColumnName("exchange_rate").HasColumnType("numeric(10,4)");
+            // 旧 仕入コスト計算明細 項目 (Phase C、全 NULL 許容)
+            b.Property(x => x.EstimateUnitPrice).HasColumnName("estimate_unit_price").HasColumnType("numeric(12,2)");
+            b.Property(x => x.EstimateReceivedDate).HasColumnName("estimate_received_date");
+            b.Property(x => x.EstimateCost).HasColumnName("estimate_cost").HasColumnType("numeric(12,2)");
+            b.Property(x => x.EstimateMarginRate).HasColumnName("estimate_margin_rate").HasColumnType("numeric(5,2)");
+            b.Property(x => x.PurchaseCost).HasColumnName("purchase_cost").HasColumnType("numeric(12,2)");
+            b.Property(x => x.PurchaseMarginRate).HasColumnName("purchase_margin_rate").HasColumnType("numeric(5,2)");
+            b.Property(x => x.LossCost).HasColumnName("loss_cost").HasColumnType("numeric(12,2)");
+            b.Property(x => x.TrayCost).HasColumnName("tray_cost").HasColumnType("numeric(12,2)");
+            b.Property(x => x.TaxRate).HasColumnName("tax_rate").HasColumnType("numeric(5,2)");
             b.Property(x => x.EffectiveFrom).HasColumnName("effective_from");
             b.Property(x => x.EffectiveTo).HasColumnName("effective_to");
             b.Property(x => x.DecidedAt).HasColumnName("decided_at");
