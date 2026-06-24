@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import type { OrderDetail, EditReason } from '~/composables/useOrders'
-import { editReasonLabel, orderStatusLabel } from '~/composables/useOrders'
+import { editReasonLabel, deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
 
 const route = useRoute()
 const id = computed(() => Number(route.params.id))
 const { user } = useAuth()
 const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 
-const { get, update, cancel, downloadExcel } = useOrders()
+const { get, update, cancel, markDelivered, softDelete, downloadExcel } = useOrders()
 
 const detail = ref<OrderDetail | null>(null)
 const loading = ref(true)
@@ -162,6 +162,49 @@ const onCancelOrder = async () => {
   }
 }
 
+// 発注状態 5 値 (#3a) を共通ヘルパーで導出 (一覧 index.vue と同一ロジック)。
+const orderState = computed(() =>
+  detail.value
+    ? deriveOrderState({
+        status: detail.value.status,
+        firstExportedAt: detail.value.firstExportedAt,
+        deliveredAt: detail.value.deliveredAt,
+        isDeleted: detail.value.isDeleted,
+      })
+    : null,
+)
+
+// 削除確認モーダル
+const showDeleteForm = ref(false)
+
+// 納品完了にする (#3a)。正式発注済 (ordered) のときのみボタン表示。
+const onMarkDelivered = async () => {
+  errorMessage.value = ''
+  try {
+    await markDelivered(id.value)
+    successMessage.value = '納品完了にしました'
+    await reload()
+  } catch (e) {
+    const err = e as { statusCode?: number; data?: { detail?: string } }
+    errorMessage.value = err.statusCode === 409
+      ? (err.data?.detail ?? '現在の状態では納品完了にできません')
+      : '納品完了操作に失敗しました'
+  }
+}
+
+// 発注削除 (#3a)。論理削除。確認モーダル経由。
+const onSoftDelete = async () => {
+  errorMessage.value = ''
+  try {
+    await softDelete(id.value)
+    showDeleteForm.value = false
+    successMessage.value = '発注書を削除しました'
+    await reload()
+  } catch {
+    errorMessage.value = '削除操作に失敗しました'
+  }
+}
+
 const onDownload = async () => {
   downloading.value = true
   errorMessage.value = ''
@@ -209,9 +252,10 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <span v-if="detail.orderNo" class="ml-2 text-base font-mono text-gray-500">/ 発注番号 {{ detail.orderNo }}</span>
           </h1>
           <div class="mt-1 flex items-center gap-2 text-sm">
-            <span :class="detail.status === 1 ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'"
-                  class="inline-block rounded-full px-2 py-0.5 text-xs">
-              {{ orderStatusLabel(detail.status) }}
+            <!-- 発注状態 5 値バッジ (#3a)。発注依頼中/正式発注済/発注中止/納品完了/発注削除 -->
+            <span v-if="orderState" :class="orderStateBadgeClass(orderState)"
+                  class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
+              {{ orderStateLabel(orderState) }}
             </span>
             <span v-if="exportBadge" :class="exportBadge.cls" class="inline-block rounded-full px-2 py-0.5 text-xs">
               {{ exportBadge.label }}
@@ -228,18 +272,34 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           >
             {{ downloading ? '出力中…' : '📥 Excel ダウンロード' }}
           </button>
+          <!-- 編集/中止 は終端状態 (発注中止/納品完了/発注削除) では不可。発注依頼中/正式発注済 のみ (#3a)。
+               バックエンド UpdateAsync/CancelAsync も同じガードを持つ (UI は操作可否の早期表示)。 -->
           <button
-            v-if="canEditOrder && detail.status === 0 && !editing"
+            v-if="canEditOrder && (orderState === 'requested' || orderState === 'ordered') && !editing"
             type="button"
             class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
             @click="onStartEdit"
           >編集</button>
+          <!-- 納品完了にする (#3a)。正式発注済 (ordered) のときのみ表示。 -->
           <button
-            v-if="canEditOrder && detail.status === 0 && !editing"
+            v-if="canEditOrder && orderState === 'ordered' && !editing"
+            type="button"
+            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+            @click="onMarkDelivered"
+          >納品完了にする</button>
+          <button
+            v-if="canEditOrder && (orderState === 'requested' || orderState === 'ordered') && !editing"
             type="button"
             class="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
             @click="showCancelForm = true"
           >中止</button>
+          <!-- 発注削除 (#3a)。未削除のときのみ表示。論理削除なので確認モーダル経由。 -->
+          <button
+            v-if="canEditOrder && !detail.isDeleted && !editing"
+            type="button"
+            class="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+            @click="showDeleteForm = true"
+          >削除</button>
         </div>
       </header>
 
@@ -253,6 +313,16 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
         <div class="flex justify-end gap-2">
           <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="showCancelForm = false">キャンセル</button>
           <button type="button" class="rounded-md bg-orange-600 px-3 py-1 text-sm text-white hover:bg-orange-700" @click="onCancelOrder">中止する</button>
+        </div>
+      </div>
+
+      <!-- 削除確認フォーム (#3a)。論理削除のため取り消し前提の文言。 -->
+      <div v-if="showDeleteForm" class="mb-4 rounded-lg border border-red-300 bg-red-50 p-4">
+        <div class="mb-2 font-semibold text-red-800">発注書を削除</div>
+        <p class="mb-2 text-sm text-red-700">この発注書を削除 (論理削除) します。一覧では既定で非表示になります。よろしいですか？</p>
+        <div class="flex justify-end gap-2">
+          <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="showDeleteForm = false">キャンセル</button>
+          <button type="button" class="rounded-md bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700" @click="onSoftDelete">削除する</button>
         </div>
       </div>
 
@@ -304,6 +374,15 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
         <div v-if="detail.status === 1" class="mt-3 rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-xs">
           <div><strong>中止日時:</strong> {{ detail.cancelledAt ? new Date(detail.cancelledAt).toLocaleString('ja-JP') : '—' }}</div>
           <div><strong>中止理由:</strong> {{ detail.cancelReason ?? '—' }}</div>
+        </div>
+        <!-- 納品完了情報 (#3a) -->
+        <div v-if="detail.deliveredAt" class="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
+          <div><strong>納品完了日時:</strong> {{ new Date(detail.deliveredAt).toLocaleString('ja-JP') }}</div>
+        </div>
+        <!-- 発注削除情報 (#3a、論理削除) -->
+        <div v-if="detail.isDeleted" class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs">
+          <div><strong>削除日時:</strong> {{ detail.deletedAt ? new Date(detail.deletedAt).toLocaleString('ja-JP') : '—' }}</div>
+          <div class="text-gray-600">この発注書は削除済み (論理削除) です。一覧では既定で非表示になります。</div>
         </div>
       </section>
 

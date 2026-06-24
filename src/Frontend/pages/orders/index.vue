@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import type { OrderListItem } from '~/composables/useOrders'
+import type { OrderListItem, OrderState } from '~/composables/useOrders'
+import { deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
+import type { MasterItem } from '~/composables/useMasters'
 
 const { list } = useOrders()
+const { list: listMaster } = useMasters()
+const { apiFetch } = useApi()
 const { user } = useAuth()
 
 const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
@@ -9,8 +13,7 @@ const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission
 const items = ref<OrderListItem[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
-const includeCancelled = ref(false)
-const search = ref('')
+
 // 発注区分タブ (全件 / 国内 / 海外、is_overseas でクライアント側絞込)
 type RegionTab = 'all' | 'domestic' | 'overseas'
 const regionTab = ref<RegionTab>('all')
@@ -20,11 +23,67 @@ const regionTabs: { key: RegionTab; label: string }[] = [
   { key: 'overseas', label: '海外' },
 ]
 
+// --- フィルタ用マスタ参照 (発注先=仕入先 / 発注者=ユーザ) ---
+const suppliers = ref<MasterItem[]>([])
+interface UserOption { id: number; loginId: string; displayName: string }
+const users = ref<UserOption[]>([])
+// 発注者ドロップダウン用 (orders/new.vue と同じ整形)
+const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
+
+// --- 発注状態 5 値 (発注削除のみ既定 OFF、他 4 つ ON) ---
+const allStates: OrderState[] = ['requested', 'ordered', 'cancelled', 'delivered', 'deleted']
+const defaultStateFilter = (): Record<OrderState, boolean> => ({
+  requested: true, ordered: true, cancelled: true, delivered: true, deleted: false,
+})
+
+// --- SPLIT フィルタ (AND 合成、状態のみ OR)。products/index.vue のパターンをミラー。 ---
+const filters = ref({
+  createdFrom: '',                         // date 手入力 (created_at >= From)
+  createdTo: '',                           // date 手入力 (created_at <= To)
+  supplierId: null as number | null,       // dropdown (発注先=仕入先)
+  ordererUserId: null as number | null,    // dropdown (発注者=ユーザ)
+  undecidedPrice: false,                   // checkbox (単価未決定を含む発注のみ)
+  hideLines: false,                        // checkbox (明細列を隠す表示トグル、後述)
+  customer: '',                            // text 手入力 (得意先 部分一致)
+  states: defaultStateFilter(),            // checkbox×5 (発注状態、OR 合成)
+})
+
+const clearFilters = () => {
+  filters.value = {
+    createdFrom: '',
+    createdTo: '',
+    supplierId: null,
+    ordererUserId: null,
+    undecidedPrice: false,
+    hideLines: false,
+    customer: '',
+    states: defaultStateFilter(),
+  }
+}
+
+// 状態フィルタが既定 (発注削除のみ OFF) と異なるか。クリアボタンの活性判定に使う。
+const isStateFilterDefault = computed(() => {
+  const d = defaultStateFilter()
+  return allStates.every((s) => filters.value.states[s] === d[s])
+})
+
+const hasActiveFilter = computed(() =>
+  filters.value.createdFrom !== '' ||
+  filters.value.createdTo !== '' ||
+  filters.value.supplierId != null ||
+  filters.value.ordererUserId != null ||
+  filters.value.undecidedPrice ||
+  filters.value.hideLines ||
+  filters.value.customer.trim() !== '' ||
+  !isStateFilterDefault.value,
+)
+
 const reload = async () => {
   loading.value = true
   errorMessage.value = ''
   try {
-    items.value = await list(includeCancelled.value)
+    // 発注状態 5 値フィルタ (#3a) のため全状態 (中止/納品完了/削除含む) を取得し client-side で絞り込む。
+    items.value = await list(true)
   } catch (e) {
     const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 401
@@ -35,32 +94,84 @@ const reload = async () => {
   }
 }
 
-watch(includeCancelled, reload)
-onMounted(reload)
+// フィルタ用マスタ・ユーザの読込はドロップダウンの選択肢にのみ使う補助処理。
+// 失敗しても一覧本体 (reload) は表示する (原則 4 非ブロッキング)。
+const loadFilterSources = async () => {
+  try {
+    const [sup, usr] = await Promise.all([
+      listMaster('suppliers'),
+      apiFetch<{ data: UserOption[] }>('/users'),
+    ])
+    suppliers.value = sup
+    users.value = usr.data
+  } catch (e) {
+    console.error('フィルタ選択肢 (仕入先/ユーザ) の取得に失敗しました', e)
+  }
+}
+
+onMounted(() => {
+  reload()
+  loadFilterSources()
+})
+
+// 部分一致用に正規化 (大小文字を無視)。
+const inc = (haystack: string | null | undefined, needle: string): boolean =>
+  (haystack ?? '').toLowerCase().includes(needle.trim().toLowerCase())
+
+const stateOf = (i: OrderListItem): OrderState =>
+  deriveOrderState({ status: i.status, firstExportedAt: i.firstExportedAt, deliveredAt: i.deliveredAt, isDeleted: i.isDeleted })
+
+// 作成日は ISO 文字列 (createdAt) の日付部分を YYYY-MM-DD で取り出して date 入力と比較。
+const createdDate = (i: OrderListItem): string => (i.createdAt ?? '').slice(0, 10)
 
 const filtered = computed(() => {
-  // 発注区分タブ (国内/海外) でまず絞込
+  const f = filters.value
+  const custQ = f.customer.trim()
+
+  // まず発注区分タブ (国内/海外) で絞込
   let base = items.value
   if (regionTab.value === 'domestic') base = base.filter((i) => !i.isOverseas)
   else if (regionTab.value === 'overseas') base = base.filter((i) => i.isOverseas)
 
-  const q = search.value.trim().toLowerCase()
-  if (!q) return base
-  return base.filter(
-    (i) =>
-      i.mgmtNo.toLowerCase().includes(q) ||
-      (i.orderNo ?? '').toLowerCase().includes(q) ||
-      i.supplierName.toLowerCase().includes(q) ||
-      i.deliveryDestinationName.toLowerCase().includes(q),
-  )
+  return base.filter((i) => {
+    // 作成日 From/To (date 文字列の辞書順比較で日付比較可能)
+    if (f.createdFrom !== '' && createdDate(i) < f.createdFrom) return false
+    if (f.createdTo !== '' && createdDate(i) > f.createdTo) return false
+    // 発注先 / 発注者 (ID 一致)
+    if (f.supplierId != null && i.supplierId !== f.supplierId) return false
+    if (f.ordererUserId != null && i.ordererUserId !== f.ordererUserId) return false
+    // 仕入単価未決定を含む発注のみ
+    if (f.undecidedPrice && !i.hasUndecidedPrice) return false
+    // 得意先 部分一致
+    if (custQ !== '' && !inc(i.customerName, custQ)) return false
+    // 発注状態 (選択された状態のいずれかに該当 = OR)
+    if (!f.states[stateOf(i)]) return false
+    return true
+  })
 })
 
-// 各タブの件数 (区分絞込のみ、検索語は無視してタブ自体のラベルに件数表示)
+// 各区分タブの件数 (状態フィルタ適用後、区分のみで再集計しタブラベルに表示)
+const stateFilteredItems = computed(() => {
+  const f = filters.value
+  const custQ = f.customer.trim()
+  return items.value.filter((i) => {
+    if (f.createdFrom !== '' && createdDate(i) < f.createdFrom) return false
+    if (f.createdTo !== '' && createdDate(i) > f.createdTo) return false
+    if (f.supplierId != null && i.supplierId !== f.supplierId) return false
+    if (f.ordererUserId != null && i.ordererUserId !== f.ordererUserId) return false
+    if (f.undecidedPrice && !i.hasUndecidedPrice) return false
+    if (custQ !== '' && !inc(i.customerName, custQ)) return false
+    if (!f.states[stateOf(i)]) return false
+    return true
+  })
+})
 const regionCount = (key: RegionTab): number => {
-  if (key === 'domestic') return items.value.filter((i) => !i.isOverseas).length
-  if (key === 'overseas') return items.value.filter((i) => i.isOverseas).length
-  return items.value.length
+  if (key === 'domestic') return stateFilteredItems.value.filter((i) => !i.isOverseas).length
+  if (key === 'overseas') return stateFilteredItems.value.filter((i) => i.isOverseas).length
+  return stateFilteredItems.value.length
 }
+
+const stateLabel = (s: OrderState) => orderStateLabel(s)
 
 // 発注区分バッジ (国内: グレー / 海外: インディゴ。詳細画面 [id].vue と配色を統一)
 const regionBadge = (i: OrderListItem): { label: string; cls: string } =>
@@ -73,15 +184,10 @@ const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
   const dt = new Date(i.firstExportedAt).toLocaleDateString('ja-JP')
   return { label: `初回出力済 (${dt})`, cls: 'bg-blue-100 text-blue-700' }
 }
-
-const statusBadge = (s: number): { label: string; cls: string } =>
-  s === 1
-    ? { label: 'Cancelled', cls: 'bg-orange-100 text-orange-700' }
-    : { label: 'Active', cls: 'bg-green-100 text-green-700' }
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-8">
     <header class="mb-6 flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold">発注書</h1>
@@ -120,17 +226,93 @@ const statusBadge = (s: number): { label: string; cls: string } =>
       </button>
     </div>
 
+    <!-- 絞込フィルタパネル (SPLIT フィルタ、AND 合成・状態のみ OR、未指定 = 全件)。
+         dropdown は MasterSelect (数値 ID・allow-empty)、date/text は手入力。
+         products/index.vue のパネルをミラー。レスポンシブグリッド: モバイル 1 列 → sm 2 列 → lg 4 列。 -->
+    <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
+        <h2 class="text-sm font-semibold text-gray-700">絞込</h2>
+        <button
+          type="button"
+          class="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+          :disabled="!hasActiveFilter"
+          @click="clearFilters"
+        >
+          クリア
+        </button>
+      </div>
+      <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">作成日 From</span>
+          <input
+            v-model="filters.createdFrom"
+            type="date"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">作成日 To</span>
+          <input
+            v-model="filters.createdTo"
+            type="date"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">発注先</span>
+          <MasterSelect
+            v-model="filters.supplierId"
+            :items="suppliers"
+            allow-empty
+            empty-label="（すべて）"
+            placeholder="（すべて）"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">発注者</span>
+          <MasterSelect
+            v-model="filters.ordererUserId"
+            :items="userOptions"
+            allow-empty
+            empty-label="（すべて）"
+            placeholder="（すべて）"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">得意先</span>
+          <input
+            v-model="filters.customer"
+            type="text"
+            placeholder="得意先で部分一致"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
+        <label class="flex items-center gap-2 sm:mt-6">
+          <input v-model="filters.undecidedPrice" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+          <span class="font-medium">仕入単価未決定を含む</span>
+        </label>
+        <label class="flex items-center gap-2 sm:mt-6">
+          <input v-model="filters.hideLines" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+          <span class="font-medium">明細非表示</span>
+        </label>
+      </div>
+
+      <!-- 発注状態 (checkbox×5、OR 合成。既定: 発注削除のみ OFF) -->
+      <div class="mt-3 border-t border-gray-100 pt-3">
+        <span class="mb-2 block text-sm font-medium text-gray-700">発注状態</span>
+        <div class="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+          <label v-for="s in allStates" :key="s" class="inline-flex items-center gap-1.5">
+            <input v-model="filters.states[s]" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+            <span
+              :class="orderStateBadgeClass(s)"
+              class="inline-block rounded-full px-2 py-0.5 text-xs font-medium"
+            >{{ stateLabel(s) }}</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
     <div class="mb-3 flex items-center gap-4">
-      <input
-        v-model="search"
-        type="search"
-        placeholder="管理番号 / 発注番号 / 仕入先 / 納品先で検索"
-        class="w-80 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
-      />
-      <label class="inline-flex items-center gap-2 text-sm text-gray-600">
-        <input v-model="includeCancelled" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
-        中止済みを含む
-      </label>
       <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件</span>
     </div>
 
@@ -142,7 +324,7 @@ const statusBadge = (s: number): { label: string; cls: string } =>
       読み込み中…
     </section>
 
-    <section v-else class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <section v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
       <table class="w-full">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
@@ -152,7 +334,8 @@ const statusBadge = (s: number): { label: string; cls: string } =>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">仕入先</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">納品先</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">納入日</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">明細</th>
+            <!-- 明細列: 明細非表示フィルタ ON で列ごと隠す (後述) -->
+            <th v-if="!filters.hideLines" class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">明細</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">合計</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">出力</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
@@ -160,8 +343,8 @@ const statusBadge = (s: number): { label: string; cls: string } =>
         </thead>
         <tbody>
           <tr v-if="filtered.length === 0">
-            <td colspan="10" class="px-4 py-8 text-center text-sm text-gray-500">
-              {{ search ? '検索条件に一致するデータがありません' : 'データがありません' }}
+            <td :colspan="filters.hideLines ? 9 : 10" class="px-4 py-8 text-center text-sm text-gray-500">
+              {{ hasActiveFilter ? '検索条件に一致するデータがありません' : 'データがありません' }}
             </td>
           </tr>
           <tr
@@ -183,7 +366,7 @@ const statusBadge = (s: number): { label: string; cls: string } =>
             </td>
             <td class="px-4 py-3 text-sm">{{ i.deliveryDestinationName }}</td>
             <td class="px-4 py-3 text-sm">{{ i.dueDate }}</td>
-            <td class="px-4 py-3 text-right font-mono text-sm">{{ i.lineCount }}</td>
+            <td v-if="!filters.hideLines" class="px-4 py-3 text-right font-mono text-sm">{{ i.lineCount }}</td>
             <td class="px-4 py-3 text-right font-mono text-sm">
               {{ i.currencyCode }} {{ i.totalAmount.toLocaleString() }}
             </td>
@@ -193,8 +376,8 @@ const statusBadge = (s: number): { label: string; cls: string } =>
               </span>
             </td>
             <td class="px-4 py-3 text-sm">
-              <span :class="statusBadge(i.status).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">
-                {{ statusBadge(i.status).label }}
+              <span :class="orderStateBadgeClass(stateOf(i))" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
+                {{ stateLabel(stateOf(i)) }}
               </span>
             </td>
           </tr>

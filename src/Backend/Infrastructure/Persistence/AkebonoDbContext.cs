@@ -305,6 +305,13 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
             b.Property(x => x.CancelledByUserId).HasColumnName("cancelled_by_user_id");
             b.Property(x => x.CancelReason).HasColumnName("cancel_reason").HasMaxLength(255);
+            // 発注状態 5 値モデル (#3a)。納品完了/発注削除 列。操作者列は cancelled_by_user_id と同じく
+            // scalar (ナビ無し) のため shadow FK 列・cascade は発生しない。DB 側 FK は init/iter13 SQL で定義。
+            b.Property(x => x.DeliveredAt).HasColumnName("delivered_at");
+            b.Property(x => x.DeliveredByUserId).HasColumnName("delivered_by_user_id");
+            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
+            b.Property(x => x.DeletedByUserId).HasColumnName("deleted_by_user_id");
             b.Property(x => x.SupplierId).HasColumnName("supplier_id");
             b.Property(x => x.SupplierOfficialNameSnapshot).HasColumnName("supplier_official_name_snapshot").HasMaxLength(255);
             b.Property(x => x.SupplierCodeSnapshot).HasColumnName("supplier_code_snapshot").HasMaxLength(3);
