@@ -146,6 +146,9 @@ const addLine = () => {
     packQuantity: null,
     estimateUnitPrice: null,
   })
+  // 追加直後の明細にも現単価を補完する (reviewer M-1)。既定選択された SKU に対し size-aware に
+  // サジェスト (force=true)。supplier 未選択や現単価なしなら applyPriceSuggestion 内で no-op。
+  applyPriceSuggestion(lines.value.length - 1, true)
 }
 
 const removeLine = (idx: number) => {

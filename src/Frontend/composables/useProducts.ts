@@ -352,7 +352,7 @@ export const useProducts = () => {
     // サイズ別仕入単価 (PR2、null = 全サイズ共通の既定単価)
     sizeId: number | null
   }) => {
-    return await apiFetch<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string }>(
+    return await apiFetch<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string; sizeId: number | null }>(
       `/products/families/${id}/supplier-prices`,
       { method: 'POST', body },
     )

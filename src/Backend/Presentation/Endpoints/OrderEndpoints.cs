@@ -178,7 +178,7 @@ public static class OrderEndpoints
         // 認可: 発注編集権限と同じ (CheckOrderEditAsync) — 単価は機密度 中-高 (NFR §6.2)。
         // 注: 本 endpoint は読取専用の入力補助で、snapshot をサーバ側で上書きしない (下位互換)。
         orders.MapGet("/price-suggestion", async (HttpContext http, IAkebonoDbContext db,
-                                                   ProductSupplierPriceService priceSvc,
+                                                   ProductSupplierPriceService priceSvc, IAuditLogger audit,
                                                    long productId, long supplierId, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
@@ -194,6 +194,14 @@ public static class OrderEndpoints
 
             var price = await priceSvc.ResolveCurrentPriceAsync(
                 product.ProductFamilyId, supplierId, product.SizeId, ct);
+
+            // 単価読出パスの監査証跡 (reviewer I-1)。他の単価読出 (ProductSupplierPrice.List /
+            // ProductFamily.View) と整合させ、誰がどの family/supplier/size の現単価を参照したかを記録する。
+            // 金額自体はマスク (price=***)。単価は機密度 中-高 (NFR §6.2)、原則6 アクセス制御整合。
+            await audit.LogAsync(auth.ActorId!.Value, "ProductSupplierPrice.Suggest",
+                entityType: "ProductSupplierPrice",
+                note: $"family={product.ProductFamilyId}, supplier={supplierId}, sku_size={product.SizeId}, found={price is not null}, price=***",
+                cancellationToken: ct);
 
             var suggestion = price is null
                 ? new SupplierPriceSuggestion(false, null, null, null, null, false)
