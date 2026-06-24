@@ -30,6 +30,13 @@ const reload = async () => {
 watch([onlyMaterialUndone, onlyInstructionUndone, onlyBomUnregistered], reload)
 onMounted(reload)
 
+// 有効なフィルタトグルの件数 (FilterPanel の「絞込中 N」チップ用)。
+const activeFilterCount = computed(() =>
+  (onlyMaterialUndone.value ? 1 : 0) +
+  (onlyInstructionUndone.value ? 1 : 0) +
+  (onlyBomUnregistered.value ? 1 : 0),
+)
+
 const doneBadge = (s: string) => s === 'done'
   ? { label: '済', cls: 'bg-green-100 text-green-700' }
   : { label: '未', cls: 'bg-gray-100 text-gray-500' }
@@ -42,16 +49,22 @@ const doneBadge = (s: string) => s === 'done'
       <p class="mt-1 text-sm text-gray-500">PS-01 品番ごとの「素材発注」「生産指示」未/済バッジ。未手配の品番を絞り込めます。</p>
     </header>
 
-    <div class="mb-3 flex flex-wrap items-center gap-4 text-sm">
-      <label class="inline-flex items-center gap-2 text-gray-600">
-        <input v-model="onlyMaterialUndone" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> 素材発注=未のみ
-      </label>
-      <label class="inline-flex items-center gap-2 text-gray-600">
-        <input v-model="onlyInstructionUndone" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> 生産指示=未のみ
-      </label>
-      <label class="inline-flex items-center gap-2 text-gray-600">
-        <input v-model="onlyBomUnregistered" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> BOM未登録のみ
-      </label>
+    <!-- 絞込パネル (開閉可能)。未手配の品番を絞り込むトグル 3 種。 -->
+    <FilterPanel title="絞込" storage-key="filters:production-status" :active-count="activeFilterCount">
+      <div class="flex flex-wrap items-center gap-4 text-sm">
+        <label class="inline-flex items-center gap-2 text-gray-600">
+          <input v-model="onlyMaterialUndone" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> 素材発注=未のみ
+        </label>
+        <label class="inline-flex items-center gap-2 text-gray-600">
+          <input v-model="onlyInstructionUndone" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> 生産指示=未のみ
+        </label>
+        <label class="inline-flex items-center gap-2 text-gray-600">
+          <input v-model="onlyBomUnregistered" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> BOM未登録のみ
+        </label>
+      </div>
+    </FilterPanel>
+
+    <div class="mb-3 flex items-center gap-4">
       <span class="ml-auto text-xs text-gray-500">{{ rows.length }} 件</span>
     </div>
 

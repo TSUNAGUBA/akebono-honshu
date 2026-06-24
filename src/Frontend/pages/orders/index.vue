@@ -78,6 +78,22 @@ const hasActiveFilter = computed(() =>
   !isStateFilterDefault.value,
 )
 
+// 有効なフィルタ項目の件数 (FilterPanel の「絞込中 N」チップ用)。
+// 発注状態は既定 (削除のみ OFF) と異なるときのみ 1 件としてカウントする。
+const activeFilterCount = computed(() => {
+  const f = filters.value
+  let n = 0
+  if (f.createdFrom !== '') n++
+  if (f.createdTo !== '') n++
+  if (f.supplierId != null) n++
+  if (f.ordererUserId != null) n++
+  if (f.undecidedPrice) n++
+  if (f.hideLines) n++
+  if (f.customer.trim() !== '') n++
+  if (!isStateFilterDefault.value) n++
+  return n
+})
+
 const reload = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -300,11 +316,14 @@ const runBulkExport = async (format: BulkFormat): Promise<void> => {
     </div>
 
     <!-- 絞込フィルタパネル (SPLIT フィルタ、AND 合成・状態のみ OR、未指定 = 全件)。
-         dropdown は MasterSelect (数値 ID・allow-empty)、date/text は手入力。
+         開閉可能 (FilterPanel)。dropdown は MasterSelect (数値 ID・allow-empty)、date/text は手入力。
          products/index.vue のパネルをミラー。レスポンシブグリッド: モバイル 1 列 → sm 2 列 → lg 4 列。 -->
-    <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
-        <h2 class="text-sm font-semibold text-gray-700">絞込</h2>
+    <FilterPanel
+      title="絞込"
+      storage-key="filters:orders"
+      :active-count="activeFilterCount"
+    >
+      <template #actions>
         <button
           type="button"
           class="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
@@ -313,7 +332,7 @@ const runBulkExport = async (format: BulkFormat): Promise<void> => {
         >
           クリア
         </button>
-      </div>
+      </template>
       <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <label class="flex flex-col gap-1">
           <span class="font-medium">作成日 From</span>
@@ -383,7 +402,7 @@ const runBulkExport = async (format: BulkFormat): Promise<void> => {
           </label>
         </div>
       </div>
-    </section>
+    </FilterPanel>
 
     <div class="mb-3 flex items-center gap-4">
       <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件</span>

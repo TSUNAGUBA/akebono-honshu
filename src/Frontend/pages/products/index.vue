@@ -61,6 +61,21 @@ const hasActiveFilter = computed(() =>
   filters.value.brandId != null,
 )
 
+// 有効なフィルタ項目の件数 (FilterPanel の「絞込中 N」チップ用)。
+const activeFilterCount = computed(() => {
+  const f = filters.value
+  let n = 0
+  if (f.productYear.trim() !== '') n++
+  if (f.productTypeId != null) n++
+  if (f.productSeasonId != null) n++
+  if (f.productName.trim() !== '') n++
+  if (f.provisionalNumber.trim() !== '') n++
+  if (f.factorySupplierId != null) n++
+  if (f.plannerUserId != null) n++
+  if (f.brandId != null) n++
+  return n
+})
+
 const reload = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -161,11 +176,14 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
     </header>
 
     <!-- 絞込フィルタパネル (8 つの SPLIT フィルタ、AND 合成、未指定 = 全件)。
-         dropdown は MasterSelect (数値 ID・allow-empty)、text は手入力で部分一致。
+         開閉可能 (FilterPanel)。dropdown は MasterSelect (数値 ID・allow-empty)、text は手入力で部分一致。
          レスポンシブグリッド: モバイル 1 列 → sm 2 列 → lg 4 列。 -->
-    <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
-        <h2 class="text-sm font-semibold text-gray-700">絞込</h2>
+    <FilterPanel
+      title="絞込"
+      storage-key="filters:products"
+      :active-count="activeFilterCount"
+    >
+      <template #actions>
         <button
           type="button"
           class="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
@@ -174,7 +192,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
         >
           クリア
         </button>
-      </div>
+      </template>
       <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <label class="flex flex-col gap-1">
           <span class="font-medium">商品年度</span>
@@ -255,7 +273,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
           />
         </label>
       </div>
-    </section>
+    </FilterPanel>
 
     <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
       <label class="inline-flex items-center gap-2 text-sm text-gray-600">
