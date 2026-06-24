@@ -36,6 +36,24 @@ export interface FamilyListItem {
   currentMaxPrice: number | null
   currencyCode: string
   updatedAt: string
+  // 一覧の SPLIT フィルタ用 ID / 値 (P-04 商品一覧の絞込をクライアント側で行うために追加)。
+  // *Name は表示用、以下の *Id は MasterSelect の数値 ID と突合してフィルタ一致判定に使う。
+  /** 商品タイプ (product_types.id)。フィルタ「商品タイプ」用 */
+  productTypeId: number
+  /** 商品季節 (product_seasons.id)。フィルタ「商品季節」用 */
+  productSeasonId: number
+  /** 仕入先 = 工場 (suppliers.id)。フィルタ「仕入先」用 */
+  factorySupplierId: number
+  /** ブランド (brands.id)。フィルタ「ブランド」用 */
+  brandId: number
+  /** 商品年度 (9999=通年、Phase A)。フィルタ「商品年度」用 (前方/部分一致)。未設定時 null */
+  productYear: number | null
+  /** 仮番号 (Phase A)。フィルタ「仮番号」用 (部分一致)。未設定時 null */
+  provisionalNumber: string | null
+  /** 企画者 (users.id、Phase A)。フィルタ「企画者」用。未設定時 null */
+  plannerUserId: number | null
+  /** 企画者名 (表示用、Phase A)。未設定時 null */
+  plannerName: string | null
 }
 
 export interface SkuSummary {

@@ -1,16 +1,65 @@
 <script setup lang="ts">
 import { productStatusLabel } from '~/composables/useProducts'
 import type { FamilyListItem } from '~/composables/useProducts'
+import type { MasterItem } from '~/composables/useMasters'
 
 const { listFamilies } = useProducts()
+const { list: listMaster } = useMasters()
+const { apiFetch } = useApi()
 const { canEditMaster } = useAuth()
 
 const items = ref<FamilyListItem[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
 const includeDeleted = ref(false)
-const search = ref('')
 const view = ref<'table' | 'card'>('table')
+
+// --- フィルタ用マスタ参照 (商品タイプ / 商品季節 / 仕入先=工場 / ブランド / 企画者) ---
+const productTypes = ref<MasterItem[]>([])
+const productSeasons = ref<MasterItem[]>([])
+const suppliers = ref<MasterItem[]>([])
+const brands = ref<MasterItem[]>([])
+interface UserOption { id: number; loginId: string; displayName: string }
+const users = ref<UserOption[]>([])
+// 企画者ドロップダウン用 (orders/new.vue・products/new.vue と同じ整形)
+const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
+
+// --- 8 つの SPLIT フィルタ (AND 合成、未指定 = 全件) ---
+// dropdown は数値 ID (0/null = 未指定)、text は手入力 (部分一致)。
+const filters = ref({
+  productYear: '',          // text 前方/部分一致 (product_year)
+  productTypeId: null as number | null,   // dropdown
+  productSeasonId: null as number | null, // dropdown
+  productName: '',          // text 部分一致 (product_name_1/2)
+  provisionalNumber: '',    // text 部分一致 (provisional_number)
+  factorySupplierId: null as number | null, // dropdown (= 工場)
+  plannerUserId: null as number | null,     // dropdown (users)
+  brandId: null as number | null,           // dropdown
+})
+
+const clearFilters = () => {
+  filters.value = {
+    productYear: '',
+    productTypeId: null,
+    productSeasonId: null,
+    productName: '',
+    provisionalNumber: '',
+    factorySupplierId: null,
+    plannerUserId: null,
+    brandId: null,
+  }
+}
+
+const hasActiveFilter = computed(() =>
+  filters.value.productYear.trim() !== '' ||
+  filters.value.productTypeId != null ||
+  filters.value.productSeasonId != null ||
+  filters.value.productName.trim() !== '' ||
+  filters.value.provisionalNumber.trim() !== '' ||
+  filters.value.factorySupplierId != null ||
+  filters.value.plannerUserId != null ||
+  filters.value.brandId != null,
+)
 
 const reload = async () => {
   loading.value = true
@@ -27,20 +76,55 @@ const reload = async () => {
   }
 }
 
-watch(includeDeleted, reload)
-onMounted(reload)
+// フィルタ用マスタ・ユーザの読込はドロップダウンの選択肢にのみ使う補助処理。
+// 失敗しても一覧本体 (reload) は表示する (原則 4 非ブロッキング)。
+const loadFilterSources = async () => {
+  try {
+    const [pt, ps, sup, br, usr] = await Promise.all([
+      listMaster('product-types'),
+      listMaster('product-seasons'),
+      listMaster('suppliers'),
+      listMaster('brands'),
+      apiFetch<{ data: UserOption[] }>('/users'),
+    ])
+    productTypes.value = pt
+    productSeasons.value = ps
+    suppliers.value = sup
+    brands.value = br
+    users.value = usr.data
+  } catch (e) {
+    // フィルタ選択肢の取得失敗は致命的でない。ドロップダウンが空になるだけで一覧は使える。
+    console.error('フィルタ選択肢 (マスタ/ユーザ) の取得に失敗しました', e)
+  }
+}
 
+watch(includeDeleted, reload)
+onMounted(() => {
+  reload()
+  loadFilterSources()
+})
+
+// 部分一致用に正規化 (大小文字を無視)。
+const inc = (haystack: string | null | undefined, needle: string): boolean =>
+  (haystack ?? '').toLowerCase().includes(needle.trim().toLowerCase())
+
+// 8 フィルタを AND 合成。各フィルタは未指定なら true (= 絞り込まない)。
 const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return items.value
-  return items.value.filter(
-    (i) =>
-      i.productName1.toLowerCase().includes(q) ||
-      (i.productName2 ?? '').toLowerCase().includes(q) ||
-      i.itemNumber.toLowerCase().includes(q) ||
-      i.itemFamilyNumber.toLowerCase().includes(q) ||
-      i.brandName.toLowerCase().includes(q),
-  )
+  const f = filters.value
+  const yearQ = f.productYear.trim()
+  const nameQ = f.productName.trim()
+  const provQ = f.provisionalNumber.trim()
+  return items.value.filter((i) => {
+    if (yearQ !== '' && !inc(i.productYear != null ? String(i.productYear) : '', yearQ)) return false
+    if (f.productTypeId != null && i.productTypeId !== f.productTypeId) return false
+    if (f.productSeasonId != null && i.productSeasonId !== f.productSeasonId) return false
+    if (nameQ !== '' && !(inc(i.productName1, nameQ) || inc(i.productName2, nameQ))) return false
+    if (provQ !== '' && !inc(i.provisionalNumber, provQ)) return false
+    if (f.factorySupplierId != null && i.factorySupplierId !== f.factorySupplierId) return false
+    if (f.plannerUserId != null && i.plannerUserId !== f.plannerUserId) return false
+    if (f.brandId != null && i.brandId !== f.brandId) return false
+    return true
+  })
 })
 
 const statusBadge = (status: number): { label: string; cls: string } => {
@@ -60,7 +144,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-8">
     <header class="mb-6 flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold">商品一覧</h1>
@@ -76,13 +160,104 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       <span v-else class="text-xs text-gray-400">参照のみ (品番台帳管理権限なし)</span>
     </header>
 
-    <div class="mb-3 flex items-center gap-4">
-      <input
-        v-model="search"
-        type="search"
-        placeholder="商品名 / 品番 / 他品番 / ブランドで検索"
-        class="w-72 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
-      />
+    <!-- 絞込フィルタパネル (8 つの SPLIT フィルタ、AND 合成、未指定 = 全件)。
+         dropdown は MasterSelect (数値 ID・allow-empty)、text は手入力で部分一致。
+         レスポンシブグリッド: モバイル 1 列 → sm 2 列 → lg 4 列。 -->
+    <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
+        <h2 class="text-sm font-semibold text-gray-700">絞込</h2>
+        <button
+          type="button"
+          class="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+          :disabled="!hasActiveFilter"
+          @click="clearFilters"
+        >
+          クリア
+        </button>
+      </div>
+      <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">商品年度</span>
+          <input
+            v-model="filters.productYear"
+            type="text"
+            inputmode="numeric"
+            placeholder="例: 2025 / 9999"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">商品タイプ</span>
+          <MasterSelect
+            v-model="filters.productTypeId"
+            :items="productTypes"
+            allow-empty
+            empty-label="（すべて）"
+            placeholder="（すべて）"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">商品季節</span>
+          <MasterSelect
+            v-model="filters.productSeasonId"
+            :items="productSeasons"
+            allow-empty
+            empty-label="（すべて）"
+            placeholder="（すべて）"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">商品名</span>
+          <input
+            v-model="filters.productName"
+            type="text"
+            placeholder="商品名で部分一致"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">仮番号</span>
+          <input
+            v-model="filters.provisionalNumber"
+            type="text"
+            placeholder="仮番号で部分一致"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">仕入先</span>
+          <MasterSelect
+            v-model="filters.factorySupplierId"
+            :items="suppliers"
+            allow-empty
+            empty-label="（すべて）"
+            placeholder="（すべて）"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">企画者</span>
+          <MasterSelect
+            v-model="filters.plannerUserId"
+            :items="userOptions"
+            allow-empty
+            empty-label="（すべて）"
+            placeholder="（すべて）"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">ブランド</span>
+          <MasterSelect
+            v-model="filters.brandId"
+            :items="brands"
+            allow-empty
+            empty-label="（すべて）"
+            placeholder="（すべて）"
+          />
+        </label>
+      </div>
+    </section>
+
+    <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
       <label class="inline-flex items-center gap-2 text-sm text-gray-600">
         <input v-model="includeDeleted" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
         削除済みを含む
@@ -119,9 +294,11 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
           <tr>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">品番 / 他品番</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">商品名</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">年度</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">ブランド</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">タイプ / 季節</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">工場</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">企画者</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">SKU</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">単価レンジ</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
@@ -130,8 +307,8 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
         </thead>
         <tbody>
           <tr v-if="filtered.length === 0">
-            <td colspan="9" class="px-4 py-8 text-center text-sm text-gray-500">
-              {{ search ? '検索条件に一致するデータがありません' : 'データがありません' }}
+            <td colspan="11" class="px-4 py-8 text-center text-sm text-gray-500">
+              {{ hasActiveFilter ? '検索条件に一致するデータがありません' : 'データがありません' }}
             </td>
           </tr>
           <tr
@@ -148,11 +325,13 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
               <div class="font-medium">{{ i.productName1 }}</div>
               <div v-if="i.productName2" class="text-xs text-gray-500">{{ i.productName2 }}</div>
             </td>
+            <td class="px-4 py-3 text-sm font-mono text-gray-600">{{ i.productYear ?? '—' }}</td>
             <td class="px-4 py-3 text-sm">{{ i.brandName }}</td>
             <td class="px-4 py-3 text-sm text-gray-600">
               {{ i.productTypeName }} / {{ i.productSeasonName }}
             </td>
             <td class="px-4 py-3 text-sm">{{ i.factorySupplierName }}</td>
+            <td class="px-4 py-3 text-sm text-gray-600">{{ i.plannerName ?? '—' }}</td>
             <td class="px-4 py-3 text-right text-sm font-mono">{{ i.skuVariationCount }}</td>
             <td class="px-4 py-3 text-sm font-mono">
               {{ formatPriceRange(i.currentMinPrice, i.currentMaxPrice, i.currencyCode) }}
@@ -216,13 +395,17 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
             <span class="truncate">{{ i.brandName }}</span>
             <span class="font-mono whitespace-nowrap">SKU {{ i.skuVariationCount }}</span>
           </div>
+          <div class="mt-0.5 flex items-center justify-between text-[11px] text-gray-500">
+            <span class="font-mono">{{ i.productYear ?? '—' }}</span>
+            <span class="truncate" :title="i.plannerName ?? ''">{{ i.plannerName ?? '—' }}</span>
+          </div>
           <div class="mt-1 border-t border-gray-100 pt-1 font-mono text-xs font-semibold text-gray-900">
             {{ formatPriceRange(i.currentMinPrice, i.currentMaxPrice, i.currencyCode) }}
           </div>
         </div>
       </NuxtLink>
       <div v-if="filtered.length === 0" class="col-span-full rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
-        {{ search ? '検索条件に一致するデータがありません' : 'データがありません' }}
+        {{ hasActiveFilter ? '検索条件に一致するデータがありません' : 'データがありません' }}
       </div>
     </section>
 
