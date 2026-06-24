@@ -38,6 +38,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<Product> Products => Set<Product>();
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
     public DbSet<ProductSupplierPrice> ProductSupplierPrices => Set<ProductSupplierPrice>();
+    // アソート/セット明細 (PR3、旧 spec No.37/38)
+    public DbSet<ProductSetComponent> ProductSetComponents => Set<ProductSetComponent>();
 
     // 発注関連 (Iteration 3)
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
@@ -220,6 +222,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasMany(x => x.Products).WithOne(p => p.ProductFamily!).HasForeignKey(p => p.ProductFamilyId);
             b.HasMany(x => x.Images).WithOne(i => i.ProductFamily!).HasForeignKey(i => i.ProductFamilyId);
             b.HasMany(x => x.SupplierPrices).WithOne(p => p.ProductFamily!).HasForeignKey(p => p.ProductFamilyId);
+            // アソート/セット明細 (PR3、旧 spec No.37/38)。FK は ProductSetComponent 側で定義。
+            b.HasMany(x => x.SetComponents).WithOne(c => c.ProductFamily!).HasForeignKey(c => c.ProductFamilyId);
         });
 
         modelBuilder.Entity<Product>(b =>
@@ -299,6 +303,28 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
 
             b.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId);
+        });
+
+        // アソート/セット明細 (PR3、旧 spec No.37/38)。商品 (family) の作成/更新時に全置換するコレクション。
+        // child_item_number は手入力テキスト = products/product_families への FK は張らない
+        // (旧システム品番/外部品番も許容するため、旧 spec の「手入力」に忠実)。
+        modelBuilder.Entity<ProductSetComponent>(b =>
+        {
+            // CHECK (quantity > 0) を DB 側制約と一致させる (init/migration SQL と byte 等価)。
+            b.ToTable("product_set_components", t => t.HasCheckConstraint("chk_psc_quantity", "quantity > 0"));
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.ChildItemNumber).HasColumnName("child_item_number").IsRequired().HasMaxLength(32);
+            b.Property(x => x.Quantity).HasColumnName("quantity");
+            b.Property(x => x.LineNo).HasColumnName("line_no");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.ProductFamily).WithMany(f => f.SetComponents).HasForeignKey(x => x.ProductFamilyId);
+            b.HasIndex(x => x.ProductFamilyId);
         });
 
         // 発注関連 (Iteration 3、Phase 5 §5)

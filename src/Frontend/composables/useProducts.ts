@@ -196,11 +196,25 @@ export interface FamilyFullInfo {
   updatedByUserName: string | null
 }
 
+// アソート/セット明細 1 行 (PR3、旧 spec No.37 品番 / No.38 数量)
+export interface SetComponentSummary {
+  id: number
+  /** 子品番 (手入力テキスト、FK なし) */
+  childItemNumber: string
+  /** 数量 (正の整数) */
+  quantity: number
+  /** 表示順 (配列順で採番) */
+  lineNo: number
+}
+
 export interface FamilyDetail {
   family: FamilyFullInfo
   products: SkuSummary[]
   images: ImageSummary[]
   currentSupplierPrices: CurrentSupplierPrice[]
+  // アソート/セット明細 (PR3、末尾追加 = 下位互換)。明細なしの商品では空配列。
+  // 既存応答との互換のため null/undefined も許容し、画面側で `?? []` で吸収する。
+  setComponents?: SetComponentSummary[] | null
 }
 
 export interface CompleteFamilyPayload {
@@ -256,6 +270,11 @@ export interface CompleteFamilyPayload {
     taxRate: number | null
     // サイズ別仕入単価 (PR2、null = 全サイズ共通の既定単価)
     sizeId: number | null
+  }[]
+  // アソート/セット明細 (PR3、末尾追加 = 下位互換)。明細なし (通常商品) の場合は空配列を送る。
+  setComponents: {
+    childItemNumber: string
+    quantity: number
   }[]
 }
 
@@ -321,8 +340,14 @@ export const useProducts = () => {
     // 旧 品番台帳 項目 追補 (PR1、全て任意)
     remark: string | null
     colorRemark: string | null
-  }) => {
-    return await apiFetch<FamilyFullInfo>(`/products/families/${id}`, {
+    // アソート/セット明細 (PR3、末尾追加 = 下位互換)。
+    // 配列 (空含む) を送ると全置換、undefined を送ると既存明細を保持 (PATCH セマンティクス)。
+    // 編集画面からは常に配列を送るため全置換になる。
+    setComponents?: { childItemNumber: string; quantity: number }[]
+  }): Promise<void> => {
+    // PATCH は 204 No Content を返す (PR3 以降、参照循環回避のため body を返さない)。
+    // 呼び出し側は更新後に getFamily で再取得する。
+    await apiFetch<void>(`/products/families/${id}`, {
       method: 'PATCH',
       body,
     })

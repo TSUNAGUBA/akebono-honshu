@@ -35,6 +35,8 @@ public interface IAkebonoDbContext
     DbSet<Product> Products { get; }
     DbSet<ProductImage> ProductImages { get; }
     DbSet<ProductSupplierPrice> ProductSupplierPrices { get; }
+    // アソート/セット明細 (PR3、旧 spec No.37/38)
+    DbSet<ProductSetComponent> ProductSetComponents { get; }
 
     // 発注関連 (Iteration 3、Phase 5 §5)
     DbSet<PurchaseOrder> PurchaseOrders { get; }

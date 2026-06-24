@@ -49,6 +49,16 @@ const editForm = ref({
   colorRemark: '',
 })
 
+// アソート/セット明細 (PR3、旧 spec No.37/38)。編集時に全置換する行コレクション。
+// reload() で detail.setComponents から初期化、保存時に updateFamily へ配列を送る (全置換)。
+const editSetComponents = ref<{ childItemNumber: string; quantity: number }[]>([])
+const addSetComponent = () => {
+  editSetComponents.value.push({ childItemNumber: '', quantity: 1 })
+}
+const removeSetComponent = (idx: number) => {
+  editSetComponents.value.splice(idx, 1)
+}
+
 // 単価追加フォーム
 const showPriceForm = ref(false)
 const priceForm = ref({
@@ -125,6 +135,12 @@ const reload = async () => {
         remark: detail.value.family.remark ?? '',
         colorRemark: detail.value.family.colorRemark ?? '',
       }
+      // アソート/セット明細 (PR3)。詳細応答の明細で編集行を初期化 (lineNo 昇順は API 側で保証)。
+      // 既存応答互換のため null/undefined を `?? []` で吸収。
+      editSetComponents.value = (detail.value.setComponents ?? []).map((c) => ({
+        childItemNumber: c.childItemNumber,
+        quantity: c.quantity,
+      }))
     }
   } catch (e) {
     const err = e as { statusCode?: number }
@@ -200,6 +216,12 @@ const onSaveEdit = async () => {
       // 旧 品番台帳 項目 追補 (PR1、未入力は null)
       remark: editForm.value.remark.trim() || null,
       colorRemark: editForm.value.colorRemark.trim() || null,
+      // アソート/セット明細 (PR3)。配列を送ると全置換。子品番が空の行は除外、trim + 数量 Number 化
+      // (空入力時の NaN は 0 に丸めてサーバの SETC-002 で弾く)。空配列なら全削除 (= 通常商品化)。
+      // 編集画面では常に配列を送るため明細は全置換される。
+      setComponents: editSetComponents.value
+        .filter((c) => c.childItemNumber.trim() !== '')
+        .map((c) => ({ childItemNumber: c.childItemNumber.trim(), quantity: Number(c.quantity) || 0 })),
     })
     successMessage.value = '更新しました'
     editing.value = false
@@ -545,6 +567,89 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <!-- アソート/セット明細 (PR3、旧 spec No.37/38) -->
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
+          アソート/セット明細
+          <span class="ml-2 text-xs font-normal text-gray-500">(子品番 + 数量、アソート/セット品のみ)</span>
+        </h2>
+
+        <!-- 表示モード (編集していないとき) -->
+        <template v-if="!editing">
+          <div v-if="(detail.setComponents?.length ?? 0) === 0" class="py-4 text-center text-sm text-gray-500">
+            アソート/セット明細はありません (通常商品)
+          </div>
+          <table v-else class="w-full text-sm">
+            <thead class="border-b border-gray-200 bg-gray-50">
+              <tr>
+                <th class="px-2 py-1.5 text-left">No.</th>
+                <th class="px-2 py-1.5 text-left">子品番</th>
+                <th class="px-2 py-1.5 text-right">数量</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="c in detail.setComponents ?? []" :key="c.id" class="border-b border-gray-100 last:border-0">
+                <td class="px-2 py-1.5 text-gray-500">{{ c.lineNo }}</td>
+                <td class="px-2 py-1.5 font-mono">{{ c.childItemNumber }}</td>
+                <td class="px-2 py-1.5 text-right font-mono">{{ c.quantity.toLocaleString() }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+
+        <!-- 編集モード: 行追加/削除 (色サイズ/単価明細と同じパターン)。編集は企画情報の「編集」で開始。 -->
+        <template v-else>
+          <div class="mb-3 flex items-center justify-between">
+            <p class="text-xs text-gray-500">
+              アソート/セット品の構成 (子品番は手入力)。保存すると明細は全置換されます。通常商品は空にしてください。
+            </p>
+            <button
+              type="button"
+              class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50"
+              @click="addSetComponent"
+            >+ 行を追加</button>
+          </div>
+
+          <div v-if="editSetComponents.length === 0" class="py-4 text-center text-sm text-gray-400">
+            明細なし (通常商品)。アソート/セット品の場合は「+ 行を追加」してください。
+          </div>
+
+          <div v-else class="space-y-2">
+            <div
+              v-for="(c, idx) in editSetComponents"
+              :key="idx"
+              class="grid grid-cols-1 gap-2 rounded-md border border-gray-200 bg-gray-50 p-3 sm:grid-cols-[1fr_8rem_auto] sm:items-end sm:gap-3"
+            >
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">子品番 <span class="text-red-500">*</span></span>
+                <input
+                  v-model="c.childItemNumber"
+                  type="text"
+                  maxlength="32"
+                  placeholder="例: NA1001A (手入力)"
+                  class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">数量 <span class="text-red-500">*</span></span>
+                <input
+                  v-model.number="c.quantity"
+                  type="number"
+                  min="1"
+                  step="1"
+                  class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                />
+              </label>
+              <button
+                type="button"
+                class="h-fit rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                @click="removeSetComponent(idx)"
+              >削除</button>
+            </div>
+          </div>
+        </template>
       </section>
 
       <!-- 仕入単価 -->

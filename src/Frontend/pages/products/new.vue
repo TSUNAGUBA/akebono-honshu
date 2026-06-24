@@ -67,6 +67,16 @@ const expansion = ref({
   sizeIds: [] as number[],
 })
 
+// アソート/セット明細 (PR3、旧 spec No.37/38)。子品番 (手入力テキスト) + 数量の行コレクション。
+// 任意 (空でも可)。空 = 通常商品。色サイズ/単価明細と同じ「行追加/削除」パターン。
+const setComponents = ref<{ childItemNumber: string; quantity: number }[]>([])
+const addSetComponent = () => {
+  setComponents.value.push({ childItemNumber: '', quantity: 1 })
+}
+const removeSetComponent = (idx: number) => {
+  setComponents.value.splice(idx, 1)
+}
+
 const supplierPrice = ref({
   supplierId: 0,
   // サイズ別仕入単価 (PR2)。null = 全サイズ共通の既定単価 (未選択)。
@@ -220,6 +230,12 @@ const onSubmit = async () => {
           sizeId: supplierPrice.value.sizeId,
         },
       ],
+      // アソート/セット明細 (PR3)。子品番が空の行は除外 (未入力行を送らない)。
+      // 子品番は trim、数量は Number 化 (空入力時の NaN は 0 に丸めてサーバの SETC-002 で弾く)。
+      // 空配列 = 明細なし (通常商品) として送る。
+      setComponents: setComponents.value
+        .filter((c) => c.childItemNumber.trim() !== '')
+        .map((c) => ({ childItemNumber: c.childItemNumber.trim(), quantity: Number(c.quantity) || 0 })),
     }
     const res = await createComplete(payload)
     successMessage.value = `登録成功 (連番 ${res.family.sequenceNo}, SKU ${res.products.length} 件)`
@@ -527,6 +543,62 @@ const onSubmit = async () => {
           </details>
 
           <p class="mt-2 text-xs text-gray-500">追加の仕入先単価は、登録後の詳細画面から追加できます (BR-04 履歴管理)</p>
+        </section>
+
+        <!-- Section 5: アソート/セット明細 (PR3、旧 spec No.37/38、任意) -->
+        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
+            <h2 class="font-semibold">
+              ⑤ アソート/セット明細 <span class="ml-2 text-xs font-normal text-gray-500">(任意 — アソート/セット品のみ)</span>
+            </h2>
+            <button
+              type="button"
+              class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50"
+              @click="addSetComponent"
+            >+ 行を追加</button>
+          </div>
+          <p class="mb-3 text-xs text-gray-500">
+            この商品がアソート/セット品の場合、構成する子品番 (手入力) と数量を 1 行ずつ登録します。通常商品は空のままで構いません。
+          </p>
+
+          <div v-if="setComponents.length === 0" class="py-4 text-center text-sm text-gray-400">
+            明細なし (通常商品)。アソート/セット品の場合は「+ 行を追加」してください。
+          </div>
+
+          <!-- PC: テーブル / モバイル: カード型 (原則8 レスポンシブ) -->
+          <div v-else class="space-y-2">
+            <div
+              v-for="(c, idx) in setComponents"
+              :key="idx"
+              class="grid grid-cols-1 gap-2 rounded-md border border-gray-200 bg-gray-50 p-3 sm:grid-cols-[1fr_8rem_auto] sm:items-end sm:gap-3"
+            >
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">子品番 <span class="text-red-500">*</span></span>
+                <input
+                  v-model="c.childItemNumber"
+                  type="text"
+                  maxlength="32"
+                  placeholder="例: NA1001A (手入力)"
+                  class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">数量 <span class="text-red-500">*</span></span>
+                <input
+                  v-model.number="c.quantity"
+                  type="number"
+                  min="1"
+                  step="1"
+                  class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                />
+              </label>
+              <button
+                type="button"
+                class="h-fit rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                @click="removeSetComponent(idx)"
+              >削除</button>
+            </div>
+          </div>
         </section>
 
         <!-- 実行 -->

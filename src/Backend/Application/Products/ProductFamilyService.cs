@@ -42,6 +42,8 @@ public class ProductFamilyService(
         // バリデーション (最小限)
         if (req.Expansion.ColorIds.Count == 0 || req.Expansion.SizeIds.Count == 0)
             throw new ArgumentException("色とサイズを少なくとも 1 件ずつ指定してください (PROD-002)");
+        // アソート/セット明細 (PR3)。null/空は許容 (通常商品)、行があれば各行を検証。
+        ValidateSetComponents(req.SetComponents);
 
         // FK 参照先を一括取得 (Sku 組立に必要)
         var productType = await db.ProductTypes.FirstOrDefaultAsync(x => x.Id == req.Family.ProductTypeId, ct)
@@ -163,12 +165,17 @@ public class ProductFamilyService(
             }).ToList();
             db.ProductSupplierPrices.AddRange(prices);
 
+            // アソート/セット明細 (PR3、旧 spec No.37/38)。null/空は「明細なし (通常商品)」として
+            // INSERT をスキップ。line_no は配列順で 1 から採番 (BOM/色サイズ展開と同じ全置換パターン)。
+            var setComponents = BuildSetComponentEntities(family.Id, req.SetComponents, now, actorUserId);
+            db.ProductSetComponents.AddRange(setComponents);
+
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
 
             await audit.LogAsync(actorUserId, "ProductFamily.Create",
                 entityType: "ProductFamily", entityId: family.Id,
-                note: $"family={family.Id}, products={products.Count}, prices={prices.Count}, prices_amount=***",
+                note: $"family={family.Id}, products={products.Count}, prices={prices.Count}, prices_amount=***, set_components={setComponents.Count}",
                 cancellationToken: ct);
 
             return new CompleteFamilyResponse(
@@ -279,6 +286,51 @@ public class ProductFamilyService(
     }
 
     /// <summary>
+    /// アソート/セット明細 (PR3) の入力検証。null/空は通常商品として許容 (検証なし)。
+    /// 行があれば各行の子品番 (手入力テキスト、必須) と数量 (正の整数) を検証する。
+    /// FK は張らない設計のため子品番の存在検証は行わない (旧 spec の「手入力」に忠実)。
+    /// </summary>
+    private static void ValidateSetComponents(List<SetComponentInput>? components)
+    {
+        if (components is null || components.Count == 0) return;
+        foreach (var c in components)
+        {
+            if (string.IsNullOrWhiteSpace(c.ChildItemNumber))
+                throw new ArgumentException("アソート/セット明細の子品番は必須です (SETC-001)");
+            if (c.ChildItemNumber.Trim().Length > 32)
+                throw new ArgumentException("アソート/セット明細の子品番は 32 文字以内です (SETC-001)");
+            if (c.Quantity <= 0)
+                throw new ArgumentException("アソート/セット明細の数量は正の整数で指定してください (SETC-002)");
+        }
+    }
+
+    /// <summary>
+    /// アソート/セット明細 (PR3) の入力を永続化エンティティへ変換する。line_no は配列順で 1 から採番。
+    /// null/空は空リストを返す (明細なし = 通常商品)。子品番は前後空白を除去して格納。
+    /// 呼び出し前に <see cref="ValidateSetComponents"/> で検証済であることを前提とする。
+    /// </summary>
+    private static List<ProductSetComponent> BuildSetComponentEntities(
+        long familyId, List<SetComponentInput>? components, DateTime now, long actorUserId)
+    {
+        if (components is null || components.Count == 0) return new List<ProductSetComponent>();
+        var result = new List<ProductSetComponent>(components.Count);
+        short lineNo = 1;
+        foreach (var c in components)
+        {
+            result.Add(new ProductSetComponent
+            {
+                ProductFamilyId = familyId,
+                ChildItemNumber = c.ChildItemNumber.Trim(),
+                Quantity = c.Quantity,
+                LineNo = lineNo++,
+                CreatedAt = now, UpdatedAt = now,
+                CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
     /// 品番 7 桁・他品番 6 桁・互換用 sku9Digit を組み立てる。
     /// - 新規企画品 (legacy_id == null):
     ///     他品番 = planned_year(1) + type(1) + season(1) + sequence_no(3)
@@ -353,6 +405,13 @@ public class ProductFamilyService(
             .Where(p => p.ProductFamilyId == familyId && !p.IsDeleted && p.EffectiveTo == null)
             .ToListAsync(ct);
 
+        // アソート/セット明細 (PR3、旧 spec No.37/38)。line_no 昇順 (表示順)。明細なしの商品では空リスト。
+        var setComponents = await db.ProductSetComponents
+            .Where(c => c.ProductFamilyId == familyId)
+            .OrderBy(c => c.LineNo).ThenBy(c => c.Id)
+            .Select(c => new SetComponentSummary(c.Id, c.ChildItemNumber, c.Quantity, c.LineNo))
+            .ToListAsync(ct);
+
         // 登録者/最終更新者名 (PR1、spec No.27/28)。created_by_user_id / updated_by_user_id は
         // scalar FK (ナビ無し) のため、users を 1 クエリで引いて display_name を解決する。
         // 削除済ユーザでも表示は維持したいので IsDeleted で絞らない (監査表示の性質)。
@@ -420,48 +479,94 @@ public class ProductFamilyService(
                 p.EstimateUnitPrice, p.EstimateReceivedDate, p.EstimateCost, p.EstimateMarginRate,
                 p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate,
                 // サイズ別仕入単価 (PR2)。SizeId=NULL は全サイズ共通の既定単価 (SizeName も null)。
-                p.SizeId, p.Size?.Name)).ToList());
+                p.SizeId, p.Size?.Name)).ToList(),
+            // アソート/セット明細 (PR3、旧 spec No.37/38)。明細なしの商品では空リスト。
+            setComponents);
     }
 
-    /// <summary>商品企画更新 (P-05)。属性カラムのみ。FK 構成 (planned_year/type/season/seq/factory) は不変。</summary>
+    /// <summary>
+    /// 商品企画更新 (P-05)。属性カラムのみ。FK 構成 (planned_year/type/season/seq/factory) は不変。
+    ///
+    /// アソート/セット明細 (PR3) は PATCH セマンティクスで扱う:
+    ///   - <c>SetComponents == null</c> (未指定): 既存明細を<b>保持</b> (変更しない)。
+    ///     明細を管理しない既存/外部呼び出しが明細を破壊しないための下位互換 (原則 2/7)。
+    ///   - <c>SetComponents != null</c> (空リスト含む): 既存を全削除して再挿入する<b>全置換</b>
+    ///     (BOM ReplaceAsync と同パターン)。空リストは「明細なし (通常商品)」として全削除のみ。
+    /// 明細を変更する場合は family 更新と同一トランザクションで delete→insert する。
+    /// </summary>
     public async Task<ProductFamily?> UpdateAsync(long familyId, UpdateFamilyRequest req, long actorUserId, CancellationToken ct = default)
     {
         var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == familyId, ct);
         if (family is null) return null;
 
-        family.BrandId = req.BrandId;
-        family.FunctionId = req.FunctionId;
-        family.ProductGroupId = req.ProductGroupId;
-        family.UpperMaterialId = req.UpperMaterialId;
-        family.InsoleMaterialId = req.InsoleMaterialId;
-        family.OutsoleMaterialId = req.OutsoleMaterialId;
-        family.ProductName1 = req.ProductName1;
-        family.ProductName2 = req.ProductName2;
-        family.Status = req.Status;
-        // 旧 品番台帳 項目 (Phase A、任意)
-        family.ProductYear = req.ProductYear;
-        family.ManagementSeasonId = req.ManagementSeasonId;
-        family.PlannerUserId = req.PlannerUserId;
-        family.ProvisionalNumber = req.ProvisionalNumber;
-        family.SampleApprovalDate = req.SampleApprovalDate;
-        family.RetailPrice = req.RetailPrice;
-        family.DeliveryPrice = req.DeliveryPrice;
-        family.PlanningCost = req.PlanningCost;
-        family.BrandCost = req.BrandCost;
-        family.RoyaltyTarget = req.RoyaltyTarget;
-        family.RoyaltyRate = req.RoyaltyRate;
-        // 旧 品番台帳 項目 追補 (PR1、任意)。備考 / 備考（色）。
-        family.Remark = req.Remark;
-        family.ColorRemark = req.ColorRemark;
-        family.UpdatedAt = SystemTime.Now;
-        family.UpdatedByUserId = actorUserId;
+        // アソート/セット明細を全置換する場合は先に検証 (DB 書込前に 422 で弾く)。
+        if (req.SetComponents is not null)
+            ValidateSetComponents(req.SetComponents);
 
-        await db.SaveChangesAsync(ct);
+        var now = SystemTime.Now;
 
-        await audit.LogAsync(actorUserId, "ProductFamily.Update",
-            entityType: "ProductFamily", entityId: familyId, cancellationToken: ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            family.BrandId = req.BrandId;
+            family.FunctionId = req.FunctionId;
+            family.ProductGroupId = req.ProductGroupId;
+            family.UpperMaterialId = req.UpperMaterialId;
+            family.InsoleMaterialId = req.InsoleMaterialId;
+            family.OutsoleMaterialId = req.OutsoleMaterialId;
+            family.ProductName1 = req.ProductName1;
+            family.ProductName2 = req.ProductName2;
+            family.Status = req.Status;
+            // 旧 品番台帳 項目 (Phase A、任意)
+            family.ProductYear = req.ProductYear;
+            family.ManagementSeasonId = req.ManagementSeasonId;
+            family.PlannerUserId = req.PlannerUserId;
+            family.ProvisionalNumber = req.ProvisionalNumber;
+            family.SampleApprovalDate = req.SampleApprovalDate;
+            family.RetailPrice = req.RetailPrice;
+            family.DeliveryPrice = req.DeliveryPrice;
+            family.PlanningCost = req.PlanningCost;
+            family.BrandCost = req.BrandCost;
+            family.RoyaltyTarget = req.RoyaltyTarget;
+            family.RoyaltyRate = req.RoyaltyRate;
+            // 旧 品番台帳 項目 追補 (PR1、任意)。備考 / 備考（色）。
+            family.Remark = req.Remark;
+            family.ColorRemark = req.ColorRemark;
+            family.UpdatedAt = now;
+            family.UpdatedByUserId = actorUserId;
 
-        return family;
+            // アソート/セット明細の全置換 (PR3、SetComponents != null のときのみ)。
+            // 物理削除 → 再挿入 (audit 列のみで論理削除フラグを持たない明細テーブルのため、
+            // BOM の論理削除とは異なり物理 DELETE。子品番は family 削除時に CASCADE で消える)。
+            var setComponentCount = -1; // -1 = 明細を変更しなかった (audit note 用)
+            if (req.SetComponents is not null)
+            {
+                var existing = await db.ProductSetComponents
+                    .Where(c => c.ProductFamilyId == familyId)
+                    .ToListAsync(ct);
+                db.ProductSetComponents.RemoveRange(existing);
+
+                var replacement = BuildSetComponentEntities(familyId, req.SetComponents, now, actorUserId);
+                db.ProductSetComponents.AddRange(replacement);
+                setComponentCount = replacement.Count;
+            }
+
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            // 明細を全置換した場合は件数、未指定 (保持) の場合は "preserved" を記録 (監査の追跡性)。
+            await audit.LogAsync(actorUserId, "ProductFamily.Update",
+                entityType: "ProductFamily", entityId: familyId,
+                note: setComponentCount >= 0 ? $"set_components={setComponentCount}" : "set_components=preserved",
+                cancellationToken: ct);
+
+            return family;
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 
     /// <summary>商品企画論理削除 (P-05)。配下 SKU も連動で論理削除。</summary>

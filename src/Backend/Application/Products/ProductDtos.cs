@@ -7,7 +7,10 @@ namespace Akebono.Application.Products;
 public record CompleteFamilyRequest(
     FamilyInput Family,
     ExpansionInput Expansion,
-    List<SupplierPriceInput> SupplierPrices);
+    List<SupplierPriceInput> SupplierPrices,
+    // アソート/セット明細 (PR3、末尾追加 = 下位互換。既定 null = 明細なし = 通常商品)。
+    // null と空リストはどちらも「明細なし」として正常扱いする。
+    List<SetComponentInput>? SetComponents = null);
 
 public record FamilyInput(
     char PlannedYearCode,
@@ -61,6 +64,12 @@ public record SupplierPriceInput(
     decimal? TaxRate = null,
     // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)。NULL = 全サイズ共通の既定単価。
     long? SizeId = null);
+
+// アソート/セット明細 1 行の入力 (PR3、旧 spec No.37 品番 / No.38 数量)。
+// ChildItemNumber は手入力テキスト (FK なし)。Quantity は正の整数 (CHECK quantity > 0)。
+public record SetComponentInput(
+    string ChildItemNumber,
+    int Quantity);
 
 public record CompleteFamilyResponse(
     FamilySummary Family,
@@ -129,7 +138,16 @@ public record FamilyDetail(
     FamilyFullInfo Family,
     List<SkuSummary> Products,
     List<ImageSummary> Images,
-    List<CurrentSupplierPrice> CurrentSupplierPrices);
+    List<CurrentSupplierPrice> CurrentSupplierPrices,
+    // アソート/セット明細 (PR3、末尾追加 = 下位互換。既定は空リスト = 明細なし = 通常商品)。
+    List<SetComponentSummary>? SetComponents = null);
+
+// アソート/セット明細 1 行の返却 (PR3、旧 spec No.37/38)。LineNo は表示順 (配列順で採番)。
+public record SetComponentSummary(
+    long Id,
+    string ChildItemNumber,
+    int Quantity,
+    short LineNo);
 
 public record FamilyFullInfo(
     long Id,
@@ -273,7 +291,10 @@ public record UpdateFamilyRequest(
     decimal? RoyaltyRate = null,
     // 旧 品番台帳 項目 追補 (PR1、末尾追加 = 下位互換)
     string? Remark = null,        // 商品本体 備考 (spec No.39)
-    string? ColorRemark = null);  // 備考（色）(spec No.33、商品単位の単一テキスト)
+    string? ColorRemark = null,   // 備考（色）(spec No.33、商品単位の単一テキスト)
+    // アソート/セット明細 (PR3、末尾追加 = 下位互換。既定 null = 「明細を変更しない」ではなく
+    // 「明細なし (空) として全置換」と区別するため、更新時の解釈は ProductFamilyService.UpdateAsync 参照)。
+    List<SetComponentInput>? SetComponents = null);
 
 // ─────────────────────────────────────────────────
 // 新単価追加 (POST /api/v1/products/families/{id}/supplier-prices、BR-04 履歴管理)

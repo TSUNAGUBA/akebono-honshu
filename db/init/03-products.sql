@@ -147,6 +147,27 @@ CREATE INDEX IF NOT EXISTS idx_psp_family_current
     WHERE effective_to IS NULL AND is_deleted = FALSE;
 
 -- ─────────────────────────────────────────────────
+-- product_set_components — アソート/セット明細 (PR3、旧 spec No.37/38)
+-- ある商品 (family) がアソート/セット品である場合の「子品番 + 数量」構成明細。
+-- 商品の作成/更新時に全置換するコレクション (BOM / 色サイズ展開と同じパターン)。
+-- child_item_number は手入力テキスト = products/product_families への FK は張らない
+-- (旧システム品番/外部品番も許容するため、旧 spec の「手入力」に忠実)。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS product_set_components (
+    id                    BIGSERIAL PRIMARY KEY,
+    product_family_id     BIGINT       NOT NULL REFERENCES product_families(id) ON DELETE CASCADE,
+    child_item_number     VARCHAR(32)  NOT NULL,                                 -- 子品番 (手入力テキスト、spec No.37)
+    quantity              INTEGER      NOT NULL,                                 -- 数量 (spec No.38)
+    line_no               SMALLINT     NOT NULL DEFAULT 1,                       -- 表示順 (配列順で採番)
+    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
+    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
+    CONSTRAINT chk_psc_quantity CHECK (quantity > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_psc_family ON product_set_components (product_family_id);
+
+-- ─────────────────────────────────────────────────
 -- Seed: Iteration 2 動作確認用に最小データ投入
 -- (1 企画 × 2 色 × 3 サイズ = 6 SKU、単価 1 件)
 -- ─────────────────────────────────────────────────

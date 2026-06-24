@@ -71,8 +71,23 @@ public static class ProductEndpoints
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            try
+            {
+                // PR3: アソート/セット明細の検証 (SETC-001/002) が ArgumentException を投げるため
+                // 422 にマップする (POST /complete と対称。グローバル例外ハンドラは無い)。
+                var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+                if (updated is null) return Results.NotFound();
+                // 204 を返す。tracked entity を直接返すと PR3 で populate される
+                // ProductFamily ⇄ ProductSetComponent の参照循環で System.Text.Json が
+                // シリアライズ失敗するため (ReferenceHandler 未設定)。Frontend は更新後に
+                // 詳細を再取得 (reload) するため body は不要。他の Update endpoint が NoContent/
+                // DTO 射影を返すのと対称 (raw entity を返さない)。
+                return Results.NoContent();
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.Problem(statusCode: 422, title: "Validation error", detail: ex.Message);
+            }
         });
 
         // 論理削除 (P-05)
