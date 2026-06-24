@@ -136,6 +136,30 @@ public static class OrderEndpoints
             }
         });
 
+        // 一括ダウンロード (#3b)。発注一覧でチェックした発注を
+        // 発注書 (ZIP) / 管理表 (xlsx) / 発注書+管理表 (ZIP) で束ねて返す。
+        // 認可は単一 Excel 出力と同じ (purchase_order_create_permission >= 1)。
+        orders.MapPost("/bulk-export", async (HttpContext http, IAkebonoDbContext db,
+                                              IOrderBulkExportService bulk, BulkExportRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            try
+            {
+                var result = await bulk.ExportAsync(req, auth.ActorId!.Value, ct);
+                return Results.File(result.Content, contentType: result.ContentType, fileDownloadName: result.FileName);
+            }
+            catch (ArgumentException ex)
+            {
+                // orderIds 空 / format 不正 / 有効発注 0 件は 400 (リクエスト不正)。
+                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(statusCode: 404, title: "Not Found", detail: ex.Message);
+            }
+        });
+
         // 連絡文章テンプレ提案 (O-07)
         orders.MapGet("/communication-suggestions", async (HttpContext http,
                                                             PurchaseOrderService svc, CancellationToken ct) =>

@@ -219,12 +219,50 @@ export const useOrders = () => {
     URL.revokeObjectURL(url)
   }
 
+  /**
+   * 一括ダウンロード (#3b)。チェックした発注を 発注書 / 管理表 / 発注書+管理表 でまとめて取得。
+   * downloadExcel と同じ Blob → a タグ download のパターン。
+   *   - 'order'      → 発注書を ZIP で (各発注の初回出力は order_no 採番等の副作用あり)
+   *   - 'management' → 管理表を単一 .xlsx で (読み取り専用、副作用なし)
+   *   - 'both'       → 管理表 + 各発注の発注書 を ZIP で
+   */
+  const bulkExport = async (
+    orderIds: number[],
+    format: 'order' | 'management' | 'both',
+  ): Promise<void> => {
+    const { getIdToken } = useAuth()
+    const token = await getIdToken()
+    if (!token) throw new Error('未認証')
+    const response = await $fetch.raw<Blob>(
+      `${config.public.apiBase}/orders/bulk-export`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: { orderIds, format },
+        responseType: 'blob',
+      },
+    )
+    // Content-Disposition から filename を抽出 (フォールバック付。zip/xlsx は server 側が決定)。
+    const cd = response.headers.get('content-disposition') ?? ''
+    const match = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
+    const fallbackExt = format === 'management' ? 'xlsx' : 'zip'
+    const filename = match ? decodeURIComponent(match[1]) : `orders_export.${fallbackExt}`
+    const url = URL.createObjectURL(response._data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const communicationSuggestions = async (): Promise<CommunicationSuggestion[]> => {
     const res = await apiFetch<{ data: CommunicationSuggestion[] }>('/orders/communication-suggestions')
     return res.data
   }
 
-  return { list, get, create, update, cancel, markDelivered, softDelete, downloadExcel, communicationSuggestions }
+  return { list, get, create, update, cancel, markDelivered, softDelete, downloadExcel, bulkExport, communicationSuggestions }
 }
 
 // ─────────────────────────────────────────────────

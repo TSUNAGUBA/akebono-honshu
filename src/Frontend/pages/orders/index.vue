@@ -3,7 +3,7 @@ import type { OrderListItem, OrderState } from '~/composables/useOrders'
 import { deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
 import type { MasterItem } from '~/composables/useMasters'
 
-const { list } = useOrders()
+const { list, bulkExport } = useOrders()
 const { list: listMaster } = useMasters()
 const { apiFetch } = useApi()
 const { user } = useAuth()
@@ -184,6 +184,79 @@ const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
   const dt = new Date(i.firstExportedAt).toLocaleDateString('ja-JP')
   return { label: `初回出力済 (${dt})`, cls: 'bg-blue-100 text-blue-700' }
 }
+
+// ─── 一括ダウンロード (#3b) ───────────────────────────
+// チェックした発注を 発注書 / 管理表 / 発注書+管理表 でまとめてダウンロードする。
+// 選択は order id の Set。フィルタで非表示になった id は watch で間引く
+// (見えていない発注を黙ってダウンロードしないため)。
+const selectedIds = ref<Set<number>>(new Set())
+
+// フィルタ変更で filtered から外れた選択を除去する (表示中の発注のみ選択状態を保持)。
+watch(filtered, (rows) => {
+  const visible = new Set(rows.map((r) => r.id))
+  const next = new Set<number>()
+  for (const id of selectedIds.value) if (visible.has(id)) next.add(id)
+  if (next.size !== selectedIds.value.size) selectedIds.value = next
+})
+
+const isSelected = (id: number): boolean => selectedIds.value.has(id)
+const toggleRow = (id: number): void => {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+const selectedCount = computed(() => selectedIds.value.size)
+
+// 全選択チェックボックスの状態 (表示中 filtered 行が基準)。
+const allSelected = computed(() =>
+  filtered.value.length > 0 && filtered.value.every((i) => selectedIds.value.has(i.id)),
+)
+const someSelected = computed(() => selectedCount.value > 0 && !allSelected.value)
+
+// 全選択チェックボックスの indeterminate は DOM プロパティのため ref 経由で反映する
+// (v-bind の属性では設定できない)。
+const selectAllEl = ref<HTMLInputElement | null>(null)
+watchEffect(() => {
+  if (selectAllEl.value) selectAllEl.value.indeterminate = someSelected.value
+})
+
+const toggleSelectAll = (): void => {
+  if (allSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(filtered.value.map((i) => i.id))
+  }
+}
+
+const clearSelection = (): void => {
+  selectedIds.value = new Set()
+}
+
+type BulkFormat = 'order' | 'management' | 'both'
+const downloading = ref<BulkFormat | null>(null)
+const bulkError = ref('')
+
+const runBulkExport = async (format: BulkFormat): Promise<void> => {
+  if (downloading.value || selectedCount.value === 0) return
+  bulkError.value = ''
+  downloading.value = format
+  try {
+    // 表示順 (filtered) で id を渡す。ダウンロード成功後に選択をクリアする。
+    const ids = filtered.value.filter((i) => selectedIds.value.has(i.id)).map((i) => i.id)
+    await bulkExport(ids, format)
+    clearSelection()
+  } catch (e) {
+    console.error('一括ダウンロードに失敗しました', e)
+    const err = e as { statusCode?: number }
+    bulkError.value = err.statusCode === 401
+      ? 'セッションが切れました。再ログインしてください。'
+      : '一括ダウンロードに失敗しました'
+  } finally {
+    downloading.value = null
+  }
+}
 </script>
 
 <template>
@@ -316,6 +389,56 @@ const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
       <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件</span>
     </div>
 
+    <!-- 一括ダウンロードバー (#3b)。1 件以上選択時のみ表示。モバイルでは縦積み。 -->
+    <div
+      v-if="selectedCount > 0"
+      class="mb-3 flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div class="flex items-center gap-3 text-sm">
+        <span class="font-semibold text-blue-800">{{ selectedCount }} 件選択中</span>
+        <button
+          type="button"
+          class="rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-100"
+          @click="clearSelection"
+        >
+          選択解除
+        </button>
+      </div>
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <span class="text-xs font-medium text-blue-700 sm:mr-1">一括ダウンロード</span>
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+            :disabled="downloading !== null"
+            @click="runBulkExport('order')"
+          >
+            {{ downloading === 'order' ? '生成中…' : '発注書' }}
+          </button>
+          <button
+            type="button"
+            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+            :disabled="downloading !== null"
+            @click="runBulkExport('management')"
+          >
+            {{ downloading === 'management' ? '生成中…' : '管理表' }}
+          </button>
+          <button
+            type="button"
+            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+            :disabled="downloading !== null"
+            @click="runBulkExport('both')"
+          >
+            {{ downloading === 'both' ? '生成中…' : '発注書+管理表' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="bulkError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+      {{ bulkError }}
+    </div>
+
     <div v-if="errorMessage" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
       {{ errorMessage }}
     </div>
@@ -328,6 +451,18 @@ const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
       <table class="w-full">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
+            <!-- 一括ダウンロード選択 (#3b)。全選択は表示中 (filtered) の行が対象。 -->
+            <th class="w-10 px-3 py-3 text-center">
+              <input
+                ref="selectAllEl"
+                type="checkbox"
+                class="h-4 w-4 rounded border-gray-300"
+                :checked="allSelected"
+                :disabled="filtered.length === 0"
+                aria-label="表示中の発注をすべて選択"
+                @change="toggleSelectAll"
+              />
+            </th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">管理番号</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">区分</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">発注番号</th>
@@ -343,7 +478,7 @@ const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
         </thead>
         <tbody>
           <tr v-if="filtered.length === 0">
-            <td :colspan="filters.hideLines ? 9 : 10" class="px-4 py-8 text-center text-sm text-gray-500">
+            <td :colspan="filters.hideLines ? 10 : 11" class="px-4 py-8 text-center text-sm text-gray-500">
               {{ hasActiveFilter ? '検索条件に一致するデータがありません' : 'データがありません' }}
             </td>
           </tr>
@@ -351,8 +486,19 @@ const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
             v-for="i in filtered"
             :key="i.id"
             class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-blue-50"
+            :class="isSelected(i.id) ? 'bg-blue-50' : ''"
             @click="navigateTo(`/orders/${i.id}`)"
           >
+            <!-- チェックボックスセル: 行ナビゲーションを止めて選択のみ行う。 -->
+            <td class="w-10 px-3 py-3 text-center" @click.stop>
+              <input
+                type="checkbox"
+                class="h-4 w-4 rounded border-gray-300"
+                :checked="isSelected(i.id)"
+                :aria-label="`発注 ${i.mgmtNo} を選択`"
+                @change="toggleRow(i.id)"
+              />
+            </td>
             <td class="px-4 py-3 font-mono text-sm">{{ i.mgmtNo }}</td>
             <td class="px-4 py-3 text-sm">
               <span :class="regionBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">

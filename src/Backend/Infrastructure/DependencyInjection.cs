@@ -64,6 +64,9 @@ public static class DependencyInjection
         // 発注関連 (Iteration 3、Phase 5 §5)
         services.AddScoped<PurchaseOrderService>();
         services.AddScoped<IPurchaseOrderExcelService, PurchaseOrderExcelService>();
+        // 一括ダウンロード (#3b)。管理表 (読み取り専用) + 発注書 ZIP 束ね。
+        services.AddScoped<IOrderManagementTableExcelService, OrderManagementTableExcelService>();
+        services.AddScoped<IOrderBulkExportService, OrderBulkExportService>();
 
         // 生産管理拡張 (Iteration 5、data-design-production §4)
         services.AddScoped<ProductMaterialService>();
