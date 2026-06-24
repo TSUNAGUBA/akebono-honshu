@@ -93,41 +93,58 @@ export const useAuth = () => {
     // 既に購読済みなら、初回確定を表す同一 Promise を返す (多重購読防止 + ゲート共有)。
     if (authReadyPromise) return authReadyPromise
 
-    const { $firebaseAuth } = useNuxtApp()
     authReadyPromise = new Promise<void>((resolve) => {
       let settled = false
-      onAuthStateChanged($firebaseAuth as Auth, async (fbUser) => {
-        try {
-          if (fbUser) {
-            // ログイン済 (リロード時は Firebase が永続化セッションから *非同期* に復元)。Backend と再同期。
-            try {
-              await syncWithBackend(fbUser)
-            }
-            catch {
-              // sync 失敗 (例: users.firebase_uid 未紐付け / inactive) は Firebase もログアウト。
-              // signOut が失敗しても UI の認証済状態を残さないよう、auth.value=null は finally で保証 (レビュー CR-6)。
+      // 初回の emission (= 認証状態の確定) で middleware のゲートを 1 度だけ解放する。
+      // 以降の emission (token refresh / login / logout) でも auth.value は更新し続ける。
+      const release = () => {
+        if (!settled) {
+          settled = true
+          resolve()
+        }
+      }
+      try {
+        const { $firebaseAuth } = useNuxtApp()
+        onAuthStateChanged($firebaseAuth as Auth, async (fbUser) => {
+          try {
+            if (fbUser) {
+              // ログイン済 (リロード時は Firebase が永続化セッションから *非同期* に復元)。Backend と再同期。
               try {
-                await signOut($firebaseAuth as Auth)
+                await syncWithBackend(fbUser)
               }
-              finally {
-                auth.value = null
+              catch (e) {
+                // sync 失敗 (例: users.firebase_uid 未紐付け / inactive) は Firebase もログアウト。
+                // 強制ログアウトの原因究明のためログを残す。signOut が失敗しても UI の認証済状態を
+                // 残さないよう、auth.value=null は finally で保証 (レビュー CR-6)。
+                console.error('[auth] backend 同期に失敗したためサインアウトします', e)
+                try {
+                  await signOut($firebaseAuth as Auth)
+                }
+                finally {
+                  auth.value = null
+                }
               }
             }
+            else {
+              auth.value = null
+            }
           }
-          else {
-            auth.value = null
+          finally {
+            // 失敗時も finally で必ず解放し、リロードがローディングのまま固まらないようにする (原則4)。
+            release()
           }
-        }
-        finally {
-          // 初回の emission (= 認証状態の確定) で middleware のゲートを 1 度だけ解放する。
-          // 以降の emission (token refresh / login / logout) でも auth.value は更新し続ける。
-          // 失敗時も finally で必ず解放し、リロードがローディングのまま固まらないようにする (原則4)。
-          if (!settled) {
-            settled = true
-            resolve()
-          }
-        }
-      })
+        })
+      }
+      catch (e) {
+        // 購読セットアップ自体の失敗 ($firebaseAuth 未提供 = Firebase config 未設定で plugin が
+        // throw した場合等)。ここで reject すると middleware の await が throw してナビゲーションが
+        // 中断し、ローディングのまま復帰不能になる (rejected な singleton もキャッシュされ以降の
+        // 遷移も全て失敗)。fail open で resolve し、未認証として middleware に判定させる
+        // (→ /login へ可視的に誘導)。原則4 非ブロッキング。
+        console.error('[auth] watchAuthState の購読セットアップに失敗しました', e)
+        auth.value = null
+        release()
+      }
     })
     return authReadyPromise
   }
