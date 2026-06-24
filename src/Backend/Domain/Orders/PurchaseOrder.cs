@@ -21,6 +21,19 @@ public class PurchaseOrder
     public long? CancelledByUserId { get; set; }
     public string? CancelReason { get; set; }
 
+    // 発注状態 5 値モデル (#3a)。納品完了 (DeliveredAt) / 発注削除 (IsDeleted) を新設。
+    // CancelledAt/CancelledByUserId と同じく操作者列はナビ無し (id のみ保持)。
+    /// <summary>納品完了日時 (NULL=未納品)。正式発注済の発注を「納品完了にする」操作で SET</summary>
+    public DateTime? DeliveredAt { get; set; }
+    /// <summary>納品完了操作者 (users.id)</summary>
+    public long? DeliveredByUserId { get; set; }
+    /// <summary>論理削除フラグ (TRUE=発注削除)。NOT NULL DEFAULT FALSE。物理削除はしない</summary>
+    public bool IsDeleted { get; set; }
+    /// <summary>論理削除日時</summary>
+    public DateTime? DeletedAt { get; set; }
+    /// <summary>論理削除操作者 (users.id)</summary>
+    public long? DeletedByUserId { get; set; }
+
     public long SupplierId { get; set; }
     /// <summary>仕入先 official_name のスナップショット (F-22 帳票宛名第 1 要素)</summary>
     public string? SupplierOfficialNameSnapshot { get; set; }

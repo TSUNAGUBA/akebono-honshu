@@ -78,7 +78,42 @@ public static class OrderEndpoints
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            var ok = await svc.CancelAsync(id, req, auth.ActorId!.Value, ct);
+            try
+            {
+                // 削除済/納品完了 (終端状態) の中止は 409 (#3a)
+                var ok = await svc.CancelAsync(id, req, auth.ActorId!.Value, ct);
+                return ok ? Results.NoContent() : Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
+            }
+        });
+
+        // 納品完了 (#3a)。正式発注済のときのみ実行可 (不正状態は 409)。
+        orders.MapPost("/{id:long}/deliver", async (HttpContext http, IAkebonoDbContext db,
+                                                     PurchaseOrderService svc, long id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            try
+            {
+                var ok = await svc.MarkDeliveredAsync(id, auth.ActorId!.Value, ct);
+                return ok ? Results.NoContent() : Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
+            }
+        });
+
+        // 発注削除 (#3a)。論理削除 (is_deleted=true)。物理削除はしない。
+        orders.MapPost("/{id:long}/delete", async (HttpContext http, IAkebonoDbContext db,
+                                                    PurchaseOrderService svc, long id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
             return ok ? Results.NoContent() : Results.NotFound();
         });
 

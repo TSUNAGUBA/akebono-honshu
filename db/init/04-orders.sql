@@ -16,6 +16,14 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     cancelled_by_user_id            BIGINT       NULL REFERENCES users(id),
     cancel_reason                   VARCHAR(255) NULL,
 
+    -- 発注状態 5 値モデル (#3a)。納品完了 (delivered_at IS NOT NULL) / 発注削除 (is_deleted) を新設。
+    -- cancelled_at/cancelled_by_user_id と同じ配置・様式でミラー。is_deleted は論理削除フラグ。
+    delivered_at                    TIMESTAMP    NULL,
+    delivered_by_user_id            BIGINT       NULL REFERENCES users(id),
+    is_deleted                      BOOLEAN      NOT NULL DEFAULT FALSE,
+    deleted_at                      TIMESTAMP    NULL,
+    deleted_by_user_id              BIGINT       NULL REFERENCES users(id),
+
     supplier_id                     BIGINT       NOT NULL REFERENCES suppliers(id),
     supplier_official_name_snapshot VARCHAR(255) NULL,
     supplier_code_snapshot          VARCHAR(3)   NULL,
@@ -58,7 +66,10 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
 
     CONSTRAINT chk_po_status         CHECK (status IN (0, 1)),
     CONSTRAINT chk_po_last_after_first CHECK (last_exported_at IS NULL OR first_exported_at IS NOT NULL),
-    CONSTRAINT chk_po_cancelled_consistency CHECK ((status = 1) = (cancelled_at IS NOT NULL))
+    CONSTRAINT chk_po_cancelled_consistency CHECK ((status = 1) = (cancelled_at IS NOT NULL)),
+    -- 発注状態 5 値モデル (#3a): is_deleted と deleted_at の整合 (chk_po_cancelled_consistency の踏襲)。
+    -- 既存行は is_deleted=FALSE / deleted_at=NULL で TRUE=TRUE を満たす。
+    CONSTRAINT chk_po_deleted_consistency CHECK (is_deleted = (deleted_at IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_po_mgmt    ON purchase_orders (mgmt_no);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_po_order_no ON purchase_orders (order_no) WHERE order_no IS NOT NULL;
@@ -68,6 +79,11 @@ CREATE INDEX IF NOT EXISTS idx_po_dest    ON purchase_orders (delivery_destinati
 CREATE INDEX IF NOT EXISTS idx_po_dates   ON purchase_orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_po_unexported
     ON purchase_orders (first_exported_at) WHERE first_exported_at IS NULL AND status = 0;
+-- 発注状態 5 値モデル (#3a): 後方互換の「非中止・未削除」一覧パス (ListAsync の
+-- includeCancelled=false 分岐: WHERE status=0 AND is_deleted=FALSE) を高速化する部分索引。
+-- 新フロントは includeCancelled=true で全状態を取得し client-side 絞込するためこの索引は使わない。
+CREATE INDEX IF NOT EXISTS idx_po_not_deleted
+    ON purchase_orders (created_at DESC) WHERE is_deleted = FALSE;
 
 -- ─────────────────────────────────────────────────
 -- §5.2 purchase_order_lines — 発注明細
