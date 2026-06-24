@@ -26,10 +26,18 @@ public record CreateOrderRequest(
     string? LandingPlace = null,
     string? CustomerRef = null,
     DateOnly? FactoryShippingDate = null,
-    DateOnly? InspectionShippingDate = null,
+    DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
-    long? Warehouse3Id = null);
+    long? Warehouse3Id = null,
+    // 連絡文書 6 行 (構造化、PR6、末尾・nullable = 下位互換)。旧 spec 発注明細 No.27-32。
+    // 新フローは本 6 列を保存する (SoT)。旧クライアントが未指定なら全 NULL で保存される。
+    string? CommunicationLine1 = null,
+    string? CommunicationLine2 = null,
+    string? CommunicationLine3 = null,
+    string? CommunicationLine4 = null,
+    string? CommunicationLine5 = null,
+    string? CommunicationLine6 = null);
 
 public record OrderLineInput(
     long ProductId,
@@ -38,7 +46,21 @@ public record OrderLineInput(
     string CurrencyCodeSnapshot,
     // 旧 発注明細 項目 (Phase B、任意)。仮番号は商品 family からコピーするため入力には含めない。
     int? PackQuantity = null,
-    decimal? EstimateUnitPrice = null);
+    decimal? EstimateUnitPrice = null,
+    // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
+    string? Remark = null,
+    // 分納×倉庫の多次元明細 (PR5b、末尾・nullable = 下位互換)。null/空 = 分納なし (単一明細、従来挙動)。
+    // 1 件以上あれば、その明細は分納で構成され、line.Quantity = Deliveries の Quantity 合計 (SUM) になる。
+    List<OrderLineDeliveryInput>? Deliveries = null);
+
+// 分納×倉庫の多次元明細 1 行の入力 (PR5b、旧 spec 発注明細 No.6 発注明細日 / No.7-17 発注明細数 /
+// No.18-23 倉庫入数/発注数)。WarehouseId / DeliveryDate は NULL 許容 (倉庫未指定 / 発注明細日未指定)。
+// Quantity は正の整数 (CHECK quantity > 0)。PackQuantity は倉庫別入数 (任意)。
+public record OrderLineDeliveryInput(
+    long? WarehouseId,
+    DateOnly? DeliveryDate,
+    int Quantity,
+    int? PackQuantity = null);
 
 // ─────────────────────────────────────────────────
 // 一覧 (GET /api/v1/orders、O-03)
@@ -116,7 +138,7 @@ public record OrderDetail(
     string? LandingPlace = null,
     string? CustomerRef = null,
     DateOnly? FactoryShippingDate = null,
-    DateOnly? InspectionShippingDate = null,
+    DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
     string? Warehouse2Name = null,
@@ -126,7 +148,16 @@ public record OrderDetail(
     // 操作者名は cancelled_by と同じく詳細では非表示 (日時のみ表示)。
     DateTime? DeliveredAt = null,
     bool IsDeleted = false,
-    DateTime? DeletedAt = null);
+    DateTime? DeletedAt = null,
+    // 連絡文書 6 行 (構造化、PR6、末尾追加 = 下位互換)。新フローの SoT を返す。フロントは 6 列を各
+    // スロットへ載せる。6 列が全て空でも CommunicationText がある旧発注は、フロント側で改行分割して
+    // ブリッジ表示する (本 DTO は 6 列と CommunicationText の両方をそのまま返すだけ)。
+    string? CommunicationLine1 = null,
+    string? CommunicationLine2 = null,
+    string? CommunicationLine3 = null,
+    string? CommunicationLine4 = null,
+    string? CommunicationLine5 = null,
+    string? CommunicationLine6 = null);
 
 public record OrderLineDetail(
     long Id,
@@ -143,7 +174,22 @@ public record OrderLineDetail(
     // 旧 発注明細 項目 (Phase B、任意)
     int? PackQuantity = null,
     decimal? EstimateUnitPrice = null,
-    string? ProvisionalNumberSnapshot = null);
+    string? ProvisionalNumberSnapshot = null,
+    // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
+    string? Remark = null,
+    // 分納×倉庫の多次元明細 (PR5b、末尾追加 = 下位互換。既定は空リスト = 分納なし = 単一明細)。
+    List<OrderLineDeliverySummary>? Deliveries = null);
+
+// 分納×倉庫の多次元明細 1 行の返却 (PR5b、旧 spec 発注明細 No.6/No.7-17/No.18-23)。
+// Seq は表示順 (配列順で採番)。WarehouseName は倉庫名 (未指定時 null)。
+public record OrderLineDeliverySummary(
+    long Id,
+    long? WarehouseId,
+    string? WarehouseName,
+    DateOnly? DeliveryDate,
+    int Quantity,
+    int? PackQuantity,
+    short Seq);
 
 // ─────────────────────────────────────────────────
 // 更新 (PATCH /api/v1/orders/{id}、O-04、edit_reason 必須 F-16)
@@ -171,10 +217,18 @@ public record UpdateOrderRequest(
     string? LandingPlace = null,
     string? CustomerRef = null,
     DateOnly? FactoryShippingDate = null,
-    DateOnly? InspectionShippingDate = null,
+    DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
-    long? Warehouse3Id = null);
+    long? Warehouse3Id = null,
+    // 連絡文書 6 行 (構造化、PR6、末尾・nullable = 下位互換)。旧 spec 発注明細 No.27-32。
+    // 新フローは本 6 列で上書き保存する (SoT)。CommunicationText は新フローで書かない (旧データのみ保持)。
+    string? CommunicationLine1 = null,
+    string? CommunicationLine2 = null,
+    string? CommunicationLine3 = null,
+    string? CommunicationLine4 = null,
+    string? CommunicationLine5 = null,
+    string? CommunicationLine6 = null);
 
 public record UpdateLineInput(
     long? Id,
@@ -184,7 +238,13 @@ public record UpdateLineInput(
     string CurrencyCodeSnapshot,
     // 旧 発注明細 項目 (Phase B、任意)。仮番号は商品 family からコピーするため入力には含めない。
     int? PackQuantity = null,
-    decimal? EstimateUnitPrice = null);
+    decimal? EstimateUnitPrice = null,
+    // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
+    string? Remark = null,
+    // 分納×倉庫の多次元明細 (PR5b、末尾・nullable = 下位互換)。null/空 = 分納なし (単一明細、従来挙動)。
+    // 編集時は全置換 (既存分納削除→再挿入、line.Quantity 再計算)。明細は元々全削除→再 INSERT 方式のため、
+    // 親明細削除に伴い分納も CASCADE で消えてから本入力で再構築される。
+    List<OrderLineDeliveryInput>? Deliveries = null);
 
 // ─────────────────────────────────────────────────
 // 中止 (POST /api/v1/orders/{id}/cancel、O-05)
@@ -195,3 +255,21 @@ public record CancelOrderRequest(string CancelReason);
 // 連絡文章 (O-07、テンプレ複写)
 // ─────────────────────────────────────────────────
 public record CommunicationTextSuggestion(string Body, bool StandardPrintFlag, string SourceLabel);
+
+// ─────────────────────────────────────────────────
+// 単価サジェスト (PR2、size-aware)。発注明細の unit_price_snapshot 入力補助。
+// GET /api/v1/orders/price-suggestion?productId=&supplierId=
+//   SKU (productId) の size に対応する現単価を「(family, supplier, SKUのsize) の現単価 →
+//   無ければ (…, NULL-size 既定) の現単価」のフォールバックで解決して返す。
+//   現単価が一切無ければ Found=false (フロントは従来どおり手入力)。
+//   注: snapshot 書込は従来どおりクライアント入力値を verbatim 保存する (本サジェストは入力補助のみで、
+//   サーバ側で snapshot を上書きしない = 下位互換。「単価未決定」状態 unit_price<=0 も維持される)。
+// ─────────────────────────────────────────────────
+public record SupplierPriceSuggestion(
+    bool Found,
+    decimal? UnitPrice,
+    string? CurrencyCode,
+    decimal? ExchangeRate,
+    // 解決に使われた行が size 専用か全サイズ既定か (UI 表示・デバッグ用)。
+    long? ResolvedSizeId,
+    bool IsSizeSpecific);

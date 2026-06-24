@@ -49,12 +49,22 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     landing_place                   VARCHAR(128) NULL,                                      -- 荷揚地 / Port of entry
     customer_ref                    VARCHAR(128) NULL,                                      -- 得意先 / 受注先
     factory_shipping_date           DATE         NULL,                                      -- 工場出荷日
-    inspection_shipping_date        DATE         NULL,                                      -- 検品所出荷日
+    delivery_place_shipping_date    DATE         NULL,                                      -- 納品所出荷日 (旧名: 検品所出荷日、設計判断Q6)
     overseas_departure_date         DATE         NULL,                                      -- 海外出港日
     warehouse2_id                   BIGINT       NULL REFERENCES warehouses(id),            -- 納入倉庫2
     warehouse3_id                   BIGINT       NULL REFERENCES warehouses(id),            -- 納入倉庫3
 
     communication_text              TEXT         NULL,
+    -- 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」(選択式) に対応。
+    -- 各行はテンプレ選択式 (連絡文書サジェスト再利用) + 自由編集可。新フローは本 6 列を SoT とする。
+    -- 既存 communication_text 列は削除しない (後方互換)。6 列が全 NULL の旧発注は Excel/編集ロードで
+    -- communication_text にフォールバックする (既存表示を壊さない)。全 NULL 許容 = 既存行は不変。
+    communication_line_1            TEXT         NULL,                                      -- 連絡文書01行 (spec 明細 No.27)
+    communication_line_2            TEXT         NULL,                                      -- 連絡文書02行 (spec 明細 No.28)
+    communication_line_3            TEXT         NULL,                                      -- 連絡文書03行 (spec 明細 No.29)
+    communication_line_4            TEXT         NULL,                                      -- 連絡文書04行 (spec 明細 No.30)
+    communication_line_5            TEXT         NULL,                                      -- 連絡文書05行 (spec 明細 No.31)
+    communication_line_6            TEXT         NULL,                                      -- 連絡文書06行 (spec 明細 No.32)
     first_exported_at               TIMESTAMP    NULL,
     last_exported_at                TIMESTAMP    NULL,
 
@@ -104,6 +114,7 @@ CREATE TABLE IF NOT EXISTS purchase_order_lines (
     pack_quantity                   INTEGER       NULL,                                     -- 倉庫1入数 / 入数
     estimate_unit_price             NUMERIC(12,2) NULL,                                     -- 見積単価
     provisional_number_snapshot     VARCHAR(64)   NULL,                                     -- 仮番号 (商品 family からコピー)
+    remark                          TEXT          NULL,                                     -- 発注明細 備考 (行レベル、spec 明細 No.26)
     subtotal                        NUMERIC(14,2) GENERATED ALWAYS AS (quantity * unit_price_snapshot) STORED,
     created_at                      TIMESTAMP     NOT NULL DEFAULT NOW(),
     created_by_user_id              BIGINT        NOT NULL REFERENCES users(id),
@@ -116,6 +127,36 @@ CREATE TABLE IF NOT EXISTS purchase_order_lines (
 );
 CREATE INDEX IF NOT EXISTS idx_pol_order   ON purchase_order_lines (purchase_order_id);
 CREATE INDEX IF NOT EXISTS idx_pol_product ON purchase_order_lines (product_id);
+
+-- ─────────────────────────────────────────────────
+-- §5.2b purchase_order_line_deliveries — 分納×倉庫の多次元明細 (PR5b)
+-- 1 発注明細 (purchase_order_lines) を「(倉庫 × 納期) の分納行」の集合で多次元化する。
+-- 旧 spec 発注明細 No.6「発注明細日1-11」/ No.7-17「発注明細数1〜11」/ No.18-23「倉庫1〜3 入数/発注数」
+-- に対応 (設計判断 Q1=可変の分納テーブル、Q2=明細を倉庫×納期で多次元化)。
+--
+-- 下位互換 (最重要): 分納は明細あたり任意 (0 件可)。
+--   分納 0 件 = 従来どおりの単一明細。purchase_order_lines.quantity をそのまま単一数量として使う
+--     (既存発注・既存フローは完全に不変)。
+--   分納 N 件 = その明細は分納で構成。purchase_order_lines.quantity には分納数量の合計 (SUM) を設定する
+--     (既存の subtotal GENERATED 列 = quantity * unit_price_snapshot がそのまま正しい金額になる)。
+-- 既存 purchase_order_lines.quantity / pack_quantity 列は削除しない (後方互換)。pack_quantity は
+-- 単一明細時の入数として温存し、分納時は分納行 (本テーブル) の pack_quantity を使う (二重表現)。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS purchase_order_line_deliveries (
+    id                       BIGSERIAL PRIMARY KEY,
+    purchase_order_line_id   BIGINT       NOT NULL REFERENCES purchase_order_lines(id) ON DELETE CASCADE,
+    warehouse_id             BIGINT       NULL REFERENCES warehouses(id),          -- 倉庫 (NULL=倉庫未指定)
+    delivery_date            DATE         NULL,                                     -- 納期 / 発注明細日 (NULL=発注明細日未指定)
+    quantity                 INTEGER      NOT NULL,                                 -- 発注明細数 (分納数量)
+    pack_quantity            INTEGER      NULL,                                     -- 倉庫別入数
+    seq                      SMALLINT     NOT NULL DEFAULT 1,                       -- 表示順 (配列順で採番)
+    created_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
+    updated_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
+    CONSTRAINT chk_pold_quantity CHECK (quantity > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_pold_line ON purchase_order_line_deliveries (purchase_order_line_id);
 
 -- ─────────────────────────────────────────────────
 -- §5.3 purchase_order_export_logs — Excel 出力履歴 (監査用、非 UI 露出)

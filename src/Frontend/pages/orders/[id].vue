@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrderDetail, EditReason } from '~/composables/useOrders'
+import type { OrderDetail, EditReason, CommunicationSuggestion } from '~/composables/useOrders'
 import { editReasonLabel, deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
 
 const route = useRoute()
@@ -7,7 +7,7 @@ const id = computed(() => Number(route.params.id))
 const { user } = useAuth()
 const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 
-const { get, update, cancel, markDelivered, softDelete, downloadExcel } = useOrders()
+const { get, update, cancel, markDelivered, softDelete, downloadExcel, communicationSuggestions } = useOrders()
 
 const detail = ref<OrderDetail | null>(null)
 const loading = ref(true)
@@ -17,7 +17,30 @@ const downloading = ref(false)
 
 // 編集モード
 const editing = ref(false)
-const editLines = ref<{ id: number | null; productId: number; sku: string; productName: string; quantity: number; unitPriceSnapshot: number; currencyCodeSnapshot: string; packQuantity: number | null; estimateUnitPrice: number | null; provisionalNumberSnapshot: string | null }[]>([])
+// 分納×倉庫の多次元明細 (PR5b)。1 明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
+interface EditDeliveryRow {
+  warehouseId: number | null
+  deliveryDate: string
+  quantity: number
+  packQuantity: number | null
+}
+interface EditLineRow {
+  id: number | null
+  productId: number
+  sku: string
+  productName: string
+  quantity: number
+  unitPriceSnapshot: number
+  currencyCodeSnapshot: string
+  packQuantity: number | null
+  estimateUnitPrice: number | null
+  provisionalNumberSnapshot: string | null
+  remark: string | null
+  // 分納×倉庫の多次元明細 (PR5b、任意)。空 = 分納なし (単一明細、従来挙動)。
+  deliveries: EditDeliveryRow[]
+  showDeliveries: boolean
+}
+const editLines = ref<EditLineRow[]>([])
 const editReason = ref<EditReason>('quantity')
 const editNote = ref('')
 
@@ -27,7 +50,7 @@ const editHeader = ref({
   landingPlace: '' as string,
   customerRef: '' as string,
   factoryShippingDate: '' as string,
-  inspectionShippingDate: '' as string,
+  deliveryPlaceShippingDate: '' as string,
   overseasDepartureDate: '' as string,
   warehouse2Id: null as number | null,
   warehouse3Id: null as number | null,
@@ -35,6 +58,53 @@ const editHeader = ref({
 // 納入倉庫2/3 編集用にマスタを読み込む
 const { list: listMasters } = useMasters()
 const warehouses = ref<{ id: number; code?: string | null; name?: string | null }[]>([])
+
+// 連絡文書 6 行 (構造化、PR6)。編集用の固定長 6 スロット + テンプレ候補。reload() で detail から初期化する。
+const editCommLines = ref<string[]>(['', '', '', '', '', ''])
+const commTemplates = ref<CommunicationSuggestion[]>([])
+const commTemplateOptions = computed(() =>
+  commTemplates.value.map((t, i) => ({ value: `${i}`, label: t.sourceLabel, searchText: t.body })),
+)
+// テンプレを指定スロットに適用する (AutoComplete は index 文字列を value にするため body を引き直す)。
+const applyTemplateToLine = (slot: number, optionValue: string) => {
+  const idx = Number(optionValue)
+  const tpl = commTemplates.value[idx]
+  if (tpl && slot >= 0 && slot < editCommLines.value.length) {
+    editCommLines.value[slot] = tpl.body
+  }
+}
+// 連絡文書 6 行 (PR6) の編集ロード。新フローは 6 列を各スロットへ。6 列が全て空でも communicationText が
+// ある旧発注は、communicationText を改行分割して 6 スロットへブリッジする (最大6行、超過は6行目に集約)。
+const buildEditCommLines = (d: OrderDetail): string[] => {
+  const cols = [
+    d.communicationLine1, d.communicationLine2, d.communicationLine3,
+    d.communicationLine4, d.communicationLine5, d.communicationLine6,
+  ]
+  const hasStructured = cols.some((c) => c != null && c.trim() !== '')
+  if (hasStructured) {
+    // 新データ: 6 列をそのままスロットへ (null → 空文字に正規化)。
+    return cols.map((c) => c ?? '')
+  }
+  // 旧データ: communicationText を改行分割。先頭5行はそのまま、6行目以降は残り全部を結合して集約。
+  const text = d.communicationText ?? ''
+  if (text.trim() === '') return ['', '', '', '', '', '']
+  const parts = text.split('\n')
+  const slots = parts.slice(0, 5)
+  if (parts.length > 5) slots.push(parts.slice(5).join('\n'))
+  else slots.push(parts[5] ?? '')
+  while (slots.length < 6) slots.push('')
+  return slots.slice(0, 6)
+}
+// 連絡文書 6 行 (PR6) の読取表示用。新データは 6 列、旧データは communicationText を表示する。
+// 表示は read-only セクション (編集モード外) で使う。
+const displayCommLines = computed<string[]>(() => {
+  if (!detail.value) return []
+  const cols = [
+    detail.value.communicationLine1, detail.value.communicationLine2, detail.value.communicationLine3,
+    detail.value.communicationLine4, detail.value.communicationLine5, detail.value.communicationLine6,
+  ].filter((c): c is string => c != null && c.trim() !== '')
+  return cols
+})
 
 // 中止モーダル
 const showCancelForm = ref(false)
@@ -50,6 +120,16 @@ const reload = async () => {
         id: l.id, productId: l.productId, sku: l.sku, productName: l.productName,
         quantity: l.quantity, unitPriceSnapshot: l.unitPriceSnapshot, currencyCodeSnapshot: l.currencyCodeSnapshot,
         packQuantity: l.packQuantity, estimateUnitPrice: l.estimateUnitPrice, provisionalNumberSnapshot: l.provisionalNumberSnapshot,
+        remark: l.remark,
+        // 分納×倉庫の多次元明細 (PR5b)。seq 昇順は API 側で保証済。deliveryDate は null → 空文字に正規化。
+        deliveries: (l.deliveries ?? []).map((d) => ({
+          warehouseId: d.warehouseId,
+          deliveryDate: d.deliveryDate ?? '',
+          quantity: d.quantity,
+          packQuantity: d.packQuantity,
+        })),
+        // 既存分納がある明細は最初から開いておく (編集しやすさ)。
+        showDeliveries: (l.deliveries?.length ?? 0) > 0,
       }))
       // 旧 発注書 国内/海外 項目 (Phase B) の編集状態を detail から初期化 (null → 空文字に正規化)
       editHeader.value = {
@@ -57,11 +137,13 @@ const reload = async () => {
         landingPlace: detail.value.landingPlace ?? '',
         customerRef: detail.value.customerRef ?? '',
         factoryShippingDate: detail.value.factoryShippingDate ?? '',
-        inspectionShippingDate: detail.value.inspectionShippingDate ?? '',
+        deliveryPlaceShippingDate: detail.value.deliveryPlaceShippingDate ?? '',
         overseasDepartureDate: detail.value.overseasDepartureDate ?? '',
         warehouse2Id: detail.value.warehouse2Id,
         warehouse3Id: detail.value.warehouse3Id,
       }
+      // 連絡文書 6 行 (PR6) の編集スロットを初期化 (6 列優先、旧データは communicationText を改行ブリッジ)。
+      editCommLines.value = buildEditCommLines(detail.value)
     }
   } catch (e) {
     const err = e as { statusCode?: number }
@@ -72,11 +154,17 @@ const reload = async () => {
 }
 
 onMounted(async () => {
-  // 納入倉庫2/3 編集用マスタを読み込む (失敗しても本体表示は継続、原則 4 非ブロッキング)
+  // 納入倉庫2/3 編集用マスタ + 連絡文書テンプレ候補を読み込む
+  // (失敗しても本体表示は継続、原則 4 非ブロッキング)。
   try {
     warehouses.value = await listMasters('warehouses')
   } catch {
     warehouses.value = []
+  }
+  try {
+    commTemplates.value = await communicationSuggestions()
+  } catch {
+    commTemplates.value = []
   }
   await reload()
 })
@@ -96,9 +184,35 @@ const onCancelEdit = () => {
   reload()
 }
 
+// 分納×倉庫の多次元明細 (PR5b)。行追加/削除 + 数量合計算出 (new.vue と同じパターン)。
+const addDelivery = (lineIdx: number) => {
+  const l = editLines.value[lineIdx]
+  l.showDeliveries = true
+  l.deliveries.push({ warehouseId: detail.value?.warehouseId ?? null, deliveryDate: '', quantity: 1, packQuantity: null })
+}
+const removeDelivery = (lineIdx: number, dIdx: number) => {
+  editLines.value[lineIdx].deliveries.splice(dIdx, 1)
+}
+// 分納が 1 件以上ある明細の数量は分納数量の合計 (SUM)。単一数量入力は分納なし時のみ。
+const editLineQuantity = (l: EditLineRow): number =>
+  l.deliveries.length > 0 ? l.deliveries.reduce((s, d) => s + (Number(d.quantity) || 0), 0) : Number(l.quantity) || 0
+const editLineSubtotal = (l: EditLineRow): number => editLineQuantity(l) * l.unitPriceSnapshot
+// 明細の数量妥当性: 分納なしは単一 quantity > 0、分納ありは全分納 quantity > 0 かつ合計 > 0。
+const editLineQuantityValid = (l: EditLineRow): boolean =>
+  l.deliveries.length > 0
+    ? l.deliveries.every((d) => (Number(d.quantity) || 0) > 0) && editLineQuantity(l) > 0
+    : (Number(l.quantity) || 0) > 0
+const canSaveEdit = computed(() =>
+  editLines.value.length > 0 && editLines.value.every((l) => l.productId > 0 && editLineQuantityValid(l) && l.unitPriceSnapshot >= 0))
+
 const onSaveEdit = async () => {
   if (!detail.value) return
   errorMessage.value = ''
+  // 分納あり明細は各分納数量 > 0 が必須。クライアント側でも弾く (サーバは ORDER-LINE-DLV-001 で 422)。
+  if (!canSaveEdit.value) {
+    errorMessage.value = '明細の数量を確認してください (分納行は各数量が 1 以上必要です)'
+    return
+  }
   try {
     await update(id.value, {
       editReason: editReason.value,
@@ -116,21 +230,42 @@ const onSaveEdit = async () => {
       subOrderer4UserId: detail.value.subOrderer4UserId,
       subOrderer5UserId: detail.value.subOrderer5UserId,
       subOrderer6UserId: detail.value.subOrderer6UserId,
+      // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列で上書き保存する (SoT、空欄は null)。
+      // communicationText は新フローで書かないが、旧データを温存するため従来値をそのまま送り返す
+      // (サーバは受理値を保存。6 列が埋まれば Excel/編集ロードは 6 列を優先する)。
       communicationText: detail.value.communicationText,
+      communicationLine1: editCommLines.value[0].trim() || null,
+      communicationLine2: editCommLines.value[1].trim() || null,
+      communicationLine3: editCommLines.value[2].trim() || null,
+      communicationLine4: editCommLines.value[3].trim() || null,
+      communicationLine5: editCommLines.value[4].trim() || null,
+      communicationLine6: editCommLines.value[5].trim() || null,
       lines: editLines.value.map((l) => ({
         productId: l.productId,
-        quantity: Number(l.quantity),
+        // 分納あり明細は quantity = 分納合計 (editLineQuantity)。サーバも SUM に再計算する。
+        quantity: editLineQuantity(l),
         unitPriceSnapshot: Number(l.unitPriceSnapshot),
         currencyCodeSnapshot: l.currencyCodeSnapshot,
         packQuantity: l.packQuantity != null ? Number(l.packQuantity) : null,
         estimateUnitPrice: l.estimateUnitPrice != null ? Number(l.estimateUnitPrice) : null,
+        // 発注明細 備考 (spec 明細 No.26)。空欄は null で送る。
+        remark: l.remark?.trim() || null,
+        // 分納×倉庫の多次元明細 (PR5b)。空 = null (分納なし、従来挙動)。1 件以上あれば全置換で送る。
+        deliveries: l.deliveries.length > 0
+          ? l.deliveries.map((d) => ({
+              warehouseId: d.warehouseId,
+              deliveryDate: d.deliveryDate || null,
+              quantity: Number(d.quantity) || 0,
+              packQuantity: d.packQuantity != null ? Number(d.packQuantity) : null,
+            }))
+          : null,
       })),
       // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
       isOverseas: editHeader.value.isOverseas,
       landingPlace: editHeader.value.isOverseas ? (editHeader.value.landingPlace.trim() || null) : null,
       customerRef: editHeader.value.isOverseas ? (editHeader.value.customerRef.trim() || null) : null,
       factoryShippingDate: editHeader.value.isOverseas ? (editHeader.value.factoryShippingDate || null) : null,
-      inspectionShippingDate: editHeader.value.isOverseas ? (editHeader.value.inspectionShippingDate || null) : null,
+      deliveryPlaceShippingDate: editHeader.value.isOverseas ? (editHeader.value.deliveryPlaceShippingDate || null) : null,
       overseasDepartureDate: editHeader.value.isOverseas ? (editHeader.value.overseasDepartureDate || null) : null,
       warehouse2Id: editHeader.value.isOverseas ? editHeader.value.warehouse2Id : null,
       warehouse3Id: editHeader.value.isOverseas ? editHeader.value.warehouse3Id : null,
@@ -354,7 +489,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <div><span class="text-gray-500">荷揚地:</span> {{ detail.landingPlace || '—' }}</div>
             <div><span class="text-gray-500">得意先:</span> {{ detail.customerRef || '—' }}</div>
             <div><span class="text-gray-500">工場出荷日:</span> {{ detail.factoryShippingDate || '—' }}</div>
-            <div><span class="text-gray-500">検品所出荷日:</span> {{ detail.inspectionShippingDate || '—' }}</div>
+            <div><span class="text-gray-500">納品所出荷日:</span> {{ detail.deliveryPlaceShippingDate || '—' }}</div>
             <div><span class="text-gray-500">海外出港日:</span> {{ detail.overseasDepartureDate || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫2:</span> {{ detail.warehouse2Name || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫3:</span> {{ detail.warehouse3Name || '—' }}</div>
@@ -404,11 +539,13 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
               <th class="px-2 py-1.5 text-right">入数</th>
               <th class="px-2 py-1.5 text-right">単価</th>
               <th class="px-2 py-1.5 text-right">見積単価</th>
+              <th class="px-2 py-1.5 text-left">備考</th>
               <th class="px-2 py-1.5 text-right">小計</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="l in detail.lines" :key="l.id" class="border-b border-gray-100 last:border-0">
+            <template v-for="l in detail.lines" :key="l.id">
+            <tr class="border-b border-gray-100" :class="l.deliveries.length > 0 ? '' : 'last:border-0'">
               <td class="px-2 py-1.5 font-mono">{{ l.lineNo }}</td>
               <td class="px-2 py-1.5 font-mono">{{ l.sku.slice(0, 7) }}</td>
               <td class="px-2 py-1.5 font-mono">{{ l.sku }}</td>
@@ -418,8 +555,19 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
               <td class="px-2 py-1.5 text-right font-mono">{{ l.packQuantity != null ? l.packQuantity.toLocaleString() : '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ l.unitPriceSnapshot.toLocaleString() }}</td>
               <td class="px-2 py-1.5 text-right font-mono">{{ l.estimateUnitPrice != null ? l.estimateUnitPrice.toLocaleString() : '—' }}</td>
+              <td class="px-2 py-1.5">{{ l.remark || '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono">{{ l.subtotal.toLocaleString() }}</td>
             </tr>
+            <!-- 分納×倉庫の多次元明細 (PR5b、読取表示)。分納がある明細のみ、内訳を 1 分納 = 1 行で表示。 -->
+            <tr v-if="l.deliveries.length > 0" class="border-b border-gray-100 last:border-0 bg-gray-50 text-xs text-gray-600">
+              <td colspan="11" class="px-3 py-2">
+                <span class="font-semibold">分納 / 倉庫別:</span>
+                <span v-for="d in l.deliveries" :key="d.id" class="ml-2 inline-block rounded border border-gray-300 bg-white px-2 py-0.5">
+                  {{ d.warehouseName || '倉庫未指定' }} / {{ d.deliveryDate || '(発注明細日)' }} / 数量 {{ d.quantity.toLocaleString() }}<template v-if="d.packQuantity != null"> / 入数 {{ d.packQuantity.toLocaleString() }}</template>
+                </span>
+              </td>
+            </tr>
+            </template>
           </tbody>
         </table>
 
@@ -435,16 +583,20 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <th class="px-2 py-1.5 text-right">入数</th>
                 <th class="px-2 py-1.5 text-right">単価</th>
                 <th class="px-2 py-1.5 text-right">見積単価</th>
+                <th class="px-2 py-1.5 text-left">備考</th>
                 <th class="px-2 py-1.5 text-right">小計</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(l, idx) in editLines" :key="idx" class="border-b border-gray-100 last:border-0">
+              <template v-for="(l, idx) in editLines" :key="idx">
+              <tr class="border-b border-gray-100" :class="l.showDeliveries ? '' : 'last:border-0'">
                 <td class="px-2 py-1.5 font-mono">{{ l.sku.slice(0, 7) }}</td>
                 <td class="px-2 py-1.5 font-mono">{{ l.sku }}</td>
                 <td class="px-2 py-1.5 font-mono text-gray-500">{{ l.provisionalNumberSnapshot || '—' }}</td>
                 <td class="px-2 py-1.5 text-right">
-                  <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                  <!-- 分納あり時は数量を合計の読取表示 (単一数量入力は分納なし時のみ、PR5b)。 -->
+                  <input v-if="l.deliveries.length === 0" v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                  <span v-else class="inline-block w-20 px-2 py-1 text-right font-mono text-gray-700" title="分納数量の合計">{{ editLineQuantity(l).toLocaleString() }}</span>
                 </td>
                 <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
@@ -455,8 +607,52 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.estimateUnitPrice" type="number" min="0" step="0.01" placeholder="—" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-1.5 text-right font-mono">{{ (l.quantity * l.unitPriceSnapshot).toLocaleString() }}</td>
+                <td class="px-2 py-1.5">
+                  <input v-model="l.remark" type="text" maxlength="255" placeholder="—" class="w-32 rounded-md border border-gray-300 px-2 py-1" />
+                </td>
+                <td class="px-2 py-1.5 text-right font-mono">
+                  <div>{{ editLineSubtotal(l).toLocaleString() }}</div>
+                  <!-- 分納 / 倉庫別 サブセクションの開閉トグル (PR5b)。 -->
+                  <button type="button" class="text-xs font-normal text-blue-600 hover:underline" @click="l.showDeliveries = !l.showDeliveries">
+                    分納{{ l.deliveries.length > 0 ? ` (${l.deliveries.length})` : '' }}
+                  </button>
+                </td>
               </tr>
+              <!-- 分納 / 倉庫別 サブセクション (PR5b、任意・折りたたみ可)。倉庫 + 納期 + 数量 + 入数 を行追加/削除。 -->
+              <tr v-if="l.showDeliveries" class="border-b border-gray-100 last:border-0 bg-gray-50">
+                <td colspan="9" class="px-3 py-2">
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-xs font-semibold text-gray-600">分納 / 倉庫別 (任意 — 倉庫×納期で多次元化。空なら単一明細)</span>
+                    <button type="button" class="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs hover:bg-gray-100" @click="addDelivery(idx)">+ 分納行を追加</button>
+                  </div>
+                  <div v-if="l.deliveries.length === 0" class="py-2 text-center text-xs text-gray-400">
+                    分納なし (単一明細)。倉庫別・複数納期で分けたい場合は「+ 分納行を追加」してください。
+                  </div>
+                  <div v-else class="space-y-2">
+                    <div v-for="(d, dIdx) in l.deliveries" :key="dIdx" class="grid grid-cols-1 gap-2 rounded-md border border-gray-200 bg-white p-2 sm:grid-cols-[1fr_10rem_7rem_7rem_auto] sm:items-end">
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">倉庫</span>
+                        <MasterSelect v-model="d.warehouseId" :items="warehouses" allow-empty empty-label="（未指定）" placeholder="（任意）" />
+                      </label>
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">納期</span>
+                        <input v-model="d.deliveryDate" type="date" class="rounded-md border border-gray-300 px-2 py-1 text-sm" />
+                      </label>
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">数量 <span class="text-red-500">*</span></span>
+                        <input v-model.number="d.quantity" type="number" min="1" class="rounded-md border border-gray-300 px-2 py-1 text-right text-sm" />
+                      </label>
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">入数</span>
+                        <input v-model.number="d.packQuantity" type="number" min="0" placeholder="—" class="rounded-md border border-gray-300 px-2 py-1 text-right text-sm" />
+                      </label>
+                      <button type="button" class="h-fit rounded-md border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50" @click="removeDelivery(idx, dIdx)">削除</button>
+                    </div>
+                    <div class="text-right text-xs text-gray-500">分納合計数量: <span class="font-mono font-semibold">{{ editLineQuantity(l).toLocaleString() }}</span></div>
+                  </div>
+                </td>
+              </tr>
+              </template>
             </tbody>
           </table>
 
@@ -493,8 +689,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <input v-model="editHeader.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
-                <span class="font-medium">検品所出荷日</span>
-                <input v-model="editHeader.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+                <span class="font-medium">納品所出荷日</span>
+                <input v-model="editHeader.deliveryPlaceShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">海外出港日</span>
@@ -508,6 +704,39 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <span class="font-medium">納入倉庫3</span>
                 <MasterSelect v-model="editHeader.warehouse3Id" :items="warehouses" allow-empty empty-label="（なし）" placeholder="（任意）" />
               </label>
+            </div>
+          </div>
+
+          <!-- 連絡文書 6 行 (構造化、PR6。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」) -->
+          <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <span class="font-semibold text-gray-700">連絡文書 (6 行)</span>
+              <p class="text-xs text-gray-500">各行はテンプレ選択 + 自由編集できます (空行は出力されません)。</p>
+            </div>
+            <!-- 6 行スロット。各行: テンプレ選択 (AutoComplete) + テキスト入力。モバイルは縦積み (原則8)。 -->
+            <div class="space-y-2">
+              <div
+                v-for="(_, i) in editCommLines"
+                :key="i"
+                class="flex flex-col gap-2 sm:flex-row sm:items-center"
+              >
+                <span class="w-12 shrink-0 text-xs font-medium text-gray-500">{{ (i + 1).toString().padStart(2, '0') }} 行</span>
+                <input
+                  v-model="editCommLines[i]"
+                  type="text"
+                  :placeholder="`連絡文書 ${(i + 1).toString().padStart(2, '0')} 行目...`"
+                  class="flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                >
+                <div v-if="commTemplates.length > 0" class="sm:w-64">
+                  <AutoComplete
+                    :model-value="''"
+                    :options="commTemplateOptions"
+                    placeholder="テンプレから選択…"
+                    empty-label="（選択しない）"
+                    @update:model-value="(v) => applyTemplateToLine(i, v)"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
@@ -533,10 +762,21 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
         </div>
       </section>
 
-      <!-- 連絡文章 -->
-      <section v-if="detail.communicationText" class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">連絡文章</h2>
-        <pre class="whitespace-pre-wrap text-sm">{{ detail.communicationText }}</pre>
+      <!-- 連絡文書 (構造化 6 行優先、PR6)。編集中は上の編集スロットを使うため非表示。
+           新データは 6 列を 1 行ずつ表示。6 列が全て空の旧発注は communicationText にフォールバック。 -->
+      <section
+        v-if="!editing && (displayCommLines.length > 0 || detail.communicationText)"
+        class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+      >
+        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">連絡文書</h2>
+        <ol v-if="displayCommLines.length > 0" class="space-y-1 text-sm">
+          <li v-for="(line, i) in displayCommLines" :key="i" class="flex gap-2">
+            <span class="shrink-0 font-mono text-xs text-gray-400">{{ (i + 1).toString().padStart(2, '0') }}</span>
+            <span class="whitespace-pre-wrap">{{ line }}</span>
+          </li>
+        </ol>
+        <!-- フォールバック (旧データ): 6 列が全て空の発注は従来の communicationText を表示。 -->
+        <pre v-else class="whitespace-pre-wrap text-sm">{{ detail.communicationText }}</pre>
       </section>
 
       <p class="mt-3 text-xs text-gray-400">

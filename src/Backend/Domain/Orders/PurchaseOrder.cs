@@ -66,8 +66,8 @@ public class PurchaseOrder
     public string? CustomerRef { get; set; }
     /// <summary>工場出荷日</summary>
     public DateOnly? FactoryShippingDate { get; set; }
-    /// <summary>検品所出荷日</summary>
-    public DateOnly? InspectionShippingDate { get; set; }
+    /// <summary>納品所出荷日 (旧名: 検品所出荷日、設計判断Q6 で名称統一。列 delivery_place_shipping_date)</summary>
+    public DateOnly? DeliveryPlaceShippingDate { get; set; }
     /// <summary>海外出港日</summary>
     public DateOnly? OverseasDepartureDate { get; set; }
     /// <summary>納入倉庫2 (warehouses.id)</summary>
@@ -76,6 +76,20 @@ public class PurchaseOrder
     public long? Warehouse3Id { get; set; }
 
     public string? CommunicationText { get; set; }
+    // 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」。新フローの SoT。
+    // 既存 CommunicationText は後方互換のため温存 (6 列が全 NULL の旧発注は Excel/編集ロードでフォールバック)。
+    /// <summary>連絡文書01行 (spec 明細 No.27、列 communication_line_1)</summary>
+    public string? CommunicationLine1 { get; set; }
+    /// <summary>連絡文書02行 (spec 明細 No.28、列 communication_line_2)</summary>
+    public string? CommunicationLine2 { get; set; }
+    /// <summary>連絡文書03行 (spec 明細 No.29、列 communication_line_3)</summary>
+    public string? CommunicationLine3 { get; set; }
+    /// <summary>連絡文書04行 (spec 明細 No.30、列 communication_line_4)</summary>
+    public string? CommunicationLine4 { get; set; }
+    /// <summary>連絡文書05行 (spec 明細 No.31、列 communication_line_5)</summary>
+    public string? CommunicationLine5 { get; set; }
+    /// <summary>連絡文書06行 (spec 明細 No.32、列 communication_line_6)</summary>
+    public string? CommunicationLine6 { get; set; }
     public DateTime? FirstExportedAt { get; set; }
     public DateTime? LastExportedAt { get; set; }
 

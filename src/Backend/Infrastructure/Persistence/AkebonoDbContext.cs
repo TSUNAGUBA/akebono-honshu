@@ -38,10 +38,14 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<Product> Products => Set<Product>();
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
     public DbSet<ProductSupplierPrice> ProductSupplierPrices => Set<ProductSupplierPrice>();
+    // アソート/セット明細 (PR3、旧 spec No.37/38)
+    public DbSet<ProductSetComponent> ProductSetComponents => Set<ProductSetComponent>();
 
     // 発注関連 (Iteration 3)
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
+    // 分納×倉庫の多次元明細 (PR5b)
+    public DbSet<PurchaseOrderLineDelivery> PurchaseOrderLineDeliveries => Set<PurchaseOrderLineDelivery>();
     public DbSet<PurchaseOrderExportLog> PurchaseOrderExportLogs => Set<PurchaseOrderExportLog>();
 
     // 生産管理拡張 (Iteration 5)
@@ -220,6 +224,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasMany(x => x.Products).WithOne(p => p.ProductFamily!).HasForeignKey(p => p.ProductFamilyId);
             b.HasMany(x => x.Images).WithOne(i => i.ProductFamily!).HasForeignKey(i => i.ProductFamilyId);
             b.HasMany(x => x.SupplierPrices).WithOne(p => p.ProductFamily!).HasForeignKey(p => p.ProductFamilyId);
+            // アソート/セット明細 (PR3、旧 spec No.37/38)。FK は ProductSetComponent 側で定義。
+            b.HasMany(x => x.SetComponents).WithOne(c => c.ProductFamily!).HasForeignKey(c => c.ProductFamilyId);
         });
 
         modelBuilder.Entity<Product>(b =>
@@ -271,6 +277,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.Id).HasColumnName("id");
             b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
             b.Property(x => x.SupplierId).HasColumnName("supplier_id");
+            // サイズ別仕入単価 (PR2)。NULL = 全サイズ共通既定。nullable FK = 任意参照、cascade なし
+            // (既定 ClientSetNull)。HasForeignKey を明示して shadow FK 列を作らない (Function 等と同方式)。
+            b.Property(x => x.SizeId).HasColumnName("size_id");
+            b.HasOne(x => x.Size).WithMany().HasForeignKey(x => x.SizeId);
             b.Property(x => x.UnitPrice).HasColumnName("unit_price").HasColumnType("numeric(12,2)");
             b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
             b.Property(x => x.ExchangeRate).HasColumnName("exchange_rate").HasColumnType("numeric(10,4)");
@@ -295,6 +305,28 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
 
             b.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId);
+        });
+
+        // アソート/セット明細 (PR3、旧 spec No.37/38)。商品 (family) の作成/更新時に全置換するコレクション。
+        // child_item_number は手入力テキスト = products/product_families への FK は張らない
+        // (旧システム品番/外部品番も許容するため、旧 spec の「手入力」に忠実)。
+        modelBuilder.Entity<ProductSetComponent>(b =>
+        {
+            // CHECK (quantity > 0) を DB 側制約と一致させる (init/migration SQL と byte 等価)。
+            b.ToTable("product_set_components", t => t.HasCheckConstraint("chk_psc_quantity", "quantity > 0"));
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.ChildItemNumber).HasColumnName("child_item_number").IsRequired().HasMaxLength(32);
+            b.Property(x => x.Quantity).HasColumnName("quantity");
+            b.Property(x => x.LineNo).HasColumnName("line_no");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.ProductFamily).WithMany(f => f.SetComponents).HasForeignKey(x => x.ProductFamilyId);
+            b.HasIndex(x => x.ProductFamilyId);
         });
 
         // 発注関連 (Iteration 3、Phase 5 §5)
@@ -337,11 +369,18 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.LandingPlace).HasColumnName("landing_place").HasMaxLength(128);
             b.Property(x => x.CustomerRef).HasColumnName("customer_ref").HasMaxLength(128);
             b.Property(x => x.FactoryShippingDate).HasColumnName("factory_shipping_date");
-            b.Property(x => x.InspectionShippingDate).HasColumnName("inspection_shipping_date");
+            b.Property(x => x.DeliveryPlaceShippingDate).HasColumnName("delivery_place_shipping_date");
             b.Property(x => x.OverseasDepartureDate).HasColumnName("overseas_departure_date");
             b.Property(x => x.Warehouse2Id).HasColumnName("warehouse2_id");
             b.Property(x => x.Warehouse3Id).HasColumnName("warehouse3_id");
             b.Property(x => x.CommunicationText).HasColumnName("communication_text");
+            // 連絡文書 6 行 (構造化、PR6)。TEXT 列のため HasMaxLength は付けない。
+            b.Property(x => x.CommunicationLine1).HasColumnName("communication_line_1");
+            b.Property(x => x.CommunicationLine2).HasColumnName("communication_line_2");
+            b.Property(x => x.CommunicationLine3).HasColumnName("communication_line_3");
+            b.Property(x => x.CommunicationLine4).HasColumnName("communication_line_4");
+            b.Property(x => x.CommunicationLine5).HasColumnName("communication_line_5");
+            b.Property(x => x.CommunicationLine6).HasColumnName("communication_line_6");
             b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
             b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
@@ -384,6 +423,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.PackQuantity).HasColumnName("pack_quantity");
             b.Property(x => x.EstimateUnitPrice).HasColumnName("estimate_unit_price").HasColumnType("numeric(12,2)");
             b.Property(x => x.ProvisionalNumberSnapshot).HasColumnName("provisional_number_snapshot").HasMaxLength(64);
+            // 発注明細 備考 (spec 明細 No.26、NULL 許容)。TEXT 列のため HasMaxLength は付けない。
+            b.Property(x => x.Remark).HasColumnName("remark");
             b.Property(x => x.Subtotal)
                 .HasColumnName("subtotal")
                 .HasColumnType("numeric(14,2)")
@@ -395,7 +436,34 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
 
             b.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId);
+            b.HasMany(x => x.Deliveries).WithOne(d => d.PurchaseOrderLine!).HasForeignKey(d => d.PurchaseOrderLineId).OnDelete(DeleteBehavior.Cascade);
             b.HasIndex(x => new { x.PurchaseOrderId, x.LineNo }).IsUnique();
+        });
+
+        // 分納×倉庫の多次元明細 (PR5b、Phase 5 §5.2b)。発注明細の作成/更新時に全置換するコレクション
+        // (アソート/セット明細 = ProductSetComponent と同じパターン)。明細が分納 0 件の場合は単一明細
+        // (purchase_order_lines.quantity を単一数量として使う) として正常に扱う。
+        modelBuilder.Entity<PurchaseOrderLineDelivery>(b =>
+        {
+            // CHECK (quantity > 0) を DB 側制約と一致させる (init/migration SQL と byte 等価)。
+            b.ToTable("purchase_order_line_deliveries", t => t.HasCheckConstraint("chk_pold_quantity", "quantity > 0"));
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.PurchaseOrderLineId).HasColumnName("purchase_order_line_id");
+            // 倉庫 (NULL=倉庫未指定)。nullable FK = 任意参照、cascade なし (既定 ClientSetNull)。
+            // HasForeignKey を明示して shadow FK 列を作らない (Warehouse2/3 等と同方式)。
+            b.Property(x => x.WarehouseId).HasColumnName("warehouse_id");
+            b.Property(x => x.DeliveryDate).HasColumnName("delivery_date");
+            b.Property(x => x.Quantity).HasColumnName("quantity");
+            b.Property(x => x.PackQuantity).HasColumnName("pack_quantity");
+            b.Property(x => x.Seq).HasColumnName("seq");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+
+            b.HasOne(x => x.Warehouse).WithMany().HasForeignKey(x => x.WarehouseId);
+            b.HasIndex(x => x.PurchaseOrderLineId);
         });
 
         modelBuilder.Entity<PurchaseOrderExportLog>(b =>

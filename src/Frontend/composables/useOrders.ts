@@ -42,6 +42,18 @@ export interface OrderListItem {
   hasUndecidedPrice: boolean
 }
 
+// 分納×倉庫の多次元明細 (PR5b)。1 発注明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
+// warehouseId / deliveryDate は null 許容 (倉庫未指定 / 発注明細日未指定)。seq は表示順。
+export interface OrderLineDeliverySummary {
+  id: number
+  warehouseId: number | null
+  warehouseName: string | null
+  deliveryDate: string | null
+  quantity: number
+  packQuantity: number | null
+  seq: number
+}
+
 export interface OrderLineDetail {
   id: number
   lineNo: number
@@ -58,6 +70,10 @@ export interface OrderLineDetail {
   packQuantity: number | null
   estimateUnitPrice: number | null
   provisionalNumberSnapshot: string | null
+  // 発注明細 備考 (spec 明細 No.26)
+  remark: string | null
+  // 分納×倉庫の多次元明細 (PR5b)。空配列 = 分納なし (単一明細、従来挙動)。
+  deliveries: OrderLineDeliverySummary[]
 }
 
 export interface OrderDetail {
@@ -91,6 +107,14 @@ export interface OrderDetail {
   subOrderer5UserId: number | null
   subOrderer6UserId: number | null
   communicationText: string | null
+  // 連絡文書 6 行 (構造化、PR6)。新フローの SoT。6 列が全て空の旧発注は communicationText を
+  // 改行分割してブリッジ表示する (編集ロード時、フロント側で実施)。
+  communicationLine1: string | null
+  communicationLine2: string | null
+  communicationLine3: string | null
+  communicationLine4: string | null
+  communicationLine5: string | null
+  communicationLine6: string | null
   firstExportedAt: string | null
   lastExportedAt: string | null
   createdAt: string
@@ -101,7 +125,7 @@ export interface OrderDetail {
   landingPlace: string | null
   customerRef: string | null
   factoryShippingDate: string | null
-  inspectionShippingDate: string | null
+  deliveryPlaceShippingDate: string | null
   overseasDepartureDate: string | null
   warehouse2Id: number | null
   warehouse2Name: string | null
@@ -136,16 +160,35 @@ export interface CreateOrderPayload {
     // 旧 発注明細 項目 (Phase B、任意)
     packQuantity: number | null
     estimateUnitPrice: number | null
+    // 発注明細 備考 (spec 明細 No.26、任意)
+    remark: string | null
+    // 分納×倉庫の多次元明細 (PR5b、任意)。null/空 = 分納なし (単一明細、従来挙動)。
+    // 1 件以上あればサーバ側で line.quantity = 分納 quantity 合計 (SUM) に再計算される。
+    deliveries?: {
+      warehouseId: number | null
+      deliveryDate: string | null
+      quantity: number
+      packQuantity: number | null
+    }[] | null
   }[]
   // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
   isOverseas: boolean
   landingPlace: string | null
   customerRef: string | null
   factoryShippingDate: string | null
-  inspectionShippingDate: string | null
+  deliveryPlaceShippingDate: string | null
   overseasDepartureDate: string | null
   warehouse2Id: number | null
   warehouse3Id: number | null
+  // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列を SoT として送る。各行は空欄なら null。
+  // communicationText は新フロントから書かない (旧データのみ保持) が、I/F 互換のため従来値を
+  // そのまま送り返す (作成時は null)。
+  communicationLine1: string | null
+  communicationLine2: string | null
+  communicationLine3: string | null
+  communicationLine4: string | null
+  communicationLine5: string | null
+  communicationLine6: string | null
 }
 
 export interface UpdateOrderPayload extends CreateOrderPayload {
@@ -157,6 +200,20 @@ export interface CommunicationSuggestion {
   body: string
   standardPrintFlag: boolean
   sourceLabel: string
+}
+
+// サイズ別仕入単価 (PR2)。発注明細の unit_price_snapshot 入力補助 (size-aware サジェスト)。
+// SKU (productId) の size に対応する現単価を「(family, supplier, SKUのsize) → 無ければ
+// (…, NULL-size 既定)」のフォールバックで解決。現単価が無ければ found=false。
+export interface PriceSuggestion {
+  found: boolean
+  unitPrice: number | null
+  currencyCode: string | null
+  exchangeRate: number | null
+  /** 解決に使われた行のサイズ (sizes.id)。全サイズ既定で解決された場合は null */
+  resolvedSizeId: number | null
+  /** size 専用単価で解決されたか (false = 全サイズ既定 fallback) */
+  isSizeSpecific: boolean
 }
 
 export const useOrders = () => {
@@ -262,7 +319,14 @@ export const useOrders = () => {
     return res.data
   }
 
-  return { list, get, create, update, cancel, markDelivered, softDelete, downloadExcel, bulkExport, communicationSuggestions }
+  /**
+   * 単価サジェスト (PR2、size-aware)。SKU と発注先から現単価を解決して返す (入力補助)。
+   * サーバ側で snapshot を上書きしないため、本値はフォームの初期値/補完にのみ使う。
+   */
+  const priceSuggestion = async (productId: number, supplierId: number): Promise<PriceSuggestion> =>
+    await apiFetch<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
+
+  return { list, get, create, update, cancel, markDelivered, softDelete, downloadExcel, bulkExport, communicationSuggestions, priceSuggestion }
 }
 
 // ─────────────────────────────────────────────────

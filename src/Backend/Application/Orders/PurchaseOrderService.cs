@@ -15,13 +15,21 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
 {
     /// <summary>
     /// 新規作成 (O-01)。mgmt_no を自動採番 (年下 2 桁 + 連番、例: "26-00001")。
-    /// product_supplier_prices から現在有効単価を引当 (BR-04) してスナップショット化。
+    /// 各明細の unit_price_snapshot はクライアント入力値をそのまま凍結保存する
+    /// (サーバ側で product_supplier_prices から引当て・上書きはしない。「単価未決定」=
+    /// unit_price_snapshot &lt;= 0 の状態も保持される)。入力補助の size-aware 現単価サジェストは
+    /// OrderEndpoints の GET /api/v1/orders/price-suggestion で別途提供 (読取専用、PR2)。
     /// </summary>
     public async Task<PurchaseOrder> CreateAsync(
         CreateOrderRequest req, long actorUserId, CancellationToken ct = default)
     {
         if (req.Lines.Count == 0)
             throw new ArgumentException("明細を 1 件以上指定してください (ORDER-001)");
+
+        // 分納×倉庫の多次元明細 (PR5b) を DB 書込前に一括検証 (不正は 422 で弾く)。
+        // null/空は分納なし (単一明細) として許容。1 件以上あれば各行数量・合計を検証。
+        foreach (var l in req.Lines)
+            ValidateDeliveries(l.Deliveries);
 
         var nextMgmtNo = await GenerateMgmtNoAsync(ct);
 
@@ -51,11 +59,19 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                 LandingPlace = req.LandingPlace,
                 CustomerRef = req.CustomerRef,
                 FactoryShippingDate = req.FactoryShippingDate,
-                InspectionShippingDate = req.InspectionShippingDate,
+                DeliveryPlaceShippingDate = req.DeliveryPlaceShippingDate,
                 OverseasDepartureDate = req.OverseasDepartureDate,
                 Warehouse2Id = req.Warehouse2Id,
                 Warehouse3Id = req.Warehouse3Id,
                 CommunicationText = req.CommunicationText,
+                // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列を SoT として保存する。CommunicationText は
+                // 旧クライアント互換のため受理して保存するが、新フロントは 6 列のみ送る (空欄は null)。
+                CommunicationLine1 = req.CommunicationLine1,
+                CommunicationLine2 = req.CommunicationLine2,
+                CommunicationLine3 = req.CommunicationLine3,
+                CommunicationLine4 = req.CommunicationLine4,
+                CommunicationLine5 = req.CommunicationLine5,
+                CommunicationLine6 = req.CommunicationLine6,
                 CreatedAt = now, UpdatedAt = now,
                 CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
             };
@@ -63,6 +79,8 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             await db.SaveChangesAsync(ct);
 
             short lineNo = 1;
+            // 分納がある明細について (line エンティティ, 分納入力) を控えておき、line.Id 確定後に分納を挿入する。
+            var pendingDeliveries = new List<(PurchaseOrderLine Line, List<OrderLineDeliveryInput> Deliveries)>();
             foreach (var l in req.Lines)
             {
                 var product = await db.Products
@@ -70,7 +88,10 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                     .FirstOrDefaultAsync(p => p.Id == l.ProductId, ct)
                     ?? throw new ArgumentException($"product_id={l.ProductId} 不在");
 
-                db.PurchaseOrderLines.Add(new PurchaseOrderLine
+                // 分納 (PR5b): 1 件以上あれば line.Quantity = 分納数量の合計 (SUM)。0 件は client の quantity を
+                // そのまま使う (従来挙動)。subtotal は GENERATED (quantity * unit_price_snapshot) のため書かない。
+                var hasDeliveries = l.Deliveries is { Count: > 0 };
+                var line = new PurchaseOrderLine
                 {
                     PurchaseOrderId = order.Id,
                     LineNo = lineNo++,
@@ -82,14 +103,25 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                     ProvisionalNumberSnapshot = product.ProductFamily?.ProvisionalNumber,
                     PackQuantity = l.PackQuantity,
                     EstimateUnitPrice = l.EstimateUnitPrice,
-                    Quantity = l.Quantity,
+                    Remark = l.Remark,
+                    Quantity = hasDeliveries ? SumDeliveryQuantity(l.Deliveries!) : l.Quantity,
                     UnitPriceSnapshot = l.UnitPriceSnapshot,
                     CurrencyCodeSnapshot = l.CurrencyCodeSnapshot,
                     CreatedAt = now, UpdatedAt = now,
                     CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
-                });
+                };
+                db.PurchaseOrderLines.Add(line);
+                if (hasDeliveries)
+                    pendingDeliveries.Add((line, l.Deliveries!));
             }
             await db.SaveChangesAsync(ct);
+
+            // 分納行の挿入 (PR5b)。line.Id は上の SaveChanges で確定済。seq は配列順で 1 から採番。
+            foreach (var (line, deliveries) in pendingDeliveries)
+                db.PurchaseOrderLineDeliveries.AddRange(BuildDeliveryEntities(line.Id, deliveries, now, actorUserId));
+            if (pendingDeliveries.Count > 0)
+                await db.SaveChangesAsync(ct);
+
             await tx.CommitAsync(ct);
 
             await audit.LogAsync(actorUserId, "PurchaseOrder.Create",
@@ -186,6 +218,8 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             .Include(l => l.Product).ThenInclude(p => p!.Color)
             .Include(l => l.Product).ThenInclude(p => p!.Size)
             .Include(l => l.Product).ThenInclude(p => p!.ProductFamily)
+            // 分納×倉庫の多次元明細 (PR5b)。倉庫名解決のため Warehouse ナビも Include。
+            .Include(l => l.Deliveries).ThenInclude(d => d.Warehouse)
             .Where(l => l.PurchaseOrderId == id)
             .OrderBy(l => l.LineNo)
             .ToListAsync(ct);
@@ -214,21 +248,36 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                 l.Id, l.LineNo, l.ProductId, l.SkuSnapshot, l.ProductNameSnapshot,
                 l.Product?.Color?.Name ?? "?", l.Product?.Size?.Name ?? "?",
                 l.Quantity, l.UnitPriceSnapshot, l.CurrencyCodeSnapshot, l.Subtotal,
-                // 旧 発注明細 項目 (Phase B)
-                l.PackQuantity, l.EstimateUnitPrice, l.ProvisionalNumberSnapshot)).ToList(),
+                // 旧 発注明細 項目 (Phase B) + 発注明細 備考 (spec 明細 No.26)
+                l.PackQuantity, l.EstimateUnitPrice, l.ProvisionalNumberSnapshot, l.Remark,
+                // 分納×倉庫の多次元明細 (PR5b)。seq 昇順 (表示順)。分納なしの明細では空リスト。
+                l.Deliveries
+                    .OrderBy(d => d.Seq).ThenBy(d => d.Id)
+                    .Select(d => new OrderLineDeliverySummary(
+                        d.Id, d.WarehouseId, d.Warehouse?.Name, d.DeliveryDate,
+                        d.Quantity, d.PackQuantity, d.Seq))
+                    .ToList())).ToList(),
             // 旧 発注書 国内/海外 項目 (Phase B)。納入倉庫2/3 名は Include 済ナビから解決 (未設定時 null)。
             order.IsOverseas,
             order.LandingPlace,
             order.CustomerRef,
             order.FactoryShippingDate,
-            order.InspectionShippingDate,
+            order.DeliveryPlaceShippingDate,
             order.OverseasDepartureDate,
             order.Warehouse2Id, order.Warehouse2?.Name,
             order.Warehouse3Id, order.Warehouse3?.Name,
             // 発注状態 5 値モデル (#3a)。納品完了/発注削除 の状態表示・操作可否判定に使う。
             order.DeliveredAt,
             order.IsDeleted,
-            order.DeletedAt);
+            order.DeletedAt,
+            // 連絡文書 6 行 (構造化、PR6)。新フローの SoT を返す。6 列が全 NULL の旧発注は
+            // フロント側で CommunicationText を改行分割してブリッジ表示する (本メソッドは両方返すだけ)。
+            order.CommunicationLine1,
+            order.CommunicationLine2,
+            order.CommunicationLine3,
+            order.CommunicationLine4,
+            order.CommunicationLine5,
+            order.CommunicationLine6);
     }
 
     /// <summary>編集 (O-04)。F-16 edit_reason 必須、audit_logs.changes に before/after 記録。</summary>
@@ -245,6 +294,11 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             throw new InvalidOperationException("削除済みの発注書は編集できません (ORDER-007)");
         if (order.DeliveredAt is not null)
             throw new InvalidOperationException("納品完了済みの発注書は編集できません (ORDER-008)");
+
+        // 分納×倉庫の多次元明細 (PR5b) を DB 書込前に一括検証 (不正は 422 で弾く)。
+        // null/空は分納なし (単一明細) として許容。1 件以上あれば各行数量・合計を検証。
+        foreach (var l in req.Lines)
+            ValidateDeliveries(l.Deliveries);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -268,27 +322,43 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             order.LandingPlace = req.LandingPlace;
             order.CustomerRef = req.CustomerRef;
             order.FactoryShippingDate = req.FactoryShippingDate;
-            order.InspectionShippingDate = req.InspectionShippingDate;
+            order.DeliveryPlaceShippingDate = req.DeliveryPlaceShippingDate;
             order.OverseasDepartureDate = req.OverseasDepartureDate;
             order.Warehouse2Id = req.Warehouse2Id;
             order.Warehouse3Id = req.Warehouse3Id;
             order.CommunicationText = req.CommunicationText;
+            // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列で上書き保存する (SoT)。空欄は null。
+            // CommunicationText は新フロントが従来値をそのまま送り返すため値は保持される (旧データ温存)。
+            order.CommunicationLine1 = req.CommunicationLine1;
+            order.CommunicationLine2 = req.CommunicationLine2;
+            order.CommunicationLine3 = req.CommunicationLine3;
+            order.CommunicationLine4 = req.CommunicationLine4;
+            order.CommunicationLine5 = req.CommunicationLine5;
+            order.CommunicationLine6 = req.CommunicationLine6;
             order.UpdatedAt = now;
             order.UpdatedByUserId = actorUserId;
 
-            // 明細: 既存全削除 → 新規 INSERT (シンプル実装、Iter 4 で差分更新最適化を検討)
+            // 明細: 既存全削除 → 新規 INSERT (シンプル実装、Iter 4 で差分更新最適化を検討)。
+            // 分納 (PR5b) は明細を全置換する設計のため、親明細削除に伴い分納行も DB の ON DELETE CASCADE で
+            // 消える (purchase_order_line_deliveries.purchase_order_line_id FK)。再 INSERT 時に再構築する。
             var existing = await db.PurchaseOrderLines.Where(l => l.PurchaseOrderId == id).ToListAsync(ct);
             db.PurchaseOrderLines.RemoveRange(existing);
             await db.SaveChangesAsync(ct);
 
             short lineNo = 1;
+            // 分納がある明細について (line エンティティ, 分納入力) を控えておき、line.Id 確定後に分納を挿入する。
+            var pendingDeliveries = new List<(PurchaseOrderLine Line, List<OrderLineDeliveryInput> Deliveries)>();
             foreach (var l in req.Lines)
             {
                 var product = await db.Products
                     .Include(p => p.ProductFamily)
                     .FirstOrDefaultAsync(p => p.Id == l.ProductId, ct)
                     ?? throw new ArgumentException($"product_id={l.ProductId} 不在");
-                db.PurchaseOrderLines.Add(new PurchaseOrderLine
+
+                // 分納 (PR5b): 1 件以上あれば line.Quantity = 分納数量の合計 (SUM)。0 件は client の quantity を
+                // そのまま使う (従来挙動)。subtotal は GENERATED (quantity * unit_price_snapshot) のため書かない。
+                var hasDeliveries = l.Deliveries is { Count: > 0 };
+                var line = new PurchaseOrderLine
                 {
                     PurchaseOrderId = order.Id,
                     LineNo = lineNo++,
@@ -300,14 +370,25 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                     ProvisionalNumberSnapshot = product.ProductFamily?.ProvisionalNumber,
                     PackQuantity = l.PackQuantity,
                     EstimateUnitPrice = l.EstimateUnitPrice,
-                    Quantity = l.Quantity,
+                    Remark = l.Remark,
+                    Quantity = hasDeliveries ? SumDeliveryQuantity(l.Deliveries!) : l.Quantity,
                     UnitPriceSnapshot = l.UnitPriceSnapshot,
                     CurrencyCodeSnapshot = l.CurrencyCodeSnapshot,
                     CreatedAt = now, UpdatedAt = now,
                     CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
-                });
+                };
+                db.PurchaseOrderLines.Add(line);
+                if (hasDeliveries)
+                    pendingDeliveries.Add((line, l.Deliveries!));
             }
             await db.SaveChangesAsync(ct);
+
+            // 分納行の再挿入 (PR5b、全置換)。line.Id は上の SaveChanges で確定済。seq は配列順で 1 から採番。
+            foreach (var (line, deliveries) in pendingDeliveries)
+                db.PurchaseOrderLineDeliveries.AddRange(BuildDeliveryEntities(line.Id, deliveries, now, actorUserId));
+            if (pendingDeliveries.Count > 0)
+                await db.SaveChangesAsync(ct);
+
             await tx.CommitAsync(ct);
 
             await audit.LogAsync(actorUserId, "PurchaseOrder.Update",
@@ -426,6 +507,63 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             .ToListAsync(ct);
 
         return confirmations.Concat(purchases).ToList();
+    }
+
+    /// <summary>
+    /// 分納×倉庫の多次元明細 (PR5b) の入力検証。null/空は分納なし (単一明細) として許容 (検証なし)。
+    /// 1 件以上あれば各行の数量 (正の整数) を検証し、合計 (SUM) も 0 超であることを保証する。
+    /// WarehouseId / DeliveryDate は NULL 許容のため存在検証はしない (倉庫未指定 / 発注明細日未指定を許容)。
+    /// </summary>
+    private static void ValidateDeliveries(List<OrderLineDeliveryInput>? deliveries)
+    {
+        if (deliveries is null || deliveries.Count == 0) return;
+        long sum = 0;
+        foreach (var d in deliveries)
+        {
+            if (d.Quantity <= 0)
+                throw new ArgumentException("分納明細の発注数は正の整数で指定してください (ORDER-LINE-DLV-001)");
+            if (d.PackQuantity is { } pack && pack < 0)
+                throw new ArgumentException("分納明細の入数は 0 以上で指定してください (ORDER-LINE-DLV-002)");
+            sum += d.Quantity;
+        }
+        // 各 Quantity > 0 を満たせば sum > 0 だが、合計が int 範囲を超えないことも明示確認する。
+        if (sum <= 0 || sum > int.MaxValue)
+            throw new ArgumentException("分納明細の発注数合計が不正です (ORDER-LINE-DLV-003)");
+    }
+
+    /// <summary>
+    /// 分納×倉庫の多次元明細 (PR5b) の Quantity 合計 (SUM)。null/空は 0。
+    /// 分納が 1 件以上ある明細では line.Quantity にこの値を設定する (subtotal GENERATED 列が
+    /// quantity * unit_price_snapshot で正しい金額になる)。<see cref="ValidateDeliveries"/> 後に呼ぶ。
+    /// </summary>
+    private static int SumDeliveryQuantity(List<OrderLineDeliveryInput> deliveries)
+        => deliveries.Sum(d => d.Quantity);
+
+    /// <summary>
+    /// 分納×倉庫の多次元明細 (PR5b) の入力を永続化エンティティへ変換する。seq は配列順で 1 から採番。
+    /// 親明細 (lineId) は SaveChanges 済で Id が確定していることを前提とする (FK = purchase_order_line_id)。
+    /// 呼び出し前に <see cref="ValidateDeliveries"/> で検証済であることを前提とする。
+    /// </summary>
+    private static List<PurchaseOrderLineDelivery> BuildDeliveryEntities(
+        long lineId, List<OrderLineDeliveryInput> deliveries, DateTime now, long actorUserId)
+    {
+        var result = new List<PurchaseOrderLineDelivery>(deliveries.Count);
+        short seq = 1;
+        foreach (var d in deliveries)
+        {
+            result.Add(new PurchaseOrderLineDelivery
+            {
+                PurchaseOrderLineId = lineId,
+                WarehouseId = d.WarehouseId,
+                DeliveryDate = d.DeliveryDate,
+                Quantity = d.Quantity,
+                PackQuantity = d.PackQuantity,
+                Seq = seq++,
+                CreatedAt = now, UpdatedAt = now,
+                CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
+            });
+        }
+        return result;
     }
 
     /// <summary>mgmt_no 採番 (例: "26-00001")。年下 2 桁 + ハイフン + 5 桁ゼロ埋め連番。</summary>

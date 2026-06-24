@@ -107,6 +107,10 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
     id                    BIGSERIAL PRIMARY KEY,
     product_family_id     BIGINT         NOT NULL REFERENCES product_families(id),
     supplier_id           BIGINT         NOT NULL REFERENCES suppliers(id),
+    -- サイズ別仕入単価 (PR2、設計判断Q4=サイズ別必要)。
+    --   NULL = 全サイズ共通の既定単価 (従来挙動、既存行は NULL のまま下位互換)。
+    --   非NULL = そのサイズ専用単価 (既定をオーバーライド)。BR-04 有効日履歴は size 次元込みで維持。
+    size_id               BIGINT         NULL     REFERENCES sizes(id),
     unit_price            NUMERIC(12,2)  NOT NULL,
     currency_code         CHAR(3)        NOT NULL DEFAULT 'JPY',
     exchange_rate         NUMERIC(10,4)  NULL,
@@ -131,11 +135,37 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
     CONSTRAINT chk_psp_unit_price CHECK (unit_price > 0),
     CONSTRAINT chk_psp_effective_range CHECK (effective_to IS NULL OR effective_to > effective_from)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_psp_family_supplier_from
-    ON product_supplier_prices (product_family_id, supplier_id, effective_from) WHERE is_deleted = FALSE;
+-- 一意制約に size を含める (PR2)。Postgres は NULL を distinct 扱いするため、size_id=NULL の
+-- 既定行どうしの一意性が緩まないよう COALESCE(size_id, -1) 式インデックスを使う (移植性重視。
+-- PG15+ の UNIQUE NULLS NOT DISTINCT は使わない)。sizes.id は BIGSERIAL ≥ 1 のため -1 は衝突しない。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_psp_family_supplier_size_from
+    ON product_supplier_prices (product_family_id, supplier_id, COALESCE(size_id, -1), effective_from)
+    WHERE is_deleted = FALSE;
+-- 現単価解決 (family, supplier, size) の現在有効行ルックアップ + BR-04 履歴クローズ用の選択性確保 (PR2)。
 CREATE INDEX IF NOT EXISTS idx_psp_family_current
-    ON product_supplier_prices (product_family_id, effective_from DESC)
+    ON product_supplier_prices (product_family_id, supplier_id, COALESCE(size_id, -1), effective_from DESC)
     WHERE effective_to IS NULL AND is_deleted = FALSE;
+
+-- ─────────────────────────────────────────────────
+-- product_set_components — アソート/セット明細 (PR3、旧 spec No.37/38)
+-- ある商品 (family) がアソート/セット品である場合の「子品番 + 数量」構成明細。
+-- 商品の作成/更新時に全置換するコレクション (BOM / 色サイズ展開と同じパターン)。
+-- child_item_number は手入力テキスト = products/product_families への FK は張らない
+-- (旧システム品番/外部品番も許容するため、旧 spec の「手入力」に忠実)。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS product_set_components (
+    id                    BIGSERIAL PRIMARY KEY,
+    product_family_id     BIGINT       NOT NULL REFERENCES product_families(id) ON DELETE CASCADE,
+    child_item_number     VARCHAR(32)  NOT NULL,                                 -- 子品番 (手入力テキスト、spec No.37)
+    quantity              INTEGER      NOT NULL,                                 -- 数量 (spec No.38)
+    line_no               SMALLINT     NOT NULL DEFAULT 1,                       -- 表示順 (配列順で採番)
+    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
+    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
+    CONSTRAINT chk_psc_quantity CHECK (quantity > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_psc_family ON product_set_components (product_family_id);
 
 -- ─────────────────────────────────────────────────
 -- Seed: Iteration 2 動作確認用に最小データ投入

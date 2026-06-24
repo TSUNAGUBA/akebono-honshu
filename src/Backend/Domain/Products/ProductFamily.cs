@@ -86,4 +86,6 @@ public class ProductFamily
     public List<Product> Products { get; set; } = new();
     public List<ProductImage> Images { get; set; } = new();
     public List<ProductSupplierPrice> SupplierPrices { get; set; } = new();
+    // アソート/セット明細 (PR3、旧 spec No.37/38)。商品の作成/更新時に全置換するコレクション。
+    public List<ProductSetComponent> SetComponents { get; set; } = new();
 }

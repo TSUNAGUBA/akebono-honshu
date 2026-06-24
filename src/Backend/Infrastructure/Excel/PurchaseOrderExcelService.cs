@@ -18,7 +18,8 @@ namespace Akebono.Infrastructure.Excel;
 ///  - A4 「mgmt_no: ..., order_no: ..., due_date: ...」
 ///  - A6 表ヘッダ (line_no / sku / 商品名 / 数量 / 単価 / 小計 / 通貨)
 ///  - A7〜 明細
-///  - 末尾「連絡文章: <communication_text>」
+///  - 末尾「連絡文書:」+ 構造化 6 行 (communication_line_1..6 の非空行を優先)。
+///    6 列が全て空の旧発注は communication_text にフォールバック (PR6 後方互換)。
 /// </summary>
 public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
     : IPurchaseOrderExcelService
@@ -39,6 +40,8 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             ?? throw new InvalidOperationException($"発注書 id={purchaseOrderId} 不在");
 
         var lines = await db.PurchaseOrderLines
+            // 分納×倉庫の多次元明細 (PR5b)。倉庫名解決のため Warehouse ナビも Include。
+            .Include(l => l.Deliveries).ThenInclude(d => d.Warehouse)
             .Where(l => l.PurchaseOrderId == purchaseOrderId)
             .OrderBy(l => l.LineNo)
             .ToListAsync(ct);
@@ -122,6 +125,8 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             ws.Cell(dataRow, 1).Value = (int)line.LineNo;
             ws.Cell(dataRow, 2).Value = line.SkuSnapshot;
             ws.Cell(dataRow, 3).Value = line.ProductNameSnapshot;
+            // 数量 = line.Quantity。分納あり明細では line.Quantity = 分納数量の合計 (SUM、PR5b) のため、
+            // 明細合計数量・小計は従来表示を維持する。分納内訳は下の追記行で出力する。
             ws.Cell(dataRow, 4).Value = line.Quantity;
             ws.Cell(dataRow, 5).Value = line.UnitPriceSnapshot;
             ws.Cell(dataRow, 5).Style.NumberFormat.Format = "#,##0.00";
@@ -133,6 +138,25 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             totalAmount += line.Subtotal;
             currency = line.CurrencyCodeSnapshot;
             dataRow++;
+
+            // 分納×倉庫の多次元明細 (PR5b): 分納がある明細は、明細直下に「分納スケジュール」追記行を
+            // 1 分納 = 1 行で出力する (倉庫 / 納期 / 数量 / 入数)。金額・合計には影響しない (明細行の
+            // line.Subtotal が SUM ベースで既に正しいため二重計上しない)。商品名列に内訳を寄せて表示する。
+            if (line.Deliveries.Count > 0)
+            {
+                foreach (var d in line.Deliveries.OrderBy(x => x.Seq).ThenBy(x => x.Id))
+                {
+                    var wh = d.Warehouse?.Name ?? "倉庫未指定";
+                    var date = d.DeliveryDate?.ToString("yyyy-MM-dd") ?? "(発注明細日)";
+                    var pack = d.PackQuantity is { } p ? $" 入数 {p}" : "";
+                    ws.Cell(dataRow, 3).Value = $"  └ 分納: {wh} / {date}{pack}";
+                    ws.Cell(dataRow, 3).Style.Font.SetItalic().Font.FontColor = XLColor.Gray;
+                    ws.Cell(dataRow, 4).Value = d.Quantity;
+                    for (var col = 1; col <= 7; col++)
+                        ws.Cell(dataRow, col).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                    dataRow++;
+                }
+            }
         }
 
         // 合計行
@@ -141,11 +165,36 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
         ws.Cell(dataRow, 7).Value = totalAmount;
         ws.Cell(dataRow, 7).Style.Font.SetBold().NumberFormat.Format = "#,##0.00";
 
-        // 連絡文章
-        if (!string.IsNullOrEmpty(order.CommunicationText))
+        // 連絡文書 (PR6): 構造化 6 行を優先してレンダリングする (line_1..6 の非 null/非空を順に、
+        // 1 行 = 1 セル行)。6 列が全て空の発注 (= 旧データ) では communication_text にフォールバックして
+        // 従来どおり描画する (既存発注の連絡文書表示を壊さない、後方互換)。
+        // 合計行 (dataRow) の下に 1 行空けて見出し → 本文の順で出力するレイアウトは従来と同一。
+        var commLines = new[]
         {
+            order.CommunicationLine1, order.CommunicationLine2, order.CommunicationLine3,
+            order.CommunicationLine4, order.CommunicationLine5, order.CommunicationLine6,
+        }
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+        if (commLines.Count > 0)
+        {
+            // 新フロー: 6 列の非空行を順に出力。各行は 1〜7 列を結合して wrap 表示 (本文行と同レイアウト)。
             var commRow = dataRow + 2;
-            ws.Cell(commRow, 1).Value = "連絡文章:";
+            ws.Cell(commRow, 1).Value = "連絡文書:";
+            ws.Cell(commRow, 1).Style.Font.SetBold();
+            var bodyRow = commRow + 1;
+            foreach (var l in commLines)
+            {
+                ws.Cell(bodyRow, 1).Value = l;
+                ws.Range(bodyRow, 1, bodyRow, 7).Merge().Style.Alignment.SetWrapText(true);
+                bodyRow++;
+            }
+        }
+        else if (!string.IsNullOrEmpty(order.CommunicationText))
+        {
+            // フォールバック (旧データ): 6 列が全て空の発注は従来の communication_text を描画する。
+            var commRow = dataRow + 2;
+            ws.Cell(commRow, 1).Value = "連絡文書:";
             ws.Cell(commRow, 1).Style.Font.SetBold();
             ws.Cell(commRow + 1, 1).Value = order.CommunicationText;
             ws.Range(commRow + 1, 1, commRow + 1, 7).Merge().Style.Alignment.SetWrapText(true);
