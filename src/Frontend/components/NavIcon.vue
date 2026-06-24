@@ -111,6 +111,16 @@ defineProps<{ name: string }>()
       <path d="M22 12h-6l-2 3h-4l-2-3H2" />
       <path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6z" />
     </template>
+    <template v-else-if="name === 'coin'">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M14.5 9.2A3 3 0 0 0 9.5 11c0 2.5 5 1.5 5 4a3 3 0 0 1-5 1.8" />
+      <path d="M12 7.2v1.4M12 15.4v1.4" />
+    </template>
+    <template v-else-if="name === 'ledger'">
+      <path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z" />
+      <path d="M5 18a2 2 0 0 1 2-2h11" />
+      <path d="M10 8h5M10 11h5" />
+    </template>
     <template v-else>
       <circle cx="12" cy="12" r="2.5" />
     </template>

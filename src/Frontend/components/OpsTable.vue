@@ -12,9 +12,9 @@ const props = defineProps<{ dataset: string }>()
 const ds = computed(() => OPS_DATASETS[props.dataset])
 
 const badgeClass = (s: string): string => {
-  if (['出荷済', '取込済', '送信済', '完了'].includes(s)) return 'bg-green-100 text-green-700'
-  if (['エラー', '取消'].includes(s)) return 'bg-red-100 text-red-700'
-  if (['受信済', '受注', '送信待ち', '未着手', '引当済', 'ピッキング中'].includes(s)) return 'bg-amber-100 text-amber-700'
+  if (['出荷済', '取込済', '送信済', '完了', '入金済', '消込済', '正常'].includes(s)) return 'bg-green-100 text-green-700'
+  if (['エラー', '取消', '督促中'].includes(s)) return 'bg-red-100 text-red-700'
+  if (['受信済', '受注', '送信待ち', '未着手', '引当済', 'ピッキング中', '請求済', '一部入金', '発行待ち', '一部消込', '未消込', '滞留'].includes(s)) return 'bg-amber-100 text-amber-700'
   return 'bg-gray-100 text-gray-600'
 }
 </script>

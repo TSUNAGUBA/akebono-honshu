@@ -180,15 +180,18 @@ export const NAV_CATEGORIES: NavCategory[] = [
     id: 'sales',
     label: '販売管理',
     icon: 'cart',
-    description: '取引先からの受注・売上を管理する',
+    description: '売上・請求・入金・債権（売掛）を管理する',
     sections: [
       {
         id: 'sales-main',
         label: '販売管理',
         icon: 'cart',
-        description: '受注・売上の一覧',
+        description: '売上・請求・入金・債権',
         links: [
-          { path: '/sales', label: '受注一覧', icon: 'cart' },
+          { path: '/sales', label: '売上', icon: 'cart' },
+          { path: '/sales/billing', label: '請求', icon: 'file-text' },
+          { path: '/sales/payments', label: '入金', icon: 'coin' },
+          { path: '/sales/receivables', label: '債権', icon: 'ledger' },
         ],
       },
     ],
