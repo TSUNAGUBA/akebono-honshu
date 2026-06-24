@@ -84,7 +84,7 @@
  │ delivery_destination               ▼
  │ document_template_purchase ┌──────────────────────────────────────┐
  │ document_template_confirmation │ product_supplier_prices            │
- │ document_text_purchase    │ - product_id, supplier_id              │
+ │ document_text_purchase    │ - product_family_id, supplier_id, size_id │
  └────────────┘              │ - unit_price, effective_from           │
                              │ - currency, exchange_rate              │
                              └──────────────────────────────────────┘
@@ -357,13 +357,19 @@
 
 ### 4.4 `product_supplier_prices` — マルチ仕入先単価
 
-**アイテム（product_family）単位** で複数 (仕入先, 単価, 有効開始日) を保持（P-03 / BR-04）。同一企画内では色違い・サイズ違いでも仕入単価は同じ（業務ルール、Phase 6 で確定）。
+**アイテム（product_family）単位** で複数 (仕入先, 単価, 有効開始日) を保持（P-03 / BR-04）。
+仕入単価は原則アイテム単位（色違い・サイズ違いで共通）だが、PR2（設計判断Q4=サイズ別必要）で
+**サイズ別単価**に対応した: `size_id` が NULL のとき全サイズ共通の既定単価（従来挙動、既存行は NULL の
+まま下位互換）、非 NULL のときそのサイズ専用単価（既定をオーバーライド）。BR-04 有効日履歴は size 次元
+込みで維持する。現単価解決は「そのサイズ専用の有効行があればそれを、無ければ NULL-size 既定行」の
+フォールバック。
 
 | カラム | 型 | 補足 |
 |---|---|---|
 | `id` | `BIGSERIAL PRIMARY KEY` | |
 | `product_family_id` | `BIGINT NOT NULL REFERENCES product_families(id)` | **アイテム単位**（旧設計の SKU 単位 `product_id` から修正、Phase 6 オペレーター確認で確定）|
 | `supplier_id` | `BIGINT NOT NULL REFERENCES suppliers(id)` | |
+| `size_id` | `BIGINT NULL REFERENCES sizes(id)` | **サイズ別仕入単価（PR2、設計判断Q4）**。NULL = 全サイズ共通の既定単価（従来挙動）、非 NULL = そのサイズ専用単価。既存行は NULL のまま下位互換 |
 | `unit_price` | `NUMERIC(12,2) NOT NULL` | 仕入単価（機密度 中-高、Phase 4 §5 アクセス制御）|
 | `currency_code` | `CHAR(3) NOT NULL DEFAULT 'JPY'` | ISO 4217（JPY, USD, CNY 等）|
 | `exchange_rate` | `NUMERIC(10,4) NULL` | 為替レート（外貨建ての場合）|
@@ -373,16 +379,18 @@
 | `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除 |
 | 共通監査 4 列 | | |
 
-**UNIQUE 制約:** `(product_family_id, supplier_id, effective_from) WHERE is_deleted = FALSE`（同一企画・同一仕入先・同一開始日の重複防止、PRICE-001）。
+> **補足（旧項目パリティ追補、全 NULL 許容）:** 上表のほか、`exchange_rate`（為替レート）、Phase C 仕入コスト計算明細 9 列（`estimate_unit_price` / `estimate_received_date` / `estimate_cost` / `estimate_margin_rate` / `purchase_cost` / `purchase_margin_rate` / `loss_cost` / `drayage_cost`（旧「トレー代」、設計判断Q6 で名称統一）/ `tax_rate`）を保持する。全カラムの正規定義は `db/init/03-products.sql`（SoT）を参照。
 
-**インデックス:** `idx_psp_family_current (product_family_id, effective_from DESC) WHERE effective_to IS NULL AND is_deleted = FALSE`（現在有効単価の高速取得）。
+**UNIQUE 制約:** `(product_family_id, supplier_id, COALESCE(size_id, -1), effective_from) WHERE is_deleted = FALSE`（同一企画・同一仕入先・**同一サイズ**・同一開始日の重複防止、PRICE-001）。PR2 で `size_id` を一意キーに追加。Postgres は NULL を distinct 扱いするため、`size_id=NULL` の既定行どうしの一意性が緩まないよう `COALESCE(size_id, -1)` 式一意インデックス（`uq_psp_family_supplier_size_from`）を用いる（移植性重視。`sizes.id` は BIGSERIAL ≥ 1 のため -1 は衝突しない）。
+
+**インデックス:** `idx_psp_family_current (product_family_id, supplier_id, COALESCE(size_id, -1), effective_from DESC) WHERE effective_to IS NULL AND is_deleted = FALSE`（現単価ルックアップ (family, supplier, size) と BR-04 履歴クローズの選択性確保、PR2 で size 込みに拡張）。
 
 **CHECK 制約:** `unit_price > 0`, `effective_to IS NULL OR effective_to > effective_from`。
 
 > **設計判断（BR-04 履歴管理）:**
-> - **アイテム単位** で 1 企画 × 1 仕入先で複数履歴を保持。現在有効＝`effective_to IS NULL`。新単価設定時は旧レコードの `effective_to` を新単価の `effective_from - 1day` で UPDATE + 新レコード INSERT（トランザクション境界）。
+> - **アイテム単位 × サイズ次元** で 1 企画 × 1 仕入先 × 1 サイズバケット（`size_id` 値、NULL も 1 バケット）に複数履歴を保持。現在有効＝`effective_to IS NULL`。新単価設定時は**同一サイズバケットの**旧レコードの `effective_to` を新単価の `effective_from - 1day` で UPDATE + 新レコード INSERT（トランザクション境界）。size 専用単価の新設で全サイズ既定をクローズしない（逆も同様）。
 > - 機密度「中-高」(NFR §6.2): KMS 保存時暗号化 + アクセス制御 + 監査ログ。**監査ログには金額本体ではなくマスク値（"***"）のみ記録**（architecture.md §4.2）。
-> - **発注時の引当てロジック:** `purchase_order_lines.unit_price_snapshot` は SKU の `product_id` → 親 `product_family_id` 経由で `product_supplier_prices` から仕入単価を引当てる。色違い・サイズ違いの SKU はすべて同一の単価が引当てられる。
+> - **発注時の単価スナップショット:** `purchase_order_lines.unit_price_snapshot` は発注作成/編集時のクライアント入力値をそのまま凍結保存する（SoT は入力時点の業務判断、「単価未決定」= `unit_price_snapshot <= 0` の状態も保持される）。入力補助として size-aware な現単価サジェスト（`GET /api/v1/orders/price-suggestion`、PR2）を提供する: SKU の `product_id` → 親 `product_family_id` と `size_id` を解決し、「(family, supplier, SKUのsize) の現単価 → 無ければ (…, NULL-size 既定) の現単価」のフォールバックでサジェストする。サジェストは読取専用で、サーバ側で snapshot を上書きしない。
 
 ---
 
@@ -453,7 +461,7 @@
 | `sku_snapshot` | `VARCHAR(11) NOT NULL` | 11桁品番のスナップショット（マスタ変更耐性）|
 | `product_name_snapshot` | `VARCHAR(255) NOT NULL` | 商品名スナップショット |
 | `quantity` | `INTEGER NOT NULL` | 数量 |
-| `unit_price_snapshot` | `NUMERIC(12,2) NOT NULL` | 発注時の単価スナップショット（product_supplier_prices から引当時に複写、BR-04）|
+| `unit_price_snapshot` | `NUMERIC(12,2) NOT NULL` | 発注時の単価スナップショット（発注作成/編集時のクライアント入力値を凍結。入力補助として size-aware 現単価サジェスト `GET /orders/price-suggestion` を提供するが、サーバ側で上書きはしない、PR2）|
 | `currency_code_snapshot` | `CHAR(3) NOT NULL` | 単価通貨スナップショット |
 | `subtotal` | `NUMERIC(14,2) GENERATED ALWAYS AS (quantity * unit_price_snapshot) STORED` | 計算列 |
 | 共通監査 4 列 | | |

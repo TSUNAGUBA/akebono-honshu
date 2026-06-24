@@ -107,6 +107,10 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
     id                    BIGSERIAL PRIMARY KEY,
     product_family_id     BIGINT         NOT NULL REFERENCES product_families(id),
     supplier_id           BIGINT         NOT NULL REFERENCES suppliers(id),
+    -- サイズ別仕入単価 (PR2、設計判断Q4=サイズ別必要)。
+    --   NULL = 全サイズ共通の既定単価 (従来挙動、既存行は NULL のまま下位互換)。
+    --   非NULL = そのサイズ専用単価 (既定をオーバーライド)。BR-04 有効日履歴は size 次元込みで維持。
+    size_id               BIGINT         NULL     REFERENCES sizes(id),
     unit_price            NUMERIC(12,2)  NOT NULL,
     currency_code         CHAR(3)        NOT NULL DEFAULT 'JPY',
     exchange_rate         NUMERIC(10,4)  NULL,
@@ -131,10 +135,15 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
     CONSTRAINT chk_psp_unit_price CHECK (unit_price > 0),
     CONSTRAINT chk_psp_effective_range CHECK (effective_to IS NULL OR effective_to > effective_from)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_psp_family_supplier_from
-    ON product_supplier_prices (product_family_id, supplier_id, effective_from) WHERE is_deleted = FALSE;
+-- 一意制約に size を含める (PR2)。Postgres は NULL を distinct 扱いするため、size_id=NULL の
+-- 既定行どうしの一意性が緩まないよう COALESCE(size_id, -1) 式インデックスを使う (移植性重視。
+-- PG15+ の UNIQUE NULLS NOT DISTINCT は使わない)。sizes.id は BIGSERIAL ≥ 1 のため -1 は衝突しない。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_psp_family_supplier_size_from
+    ON product_supplier_prices (product_family_id, supplier_id, COALESCE(size_id, -1), effective_from)
+    WHERE is_deleted = FALSE;
+-- 現単価解決 (family, supplier, size) の現在有効行ルックアップ + BR-04 履歴クローズ用の選択性確保 (PR2)。
 CREATE INDEX IF NOT EXISTS idx_psp_family_current
-    ON product_supplier_prices (product_family_id, effective_from DESC)
+    ON product_supplier_prices (product_family_id, supplier_id, COALESCE(size_id, -1), effective_from DESC)
     WHERE effective_to IS NULL AND is_deleted = FALSE;
 
 -- ─────────────────────────────────────────────────

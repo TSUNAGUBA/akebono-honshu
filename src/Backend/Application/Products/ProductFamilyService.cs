@@ -140,6 +140,8 @@ public class ProductFamilyService(
             {
                 ProductFamilyId = family.Id,
                 SupplierId = p.SupplierId,
+                // サイズ別仕入単価 (PR2)。NULL = 全サイズ共通の既定単価 (バルク登録の既定挙動)。
+                SizeId = p.SizeId,
                 UnitPrice = p.UnitPrice,
                 CurrencyCode = p.CurrencyCode,
                 ExchangeRate = p.ExchangeRate,
@@ -179,7 +181,7 @@ public class ProductFamilyService(
                     sizes.First(s => s.Id == p.SizeId).Code,
                     sizes.First(s => s.Id == p.SizeId).Name,
                     p.IsDeleted)).ToList(),
-                prices.Select(p => new SupplierPriceSummary(p.Id, p.SupplierId, p.UnitPrice, p.EffectiveFrom)).ToList());
+                prices.Select(p => new SupplierPriceSummary(p.Id, p.SupplierId, p.UnitPrice, p.EffectiveFrom, p.SizeId)).ToList());
         }
         catch
         {
@@ -213,6 +215,9 @@ public class ProductFamilyService(
                     .OrderBy(i => i.OrderNo)
                     .Select(i => i.S3Key)
                     .FirstOrDefault(),
+                // PR2: 現在有効な単価行の最小/最大。size 専用行 (size_id 非NULL) と全サイズ既定行
+                // (size_id NULL) の両方を含む = 商品の実際の価格レンジを表す。サイズ別単価が無い商品では
+                // 全サイズ既定のみが対象となり従来と同じ値 (下位互換)。
                 MinPrice = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null).Min(p => (decimal?)p.UnitPrice),
                 MaxPrice = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null).Max(p => (decimal?)p.UnitPrice),
                 Currency = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null)
@@ -344,6 +349,7 @@ public class ProductFamilyService(
 
         var currentPrices = await db.ProductSupplierPrices
             .Include(p => p.Supplier)
+            .Include(p => p.Size)  // PR2: サイズ別単価の表示名解決 (NULL-size 既定行では null)
             .Where(p => p.ProductFamilyId == familyId && !p.IsDeleted && p.EffectiveTo == null)
             .ToListAsync(ct);
 
@@ -412,7 +418,9 @@ public class ProductFamilyService(
                 p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt,
                 // 旧 仕入コスト計算明細 項目 (Phase C)
                 p.EstimateUnitPrice, p.EstimateReceivedDate, p.EstimateCost, p.EstimateMarginRate,
-                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate)).ToList());
+                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate,
+                // サイズ別仕入単価 (PR2)。SizeId=NULL は全サイズ共通の既定単価 (SizeName も null)。
+                p.SizeId, p.Size?.Name)).ToList());
     }
 
     /// <summary>商品企画更新 (P-05)。属性カラムのみ。FK 構成 (planned_year/type/season/seq/factory) は不変。</summary>

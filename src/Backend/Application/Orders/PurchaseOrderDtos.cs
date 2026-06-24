@@ -195,3 +195,21 @@ public record CancelOrderRequest(string CancelReason);
 // 連絡文章 (O-07、テンプレ複写)
 // ─────────────────────────────────────────────────
 public record CommunicationTextSuggestion(string Body, bool StandardPrintFlag, string SourceLabel);
+
+// ─────────────────────────────────────────────────
+// 単価サジェスト (PR2、size-aware)。発注明細の unit_price_snapshot 入力補助。
+// GET /api/v1/orders/price-suggestion?productId=&supplierId=
+//   SKU (productId) の size に対応する現単価を「(family, supplier, SKUのsize) の現単価 →
+//   無ければ (…, NULL-size 既定) の現単価」のフォールバックで解決して返す。
+//   現単価が一切無ければ Found=false (フロントは従来どおり手入力)。
+//   注: snapshot 書込は従来どおりクライアント入力値を verbatim 保存する (本サジェストは入力補助のみで、
+//   サーバ側で snapshot を上書きしない = 下位互換。「単価未決定」状態 unit_price<=0 も維持される)。
+// ─────────────────────────────────────────────────
+public record SupplierPriceSuggestion(
+    bool Found,
+    decimal? UnitPrice,
+    string? CurrencyCode,
+    decimal? ExchangeRate,
+    // 解決に使われた行が size 専用か全サイズ既定か (UI 表示・デバッグ用)。
+    long? ResolvedSizeId,
+    bool IsSizeSpecific);

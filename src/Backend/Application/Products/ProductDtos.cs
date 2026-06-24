@@ -58,7 +58,9 @@ public record SupplierPriceInput(
     decimal? PurchaseMarginRate = null,
     decimal? LossCost = null,
     decimal? DrayageCost = null,  // ドレー代 (旧「トレー代」、設計判断Q6)
-    decimal? TaxRate = null);
+    decimal? TaxRate = null,
+    // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)。NULL = 全サイズ共通の既定単価。
+    long? SizeId = null);
 
 public record CompleteFamilyResponse(
     FamilySummary Family,
@@ -233,10 +235,15 @@ public record CurrentSupplierPrice(
     decimal? PurchaseMarginRate,
     decimal? LossCost,
     decimal? DrayageCost,  // ドレー代 (旧「トレー代」、設計判断Q6)
-    decimal? TaxRate);
+    decimal? TaxRate,
+    // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)。SizeId=NULL は全サイズ共通の既定単価。
+    // SizeName は sizes を join して解決 (表示用)。既定行 (SizeId=NULL) では null。
+    long? SizeId = null,
+    string? SizeName = null);
 
 public record FamilySummary(long Id, string SequenceNo, char PlannedYearCode);
-public record SupplierPriceSummary(long Id, long SupplierId, decimal UnitPrice, DateOnly EffectiveFrom);
+// SizeId は PR2 で末尾追加 (下位互換)。NULL = 全サイズ共通の既定単価。
+public record SupplierPriceSummary(long Id, long SupplierId, decimal UnitPrice, DateOnly EffectiveFrom, long? SizeId = null);
 
 // ─────────────────────────────────────────────────
 // 更新 (PATCH /api/v1/products/families/{id}、P-05)
@@ -288,4 +295,6 @@ public record AddSupplierPriceRequest(
     decimal? PurchaseMarginRate = null,
     decimal? LossCost = null,
     decimal? DrayageCost = null,  // ドレー代 (旧「トレー代」、設計判断Q6)
-    decimal? TaxRate = null);
+    decimal? TaxRate = null,
+    // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)。NULL = 全サイズ共通の既定単価。
+    long? SizeId = null);

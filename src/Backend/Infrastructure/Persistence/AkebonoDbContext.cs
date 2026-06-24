@@ -271,6 +271,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.Id).HasColumnName("id");
             b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
             b.Property(x => x.SupplierId).HasColumnName("supplier_id");
+            // サイズ別仕入単価 (PR2)。NULL = 全サイズ共通既定。nullable FK = 任意参照、cascade なし
+            // (既定 ClientSetNull)。HasForeignKey を明示して shadow FK 列を作らない (Function 等と同方式)。
+            b.Property(x => x.SizeId).HasColumnName("size_id");
+            b.HasOne(x => x.Size).WithMany().HasForeignKey(x => x.SizeId);
             b.Property(x => x.UnitPrice).HasColumnName("unit_price").HasColumnType("numeric(12,2)");
             b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
             b.Property(x => x.ExchangeRate).HasColumnName("exchange_rate").HasColumnType("numeric(10,4)");

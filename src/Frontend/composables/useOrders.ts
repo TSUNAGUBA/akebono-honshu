@@ -159,6 +159,20 @@ export interface CommunicationSuggestion {
   sourceLabel: string
 }
 
+// サイズ別仕入単価 (PR2)。発注明細の unit_price_snapshot 入力補助 (size-aware サジェスト)。
+// SKU (productId) の size に対応する現単価を「(family, supplier, SKUのsize) → 無ければ
+// (…, NULL-size 既定)」のフォールバックで解決。現単価が無ければ found=false。
+export interface PriceSuggestion {
+  found: boolean
+  unitPrice: number | null
+  currencyCode: string | null
+  exchangeRate: number | null
+  /** 解決に使われた行のサイズ (sizes.id)。全サイズ既定で解決された場合は null */
+  resolvedSizeId: number | null
+  /** size 専用単価で解決されたか (false = 全サイズ既定 fallback) */
+  isSizeSpecific: boolean
+}
+
 export const useOrders = () => {
   const { apiFetch } = useApi()
   const config = useRuntimeConfig()
@@ -262,7 +276,14 @@ export const useOrders = () => {
     return res.data
   }
 
-  return { list, get, create, update, cancel, markDelivered, softDelete, downloadExcel, bulkExport, communicationSuggestions }
+  /**
+   * 単価サジェスト (PR2、size-aware)。SKU と発注先から現単価を解決して返す (入力補助)。
+   * サーバ側で snapshot を上書きしないため、本値はフォームの初期値/補完にのみ使う。
+   */
+  const priceSuggestion = async (productId: number, supplierId: number): Promise<PriceSuggestion> =>
+    await apiFetch<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
+
+  return { list, get, create, update, cancel, markDelivered, softDelete, downloadExcel, bulkExport, communicationSuggestions, priceSuggestion }
 }
 
 // ─────────────────────────────────────────────────

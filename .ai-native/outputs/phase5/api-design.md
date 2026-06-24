@@ -521,14 +521,15 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 
 P-01 入力中の動的プレビュー用。読み取り専用、軽量。
 
-#### P-03: マルチ仕入先単価（アイテム単位）
+#### P-03: マルチ仕入先単価（アイテム単位 + サイズ別）
 
-> **Phase 6 修正:** 仕入単価は **アイテム (product_family) 単位** で管理（旧設計の SKU 単位から変更）。同一企画内では色違い・サイズ違いでも仕入単価は同じ。
+> **Phase 6 修正:** 仕入単価は **アイテム (product_family) 単位** で管理（旧設計の SKU 単位から変更）。
+> **PR2 追補（設計判断Q4=サイズ別必要）:** `size_id`（任意）で**サイズ別単価**に対応。未指定（NULL）= 全サイズ共通の既定単価（従来挙動、下位互換）、指定 = そのサイズ専用単価（既定をオーバーライド）。BR-04 有効日履歴は size 次元込みで維持。
 
 | メソッド | パス | 用途 |
 |---|---|---|
-| `GET` | `/api/v1/products/families/{familyId}/supplier-prices` | 一覧（履歴含む）|
-| `POST` | `/api/v1/products/families/{familyId}/supplier-prices` | 新規（既存 effective_to を自動更新）|
+| `GET` | `/api/v1/products/families/{familyId}/supplier-prices` | 一覧（履歴含む、`size_id` / `size_name` を返却）|
+| `POST` | `/api/v1/products/families/{familyId}/supplier-prices` | 新規（同一サイズバケットの既存 effective_to を自動更新）|
 | `PATCH` | `/api/v1/products/families/{familyId}/supplier-prices/{priceId}` | 更新（誤入力修正、監査記録）|
 | `DELETE` | `/api/v1/products/families/{familyId}/supplier-prices/{priceId}` | 論理削除 |
 
@@ -540,6 +541,7 @@ P-01 入力中の動的プレビュー用。読み取り専用、軽量。
 ```json
 {
   "supplier_id": 14,
+  "size_id": null,
   "unit_price": 1250.00,
   "currency_code": "JPY",
   "exchange_rate": null,
@@ -548,19 +550,21 @@ P-01 入力中の動的プレビュー用。読み取り専用、軽量。
 }
 ```
 
+> `size_id` は任意（末尾追加 = 下位互換）。NULL = 全サイズ共通の既定単価、非 NULL = そのサイズ専用単価。
+
 **処理:**
 1. トランザクション開始
-2. 同一 `(product_family_id, supplier_id)` の現在有効レコード（`effective_to IS NULL`）の `effective_to` を `new.effective_from - 1day` で UPDATE
+2. 同一 `(product_family_id, supplier_id, size_id バケット)` の現在有効レコード（`effective_to IS NULL`）の `effective_to` を `new.effective_from - 1day` で UPDATE（`size_id=NULL` も 1 バケット。size 専用単価の新設で全サイズ既定をクローズしない、逆も同様）
 3. 新レコード INSERT
-4. audit_logs INSERT（**unit_price は "***" にマスク**、operator/product_family/supplier のみ記録）
+4. audit_logs INSERT（**unit_price は "***" にマスク**、operator/product_family/supplier/size のみ記録）
 5. コミット
 
 **エラー:**
-- 409 PRICE-001: `(product_family_id, supplier_id, effective_from)` 重複
+- 409 PRICE-001: `(product_family_id, supplier_id, COALESCE(size_id,-1), effective_from)` 重複
 - 422 PRICE-002: unit_price <= 0
 - 422 PRICE-003: effective_to <= effective_from
 
-> **発注時の引当てロジック:** 発注作成（§2.5）で各明細行の `unit_price_snapshot` を埋める際、`products.product_family_id` 経由で `product_supplier_prices` を引き、現在有効レコードの単価を採用。色違い・サイズ違いの SKU はすべて同一の単価が引当てられる。
+> **発注時の単価スナップショット:** 発注作成（§2.5）で各明細行の `unit_price_snapshot` は**クライアント入力値をそのまま凍結**する（サーバ側で引当て・上書きはしない。「単価未決定」= `unit_price_snapshot <= 0` の状態も保持される）。入力補助として size-aware な現単価サジェスト `GET /api/v1/orders/price-suggestion?productId=&supplierId=` を提供する: SKU の `product_id` → 親 `product_family_id` と `size_id` を解決し、「(family, supplier, SKUのsize) の現単価 → 無ければ (…, NULL-size 既定) の現単価」のフォールバックでサジェスト（読取専用、見つからなければ `found=false`）。
 
 #### P-04: 商品マスタ一覧・検索
 
@@ -781,6 +785,8 @@ S3 アップロード完了後、メタデータを DB に登録。
 3. コミット
 
 **Response 201:** `Location: /api/v1/purchase-orders/{id}`
+
+> **実装注記（PR2、単価スナップショットの SoT 訂正）:** 上記処理 2 の「現在有効単価を引当て」は設計初稿の記述であり、**実装は各明細の `unit_price_snapshot` をクライアント入力値のまま凍結保存する**（サーバ側で `product_supplier_prices` から引当て・上書きはしない。「単価未決定」= `unit_price_snapshot <= 0` の状態を保持できるようにするため）。入力補助として size-aware な現単価サジェスト `GET /api/v1/orders/price-suggestion?productId=&supplierId=` を別途提供する（読取専用、認可は発注編集権限と同じ）。SKU の size に対応する現単価を「(family, supplier, SKUのsize) → 無ければ (…, NULL-size 既定)」のフォールバックで返し、見つからなければ `{ "found": false }`。実 route は `/api/v1/orders`（本節の `/api/v1/purchase-orders` は設計初稿の名残。実装の route が SoT）。
 
 **エラー:**
 - 422 ORDER-001: 必須項目欠落

@@ -116,6 +116,11 @@ export interface CurrentSupplierPrice {
   drayageCost: number | null
   /** 税率(%) */
   taxRate: number | null
+  // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)
+  /** サイズ (sizes.id)。null = 全サイズ共通の既定単価 */
+  sizeId: number | null
+  /** サイズ名 (表示用)。全サイズ共通 (sizeId=null) のときは null */
+  sizeName: string | null
 }
 
 export interface FamilyFullInfo {
@@ -249,6 +254,8 @@ export interface CompleteFamilyPayload {
     lossCost: number | null
     drayageCost: number | null
     taxRate: number | null
+    // サイズ別仕入単価 (PR2、null = 全サイズ共通の既定単価)
+    sizeId: number | null
   }[]
 }
 
@@ -342,6 +349,8 @@ export const useProducts = () => {
     lossCost: number | null
     drayageCost: number | null
     taxRate: number | null
+    // サイズ別仕入単価 (PR2、null = 全サイズ共通の既定単価)
+    sizeId: number | null
   }) => {
     return await apiFetch<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string }>(
       `/products/families/${id}/supplier-prices`,

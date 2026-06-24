@@ -32,7 +32,7 @@
 | 商品名 / 商品名2(カナ) | `product_name_1` / `product_name_2` | ✅ | |
 | 甲表/中板/底 素材 | `upper/insole/outsole_material_id` | ✅ | 代表素材。詳細は BOM |
 | 色明細（最大20色）/ サイズ明細（最大20） | 色×サイズ展開で SKU 生成 | ✅ | |
-| 仕入先・仕入単価・有効開始日・決定日 | `product_supplier_prices` | ✅ | 履歴管理(BR-04) |
+| 仕入先・仕入単価・有効開始日・決定日 | `product_supplier_prices` | ✅ | 履歴管理(BR-04)。サイズ別単価は PR2 で `size_id` 追加（NULL=全サイズ共通既定） |
 | **外貨単価の為替レート** | `product_supplier_prices.exchange_rate` | 🆕 | 入力UI+表示を本イテレーションで追加 |
 | 小売価格 / 納品価格 | — | 🔶 | 完成品の上代/下代。原価管理に有用 |
 | 関税率 / 仕入区分(国内0/海外1) / 仕入国 | — | 🔶 | 海外調達の通関原価。海外発注と整合必要 |

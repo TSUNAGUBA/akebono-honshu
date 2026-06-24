@@ -28,10 +28,15 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            // 既存の現在有効レコード (EffectiveTo IS NULL) の効力終了
+            // 既存の現在有効レコード (EffectiveTo IS NULL) の効力終了。
+            // PR2: size 次元込みで履歴を維持するため、同一 size バケットの現行行のみをクローズする
+            // (size 専用単価の新設で全サイズ既定をクローズしない / 逆も同様)。
+            // 注: EF Core で `p.SizeId == req.SizeId` は NULL を一致させない (size_id = @p)。
+            // req.SizeId が NULL のときは size_id IS NULL に翻訳させるため三項演算子で分岐する。
             var current = await db.ProductSupplierPrices
                 .Where(p => p.ProductFamilyId == familyId
                          && p.SupplierId == req.SupplierId
+                         && (req.SizeId == null ? p.SizeId == null : p.SizeId == req.SizeId)
                          && p.EffectiveTo == null
                          && !p.IsDeleted)
                 .FirstOrDefaultAsync(ct);
@@ -48,6 +53,8 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
             {
                 ProductFamilyId = familyId,
                 SupplierId = req.SupplierId,
+                // サイズ別仕入単価 (PR2)。NULL = 全サイズ共通の既定単価。
+                SizeId = req.SizeId,
                 UnitPrice = req.UnitPrice,
                 CurrencyCode = req.CurrencyCode,
                 ExchangeRate = req.ExchangeRate,
@@ -74,7 +81,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
 
             await audit.LogAsync(actorUserId, "ProductSupplierPrice.Add",
                 entityType: "ProductSupplierPrice", entityId: entity.Id,
-                note: $"family={familyId}, supplier={req.SupplierId}, price=***, effective_from={req.EffectiveFrom}",
+                note: $"family={familyId}, supplier={req.SupplierId}, size={req.SizeId?.ToString() ?? "all"}, price=***, effective_from={req.EffectiveFrom}",
                 cancellationToken: ct);
 
             return entity;
@@ -92,6 +99,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
     {
         var items = await db.ProductSupplierPrices
             .Include(p => p.Supplier)
+            .Include(p => p.Size)  // PR2: サイズ別単価の表示名解決 (NULL-size 既定行では null)
             .Where(p => p.ProductFamilyId == familyId && !p.IsDeleted)
             .OrderByDescending(p => p.EffectiveFrom)
             .ToListAsync(ct);
@@ -102,5 +110,42 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
             cancellationToken: ct);
 
         return items;
+    }
+
+    /// <summary>
+    /// サイズ対応の現単価解決 (PR2)。あるサイズについて
+    /// 「(family, supplier, そのsize) の現在有効行があればそれを、無ければ (…, NULL-size 既定) の
+    /// 現在有効行」というフォールバックで現単価行を 1 件返す (どちらも無ければ null)。
+    /// サイズ別単価が一切無い商品では NULL-size 既定のみが対象となり従来と同じ結果になる。
+    ///
+    /// 注: snapshot 書込はクライアント入力を verbatim 保存する方針 (下位互換) のため、本メソッドは
+    /// 入力補助 (サジェスト) の解決にのみ使う。発注の unit_price_snapshot をサーバ側で上書きしない。
+    /// </summary>
+    public async Task<ProductSupplierPrice?> ResolveCurrentPriceAsync(
+        long familyId, long supplierId, long? sizeId, CancellationToken ct = default)
+    {
+        // 1) そのサイズ専用の現在有効行 (sizeId が指定されている場合のみ)。
+        if (sizeId is not null)
+        {
+            var sizeSpecific = await db.ProductSupplierPrices
+                .Where(p => p.ProductFamilyId == familyId
+                         && p.SupplierId == supplierId
+                         && p.SizeId == sizeId   // 非NULL 指定なので size_id = @p で正しく一致
+                         && p.EffectiveTo == null
+                         && !p.IsDeleted)
+                .OrderByDescending(p => p.EffectiveFrom)
+                .FirstOrDefaultAsync(ct);
+            if (sizeSpecific is not null) return sizeSpecific;
+        }
+
+        // 2) フォールバック: 全サイズ共通の既定行 (size_id IS NULL)。
+        return await db.ProductSupplierPrices
+            .Where(p => p.ProductFamilyId == familyId
+                     && p.SupplierId == supplierId
+                     && p.SizeId == null
+                     && p.EffectiveTo == null
+                     && !p.IsDeleted)
+            .OrderByDescending(p => p.EffectiveFrom)
+            .FirstOrDefaultAsync(ct);
     }
 }

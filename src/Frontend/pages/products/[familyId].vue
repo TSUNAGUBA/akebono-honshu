@@ -53,6 +53,8 @@ const editForm = ref({
 const showPriceForm = ref(false)
 const priceForm = ref({
   supplierId: 0,
+  // サイズ別仕入単価 (PR2)。null = 全サイズ共通の既定単価 (未選択)。
+  sizeId: null as number | null,
   unitPrice: 0,
   currencyCode: 'JPY',
   exchangeRate: null as number | null,
@@ -76,6 +78,8 @@ const functions_ = ref<MasterItem[]>([])
 const productGroups = ref<MasterItem[]>([])
 const materials = ref<MasterItem[]>([])
 const suppliers = ref<MasterItem[]>([])
+// サイズ別仕入単価 (PR2): 単価追加フォームのサイズ選択肢
+const sizes = ref<MasterItem[]>([])
 // 旧 品番台帳 項目 (Phase A): 管理季節・企画者の選択肢
 const productSeasons = ref<MasterItem[]>([])
 interface UserOption { id: number; loginId: string; displayName: string }
@@ -136,9 +140,10 @@ onMounted(async () => {
   await Promise.all([
     reload(),
     (async () => {
-      const [br, fn, pg, mt, sup, ps, usrRes] = await Promise.all([
+      const [br, fn, pg, mt, sup, sz, ps, usrRes] = await Promise.all([
         list('brands'), list('functions'), list('product-groups'),
         list('materials'), list('suppliers'),
+        list('sizes'),
         list('product-seasons'),
         apiFetch<{ data: UserOption[] }>('/users'),
       ])
@@ -147,6 +152,7 @@ onMounted(async () => {
       productGroups.value = pg
       materials.value = mt
       suppliers.value = sup
+      sizes.value = sz
       productSeasons.value = ps
       users.value = usrRes.data
       if (sup.length) priceForm.value.supplierId = sup[0].id
@@ -237,9 +243,13 @@ const onAddPrice = async () => {
       lossCost: priceForm.value.lossCost,
       drayageCost: priceForm.value.drayageCost,
       taxRate: priceForm.value.taxRate,
+      // サイズ別仕入単価 (PR2、未選択は null = 全サイズ共通の既定単価)
+      sizeId: priceForm.value.sizeId,
     })
     successMessage.value = '単価を追加しました (旧単価の有効終了日も自動更新済)'
     showPriceForm.value = false
+    // サイズ別仕入単価 (PR2): サイズ選択を全サイズ共通 (null) にリセット
+    priceForm.value.sizeId = null
     // 原価明細フィールドをリセット (次の追加時に前回値が残らないように)
     priceForm.value.estimateUnitPrice = null
     priceForm.value.estimateReceivedDate = ''
@@ -556,6 +566,11 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <span class="font-medium">仕入先</span>
             <MasterSelect :model-value="priceForm.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => priceForm.supplierId = v ?? 0" />
           </label>
+          <!-- サイズ別仕入単価 (PR2)。未選択 = 全サイズ共通の既定単価、個別サイズ = そのサイズ専用単価。 -->
+          <label class="flex flex-col gap-1">
+            <span class="font-medium">サイズ</span>
+            <MasterSelect :model-value="priceForm.sizeId" :items="sizes" allow-empty empty-label="全サイズ共通" placeholder="サイズを検索…" @update:model-value="(v) => priceForm.sizeId = v" />
+          </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">単価</span>
             <div class="flex gap-1">
@@ -631,6 +646,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
               <th class="px-2 py-1.5 text-left">仕入先</th>
+              <th class="px-2 py-1.5 text-left">サイズ</th>
               <th class="px-2 py-1.5 text-right">単価</th>
               <th class="px-2 py-1.5 text-right">為替レート</th>
               <th class="px-2 py-1.5 text-right">見積単価</th>
@@ -643,6 +659,11 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <tbody>
             <tr v-for="p in detail.currentSupplierPrices" :key="p.id" class="border-b border-gray-100 last:border-0">
               <td class="px-2 py-1.5">{{ p.supplierCode }} {{ p.supplierName }}</td>
+              <!-- サイズ別仕入単価 (PR2)。sizeId=null は全サイズ共通の既定単価。 -->
+              <td class="px-2 py-1.5">
+                <span v-if="p.sizeName">{{ p.sizeName }}</span>
+                <span v-else class="text-gray-500">全サイズ共通</span>
+              </td>
               <td class="px-2 py-1.5 text-right font-mono">{{ p.currencyCode }} {{ p.unitPrice.toLocaleString() }}</td>
               <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.exchangeRate != null ? p.exchangeRate.toLocaleString() : '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.estimateUnitPrice != null ? p.estimateUnitPrice.toLocaleString() : '—' }}</td>
@@ -652,7 +673,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
               <td class="px-2 py-1.5">{{ p.decidedAt }}</td>
             </tr>
             <tr v-if="detail.currentSupplierPrices.length === 0">
-              <td colspan="8" class="px-2 py-4 text-center text-gray-500">単価が登録されていません</td>
+              <td colspan="9" class="px-2 py-4 text-center text-gray-500">単価が登録されていません</td>
             </tr>
           </tbody>
         </table>

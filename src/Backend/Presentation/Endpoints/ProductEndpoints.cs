@@ -95,7 +95,7 @@ public static class ProductEndpoints
             {
                 var entity = await svc.AddAsync(id, req, auth.ActorId!.Value, ct);
                 return Results.Created($"/api/v1/products/families/{id}/supplier-prices/{entity.Id}",
-                    new SupplierPriceSummary(entity.Id, entity.SupplierId, entity.UnitPrice, entity.EffectiveFrom));
+                    new SupplierPriceSummary(entity.Id, entity.SupplierId, entity.UnitPrice, entity.EffectiveFrom, entity.SizeId));
             }
             catch (ArgumentException ex)
             {
@@ -115,7 +115,9 @@ public static class ProductEndpoints
                 p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt,
                 // 旧 仕入コスト計算明細 項目 (Phase C)
                 p.EstimateUnitPrice, p.EstimateReceivedDate, p.EstimateCost, p.EstimateMarginRate,
-                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate));
+                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate,
+                // サイズ別仕入単価 (PR2)。SizeId=NULL は全サイズ共通の既定単価 (SizeName も null)。
+                p.SizeId, p.Size?.Name));
             return Results.Ok(new { data });
         });
 

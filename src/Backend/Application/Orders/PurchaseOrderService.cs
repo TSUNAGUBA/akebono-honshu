@@ -15,7 +15,10 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
 {
     /// <summary>
     /// 新規作成 (O-01)。mgmt_no を自動採番 (年下 2 桁 + 連番、例: "26-00001")。
-    /// product_supplier_prices から現在有効単価を引当 (BR-04) してスナップショット化。
+    /// 各明細の unit_price_snapshot はクライアント入力値をそのまま凍結保存する
+    /// (サーバ側で product_supplier_prices から引当て・上書きはしない。「単価未決定」=
+    /// unit_price_snapshot &lt;= 0 の状態も保持される)。入力補助の size-aware 現単価サジェストは
+    /// OrderEndpoints の GET /api/v1/orders/price-suggestion で別途提供 (読取専用、PR2)。
     /// </summary>
     public async Task<PurchaseOrder> CreateAsync(
         CreateOrderRequest req, long actorUserId, CancellationToken ct = default)

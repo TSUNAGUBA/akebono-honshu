@@ -69,6 +69,8 @@ const expansion = ref({
 
 const supplierPrice = ref({
   supplierId: 0,
+  // サイズ別仕入単価 (PR2)。null = 全サイズ共通の既定単価 (未選択)。
+  sizeId: null as number | null,
   unitPrice: 0,
   currencyCode: 'JPY',
   exchangeRate: null as number | null,
@@ -214,6 +216,8 @@ const onSubmit = async () => {
           lossCost: supplierPrice.value.lossCost,
           drayageCost: supplierPrice.value.drayageCost,
           taxRate: supplierPrice.value.taxRate,
+          // サイズ別仕入単価 (PR2、未選択は null = 全サイズ共通の既定単価)
+          sizeId: supplierPrice.value.sizeId,
         },
       ],
     }
@@ -443,6 +447,12 @@ const onSubmit = async () => {
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">仕入先 <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="supplierPrice.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => supplierPrice.supplierId = v ?? 0" />
+            </label>
+            <!-- サイズ別仕入単価 (PR2)。未選択 = 全サイズ共通の既定単価、個別サイズ = そのサイズ専用単価。 -->
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">サイズ</span>
+              <MasterSelect :model-value="supplierPrice.sizeId" :items="sizes" allow-empty empty-label="全サイズ共通" placeholder="サイズを検索…" @update:model-value="(v) => supplierPrice.sizeId = v" />
+              <span class="text-xs text-gray-500">未選択 = 全サイズ共通の既定単価</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">単価 <span class="text-red-500">*</span></span>

@@ -1,5 +1,7 @@
 using Akebono.Application.Common;
 using Akebono.Application.Orders;
+using Akebono.Application.Products;
+using Microsoft.EntityFrameworkCore;
 
 namespace Akebono.Api.Endpoints;
 
@@ -168,6 +170,37 @@ public static class OrderEndpoints
                 return Results.Problem(statusCode: 401, title: "Unauthorized");
             var items = await svc.GetCommunicationSuggestionsAsync(ct);
             return Results.Ok(new { data = items });
+        });
+
+        // 単価サジェスト (PR2、size-aware)。発注明細の unit_price_snapshot 入力補助。
+        // SKU (productId) の size に対応する現単価を「(family, supplier, SKUのsize) → 無ければ
+        // (…, NULL-size 既定)」のフォールバックで解決して返す。現単価が無ければ Found=false。
+        // 認可: 発注編集権限と同じ (CheckOrderEditAsync) — 単価は機密度 中-高 (NFR §6.2)。
+        // 注: 本 endpoint は読取専用の入力補助で、snapshot をサーバ側で上書きしない (下位互換)。
+        orders.MapGet("/price-suggestion", async (HttpContext http, IAkebonoDbContext db,
+                                                   ProductSupplierPriceService priceSvc,
+                                                   long productId, long supplierId, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+
+            // SKU から family / size を解決。発注先 supplier は発注ヘッダ由来 (クエリ引数)。
+            var product = await db.Products
+                .Where(p => p.Id == productId)
+                .Select(p => new { p.ProductFamilyId, p.SizeId })
+                .FirstOrDefaultAsync(ct);
+            if (product is null)
+                return Results.NotFound();
+
+            var price = await priceSvc.ResolveCurrentPriceAsync(
+                product.ProductFamilyId, supplierId, product.SizeId, ct);
+
+            var suggestion = price is null
+                ? new SupplierPriceSuggestion(false, null, null, null, null, false)
+                : new SupplierPriceSuggestion(
+                    true, price.UnitPrice, price.CurrencyCode, price.ExchangeRate,
+                    price.SizeId, price.SizeId is not null);
+            return Results.Ok(suggestion);
         });
 
         return app;

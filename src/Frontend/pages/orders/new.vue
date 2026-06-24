@@ -5,7 +5,7 @@ import type { CreateOrderPayload, CommunicationSuggestion } from '~/composables/
 const { user } = useAuth()
 const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 const { list } = useMasters()
-const { create, communicationSuggestions } = useOrders()
+const { create, communicationSuggestions, priceSuggestion } = useOrders()
 const { apiFetch } = useApi()
 
 // マスタ参照
@@ -152,6 +152,43 @@ const removeLine = (idx: number) => {
   if (lines.value.length <= 1) return
   lines.value.splice(idx, 1)
 }
+
+// サイズ別仕入単価 (PR2)。SKU の size に対応する現単価を発注先からサジェストし、明細の単価/通貨を
+// 自動補完する (入力補助)。フォールバック: (family, supplier, SKUのsize) → 無ければ (…, 全サイズ既定)。
+// 非ブロッキング (CLAUDE.md 原則4): 取得失敗・現単価なしの場合は既存値を保持し、ユーザは手入力できる。
+// サーバ側で snapshot を上書きしないため、ここで補完した値も保存前にユーザが自由に編集可能。
+//
+// 非破壊サジェスト (reviewer 指摘 Minor 対応): 単価が未入力相当 (<=0、「単価未決定」の既定値) の明細
+// にのみ補完する。ユーザが手入力済の単価は SKU/発注先を変えても上書きしない。force=true (SKU 明示選択時)
+// は新しい SKU の現単価を反映するため上書きを許す。
+const applyPriceSuggestion = async (idx: number, force = false) => {
+  const line = lines.value[idx]
+  if (!line || line.productId <= 0 || form.value.supplierId <= 0) return
+  // 発注先変更時 (force=false) は手入力済 (>0) の単価を保護する。
+  if (!force && line.unitPriceSnapshot > 0) return
+  try {
+    const sug = await priceSuggestion(line.productId, form.value.supplierId)
+    if (sug.found && sug.unitPrice != null) {
+      line.unitPriceSnapshot = sug.unitPrice
+      if (sug.currencyCode) line.currencyCodeSnapshot = sug.currencyCode
+    }
+  } catch (e) {
+    // 単価サジェストの失敗は主要フロー (発注作成) を止めない。手入力で続行可能。
+    console.error('単価サジェスト取得に失敗しました (手入力で続行可能)', e)
+  }
+}
+
+// SKU 選択変更時に単価を再サジェスト (明示選択なので force=true で新 SKU の現単価を反映)。
+const onLineProductChange = (idx: number, v: number | null) => {
+  lines.value[idx].productId = v ?? 0
+  applyPriceSuggestion(idx, true)
+}
+
+// 発注先 (ヘッダ) 変更時は全明細の単価を再サジェスト (supplier 由来の現単価が変わるため)。
+// 手入力済 (>0) の明細は保護する (force=false)。
+watch(() => form.value.supplierId, () => {
+  lines.value.forEach((_, idx) => applyPriceSuggestion(idx))
+})
 
 const lineSubtotal = (l: LineRow) => l.quantity * l.unitPriceSnapshot
 const totalAmount = computed(() => lines.value.reduce((sum, l) => sum + lineSubtotal(l), 0))
@@ -393,7 +430,8 @@ const onSubmit = async () => {
             <tbody>
               <tr v-for="(l, idx) in lines" :key="idx" class="border-b border-gray-100 last:border-0">
                 <td class="px-2 py-1.5">
-                  <MasterSelect v-model="l.productId" :items="skuOptions" placeholder="SKU・品名で検索…" />
+                  <!-- サイズ別仕入単価 (PR2): SKU 選択時に単価をサジェスト補完 (onLineProductChange)。 -->
+                  <MasterSelect :model-value="l.productId" :items="skuOptions" placeholder="SKU・品名で検索…" @update:model-value="(v) => onLineProductChange(idx, v)" />
                 </td>
                 <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
