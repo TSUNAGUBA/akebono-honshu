@@ -317,6 +317,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
               <th class="px-2 py-1.5 text-left">No</th>
+              <th class="px-2 py-1.5 text-left">品番</th>
               <th class="px-2 py-1.5 text-left">SKU</th>
               <th class="px-2 py-1.5 text-left">商品名 / 色 / サイズ</th>
               <th class="px-2 py-1.5 text-left">仮番号</th>
@@ -330,6 +331,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <tbody>
             <tr v-for="l in detail.lines" :key="l.id" class="border-b border-gray-100 last:border-0">
               <td class="px-2 py-1.5 font-mono">{{ l.lineNo }}</td>
+              <td class="px-2 py-1.5 font-mono">{{ l.sku.slice(0, 7) }}</td>
               <td class="px-2 py-1.5 font-mono">{{ l.sku }}</td>
               <td class="px-2 py-1.5">{{ l.productName }} / {{ l.colorName }} / {{ l.sizeName }}</td>
               <td class="px-2 py-1.5 font-mono">{{ l.provisionalNumberSnapshot || '—' }}</td>
@@ -347,6 +349,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <table class="w-full text-sm">
             <thead class="border-b border-gray-200 bg-gray-50">
               <tr>
+                <th class="px-2 py-1.5 text-left">品番</th>
                 <th class="px-2 py-1.5 text-left">SKU</th>
                 <th class="px-2 py-1.5 text-left">仮番号</th>
                 <th class="px-2 py-1.5 text-right">数量</th>
@@ -358,6 +361,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             </thead>
             <tbody>
               <tr v-for="(l, idx) in editLines" :key="idx" class="border-b border-gray-100 last:border-0">
+                <td class="px-2 py-1.5 font-mono">{{ l.sku.slice(0, 7) }}</td>
                 <td class="px-2 py-1.5 font-mono">{{ l.sku }}</td>
                 <td class="px-2 py-1.5 font-mono text-gray-500">{{ l.provisionalNumberSnapshot || '—' }}</td>
                 <td class="px-2 py-1.5 text-right">
