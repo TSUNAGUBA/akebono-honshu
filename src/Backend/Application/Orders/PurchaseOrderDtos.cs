@@ -40,7 +40,19 @@ public record OrderLineInput(
     int? PackQuantity = null,
     decimal? EstimateUnitPrice = null,
     // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
-    string? Remark = null);
+    string? Remark = null,
+    // 分納×倉庫の多次元明細 (PR5b、末尾・nullable = 下位互換)。null/空 = 分納なし (単一明細、従来挙動)。
+    // 1 件以上あれば、その明細は分納で構成され、line.Quantity = Deliveries の Quantity 合計 (SUM) になる。
+    List<OrderLineDeliveryInput>? Deliveries = null);
+
+// 分納×倉庫の多次元明細 1 行の入力 (PR5b、旧 spec 発注明細 No.6 発注明細日 / No.7-17 発注明細数 /
+// No.18-23 倉庫入数/発注数)。WarehouseId / DeliveryDate は NULL 許容 (倉庫未指定 / 発注明細日未指定)。
+// Quantity は正の整数 (CHECK quantity > 0)。PackQuantity は倉庫別入数 (任意)。
+public record OrderLineDeliveryInput(
+    long? WarehouseId,
+    DateOnly? DeliveryDate,
+    int Quantity,
+    int? PackQuantity = null);
 
 // ─────────────────────────────────────────────────
 // 一覧 (GET /api/v1/orders、O-03)
@@ -147,7 +159,20 @@ public record OrderLineDetail(
     decimal? EstimateUnitPrice = null,
     string? ProvisionalNumberSnapshot = null,
     // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
-    string? Remark = null);
+    string? Remark = null,
+    // 分納×倉庫の多次元明細 (PR5b、末尾追加 = 下位互換。既定は空リスト = 分納なし = 単一明細)。
+    List<OrderLineDeliverySummary>? Deliveries = null);
+
+// 分納×倉庫の多次元明細 1 行の返却 (PR5b、旧 spec 発注明細 No.6/No.7-17/No.18-23)。
+// Seq は表示順 (配列順で採番)。WarehouseName は倉庫名 (未指定時 null)。
+public record OrderLineDeliverySummary(
+    long Id,
+    long? WarehouseId,
+    string? WarehouseName,
+    DateOnly? DeliveryDate,
+    int Quantity,
+    int? PackQuantity,
+    short Seq);
 
 // ─────────────────────────────────────────────────
 // 更新 (PATCH /api/v1/orders/{id}、O-04、edit_reason 必須 F-16)
@@ -190,7 +215,11 @@ public record UpdateLineInput(
     int? PackQuantity = null,
     decimal? EstimateUnitPrice = null,
     // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
-    string? Remark = null);
+    string? Remark = null,
+    // 分納×倉庫の多次元明細 (PR5b、末尾・nullable = 下位互換)。null/空 = 分納なし (単一明細、従来挙動)。
+    // 編集時は全置換 (既存分納削除→再挿入、line.Quantity 再計算)。明細は元々全削除→再 INSERT 方式のため、
+    // 親明細削除に伴い分納も CASCADE で消えてから本入力で再構築される。
+    List<OrderLineDeliveryInput>? Deliveries = null);
 
 // ─────────────────────────────────────────────────
 // 中止 (POST /api/v1/orders/{id}/cancel、O-05)

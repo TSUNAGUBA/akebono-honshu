@@ -15,9 +15,14 @@ namespace Akebono.Infrastructure.Excel;
 /// レイアウト: ヘッダ行 + 明細行 (発注をまたいで 1 明細 = 1 行) + 合計行 (発注数・金額)。
 /// 列: 管理番号 / 発注番号 / 発注日 / 区分 / 発注状態 / 仕入先 / 納品先 / 得意先 /
 ///     品番(7桁) / SKU / 商品名 / 色 / サイズ / 仮番号 / 発注数 / 入数 / 単価 / 見積単価 /
-///     金額(小計) / 通貨 / 納期 / 備考
-/// 備考 (発注明細 備考、spec 明細 No.26) は末尾に追加。発注数 (列15) / 金額 (列19) の
-/// 合計行ハードコード列番号を維持するため、既存列の手前には差し込まない。
+///     金額(小計) / 通貨 / 納期 / 備考 / 倉庫
+/// 備考 (発注明細 備考、spec 明細 No.26) / 倉庫 (PR5b 分納倉庫) は末尾に追加。発注数 (列15) /
+/// 金額 (列19) の合計行ハードコード列番号を維持するため、既存列の手前には差し込まない。
+///
+/// 分納×倉庫の多次元明細 (PR5b): 分納がある明細は「1 分納 = 1 行」で展開する
+/// (発注数=分納数量 / 入数=分納入数 / 納期=分納日 / 倉庫=分納倉庫、品番〜SKU〜単価等は明細値)。
+/// 分納なしの明細は従来どおり 1 明細 = 1 行 (倉庫列は空)。発注数合計・金額合計は実際に出力した行から
+/// 集計するため、分納展開しても合計は line.Quantity (=分納 SUM) ・ line.Subtotal と一致する。
 /// </summary>
 public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger audit)
     : IOrderManagementTableExcelService
@@ -26,7 +31,7 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
     {
         "管理番号", "発注番号", "発注日", "区分", "発注状態", "仕入先", "納品先", "得意先",
         "品番", "SKU", "商品名", "色", "サイズ", "仮番号", "発注数", "入数", "単価", "見積単価",
-        "金額", "通貨", "納期", "備考",
+        "金額", "通貨", "納期", "備考", "倉庫",
     };
 
     public async Task<(string FileName, byte[] Content)> ExportAsync(
@@ -43,6 +48,8 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
         var lines = await db.PurchaseOrderLines
             .Include(l => l.Product).ThenInclude(p => p!.Color)
             .Include(l => l.Product).ThenInclude(p => p!.Size)
+            // 分納×倉庫の多次元明細 (PR5b)。倉庫名解決のため Warehouse ナビも Include。
+            .Include(l => l.Deliveries).ThenInclude(d => d.Warehouse)
             .Where(l => orderIds.Contains(l.PurchaseOrderId))
             .OrderBy(l => l.PurchaseOrderId).ThenBy(l => l.LineNo)
             .ToListAsync(ct);
@@ -98,41 +105,68 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
                 var sku = line.SkuSnapshot ?? "";
                 var partNo = sku.Length >= 7 ? sku[..7] : sku;
 
-                var col = 1;
-                ws.Cell(dataRow, col++).Value = order.MgmtNo;
-                ws.Cell(dataRow, col++).Value = order.OrderNo ?? "";
-                ws.Cell(dataRow, col++).Value = order.CreatedAt.ToString("yyyy-MM-dd");
-                ws.Cell(dataRow, col++).Value = region;
-                ws.Cell(dataRow, col++).Value = state;
-                ws.Cell(dataRow, col++).Value = supplier;
-                ws.Cell(dataRow, col++).Value = delivery;
-                ws.Cell(dataRow, col++).Value = customer;
-                ws.Cell(dataRow, col++).Value = partNo;
-                ws.Cell(dataRow, col++).Value = sku;
-                ws.Cell(dataRow, col++).Value = line.ProductNameSnapshot;
-                ws.Cell(dataRow, col++).Value = line.Product?.Color?.Name ?? "";
-                ws.Cell(dataRow, col++).Value = line.Product?.Size?.Name ?? "";
-                ws.Cell(dataRow, col++).Value = line.ProvisionalNumberSnapshot ?? "";
-                ws.Cell(dataRow, col++).Value = line.Quantity;
-                if (line.PackQuantity is { } pack) ws.Cell(dataRow, col).Value = pack;
-                col++;
-                ws.Cell(dataRow, col).Value = line.UnitPriceSnapshot;
-                ws.Cell(dataRow, col++).Style.NumberFormat.Format = "#,##0.00";
-                if (line.EstimateUnitPrice is { } est) ws.Cell(dataRow, col).Value = est;
-                ws.Cell(dataRow, col++).Style.NumberFormat.Format = "#,##0.00";
-                ws.Cell(dataRow, col).Value = line.Subtotal;
-                ws.Cell(dataRow, col++).Style.NumberFormat.Format = "#,##0.00";
-                ws.Cell(dataRow, col++).Value = line.CurrencyCodeSnapshot;
-                ws.Cell(dataRow, col++).Value = order.DueDate.ToString("yyyy-MM-dd");
-                // 備考 (発注明細 備考、spec 明細 No.26)。未設定は空欄。
-                ws.Cell(dataRow, col++).Value = line.Remark ?? "";
+                // 分納×倉庫の多次元明細 (PR5b): 分納があれば「1 分納 = 1 行」で展開する。各行の
+                // 発注数 / 入数 / 納期 / 倉庫 / 金額 は分納値を使う (品番〜単価等は明細値で共通)。
+                // 分納なしは従来どおり 1 明細 = 1 行 (明細値、倉庫は空)。
+                // RenderRow = (発注数, 入数, 納期文字列, 倉庫名, 金額)。各行の金額 = 発注数 * 単価 (表示用)。
+                var renderRows = new List<(int Quantity, int? PackQuantity, string DateStr, string Warehouse, decimal Amount)>();
+                if (line.Deliveries.Count > 0)
+                {
+                    foreach (var d in line.Deliveries.OrderBy(x => x.Seq).ThenBy(x => x.Id))
+                    {
+                        var dateStr = d.DeliveryDate?.ToString("yyyy-MM-dd") ?? order.DueDate.ToString("yyyy-MM-dd");
+                        renderRows.Add((d.Quantity, d.PackQuantity, dateStr, d.Warehouse?.Name ?? "", d.Quantity * line.UnitPriceSnapshot));
+                    }
+                }
+                else
+                {
+                    renderRows.Add((line.Quantity, line.PackQuantity, order.DueDate.ToString("yyyy-MM-dd"), "", line.Subtotal));
+                }
 
-                for (var c = 1; c <= Headers.Length; c++)
-                    ws.Cell(dataRow, c).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-
+                // 合計は明細単位の権威値 (line.Quantity / line.Subtotal) を 1 明細につき 1 回だけ加算する。
+                // 分納展開行の発注数/金額の合算ではなく DB の line 値を使うことで、展開方法や (万一の)
+                // line.Quantity ≠ 分納 SUM のドリフトに依らず合計行が DB 集計と常に一致する (reviewer 指摘対応)。
                 totalQuantity += line.Quantity;
                 totalAmount += line.Subtotal;
-                dataRow++;
+
+                foreach (var r in renderRows)
+                {
+                    var col = 1;
+                    ws.Cell(dataRow, col++).Value = order.MgmtNo;
+                    ws.Cell(dataRow, col++).Value = order.OrderNo ?? "";
+                    ws.Cell(dataRow, col++).Value = order.CreatedAt.ToString("yyyy-MM-dd");
+                    ws.Cell(dataRow, col++).Value = region;
+                    ws.Cell(dataRow, col++).Value = state;
+                    ws.Cell(dataRow, col++).Value = supplier;
+                    ws.Cell(dataRow, col++).Value = delivery;
+                    ws.Cell(dataRow, col++).Value = customer;
+                    ws.Cell(dataRow, col++).Value = partNo;
+                    ws.Cell(dataRow, col++).Value = sku;
+                    ws.Cell(dataRow, col++).Value = line.ProductNameSnapshot;
+                    ws.Cell(dataRow, col++).Value = line.Product?.Color?.Name ?? "";
+                    ws.Cell(dataRow, col++).Value = line.Product?.Size?.Name ?? "";
+                    ws.Cell(dataRow, col++).Value = line.ProvisionalNumberSnapshot ?? "";
+                    ws.Cell(dataRow, col++).Value = r.Quantity;
+                    if (r.PackQuantity is { } pack) ws.Cell(dataRow, col).Value = pack;
+                    col++;
+                    ws.Cell(dataRow, col).Value = line.UnitPriceSnapshot;
+                    ws.Cell(dataRow, col++).Style.NumberFormat.Format = "#,##0.00";
+                    if (line.EstimateUnitPrice is { } est) ws.Cell(dataRow, col).Value = est;
+                    ws.Cell(dataRow, col++).Style.NumberFormat.Format = "#,##0.00";
+                    ws.Cell(dataRow, col).Value = r.Amount;
+                    ws.Cell(dataRow, col++).Style.NumberFormat.Format = "#,##0.00";
+                    ws.Cell(dataRow, col++).Value = line.CurrencyCodeSnapshot;
+                    ws.Cell(dataRow, col++).Value = r.DateStr;
+                    // 備考 (発注明細 備考、spec 明細 No.26)。未設定は空欄。
+                    ws.Cell(dataRow, col++).Value = line.Remark ?? "";
+                    // 倉庫 (PR5b 分納倉庫)。分納なし行は空欄。
+                    ws.Cell(dataRow, col++).Value = r.Warehouse;
+
+                    for (var c = 1; c <= Headers.Length; c++)
+                        ws.Cell(dataRow, c).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+
+                    dataRow++;
+                }
             }
         }
 

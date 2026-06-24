@@ -41,6 +41,8 @@ public interface IAkebonoDbContext
     // 発注関連 (Iteration 3、Phase 5 §5)
     DbSet<PurchaseOrder> PurchaseOrders { get; }
     DbSet<PurchaseOrderLine> PurchaseOrderLines { get; }
+    // 分納×倉庫の多次元明細 (PR5b、Phase 5 §5.2b)
+    DbSet<PurchaseOrderLineDelivery> PurchaseOrderLineDeliveries { get; }
     DbSet<PurchaseOrderExportLog> PurchaseOrderExportLogs { get; }
 
     // 生産管理拡張 (Iteration 5、data-design-production §4)

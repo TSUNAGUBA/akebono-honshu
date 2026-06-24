@@ -119,6 +119,36 @@ CREATE INDEX IF NOT EXISTS idx_pol_order   ON purchase_order_lines (purchase_ord
 CREATE INDEX IF NOT EXISTS idx_pol_product ON purchase_order_lines (product_id);
 
 -- ─────────────────────────────────────────────────
+-- §5.2b purchase_order_line_deliveries — 分納×倉庫の多次元明細 (PR5b)
+-- 1 発注明細 (purchase_order_lines) を「(倉庫 × 納期) の分納行」の集合で多次元化する。
+-- 旧 spec 発注明細 No.6「発注明細日1-11」/ No.7-17「発注明細数1〜11」/ No.18-23「倉庫1〜3 入数/発注数」
+-- に対応 (設計判断 Q1=可変の分納テーブル、Q2=明細を倉庫×納期で多次元化)。
+--
+-- 下位互換 (最重要): 分納は明細あたり任意 (0 件可)。
+--   分納 0 件 = 従来どおりの単一明細。purchase_order_lines.quantity をそのまま単一数量として使う
+--     (既存発注・既存フローは完全に不変)。
+--   分納 N 件 = その明細は分納で構成。purchase_order_lines.quantity には分納数量の合計 (SUM) を設定する
+--     (既存の subtotal GENERATED 列 = quantity * unit_price_snapshot がそのまま正しい金額になる)。
+-- 既存 purchase_order_lines.quantity / pack_quantity 列は削除しない (後方互換)。pack_quantity は
+-- 単一明細時の入数として温存し、分納時は分納行 (本テーブル) の pack_quantity を使う (二重表現)。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS purchase_order_line_deliveries (
+    id                       BIGSERIAL PRIMARY KEY,
+    purchase_order_line_id   BIGINT       NOT NULL REFERENCES purchase_order_lines(id) ON DELETE CASCADE,
+    warehouse_id             BIGINT       NULL REFERENCES warehouses(id),          -- 倉庫 (NULL=倉庫未指定)
+    delivery_date            DATE         NULL,                                     -- 納期 / 発注明細日 (NULL=発注明細日未指定)
+    quantity                 INTEGER      NOT NULL,                                 -- 発注明細数 (分納数量)
+    pack_quantity            INTEGER      NULL,                                     -- 倉庫別入数
+    seq                      SMALLINT     NOT NULL DEFAULT 1,                       -- 表示順 (配列順で採番)
+    created_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
+    updated_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
+    CONSTRAINT chk_pold_quantity CHECK (quantity > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_pold_line ON purchase_order_line_deliveries (purchase_order_line_id);
+
+-- ─────────────────────────────────────────────────
 -- §5.3 purchase_order_export_logs — Excel 出力履歴 (監査用、非 UI 露出)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_order_export_logs (

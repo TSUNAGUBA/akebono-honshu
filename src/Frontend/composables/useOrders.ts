@@ -42,6 +42,18 @@ export interface OrderListItem {
   hasUndecidedPrice: boolean
 }
 
+// 分納×倉庫の多次元明細 (PR5b)。1 発注明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
+// warehouseId / deliveryDate は null 許容 (倉庫未指定 / 発注明細日未指定)。seq は表示順。
+export interface OrderLineDeliverySummary {
+  id: number
+  warehouseId: number | null
+  warehouseName: string | null
+  deliveryDate: string | null
+  quantity: number
+  packQuantity: number | null
+  seq: number
+}
+
 export interface OrderLineDetail {
   id: number
   lineNo: number
@@ -60,6 +72,8 @@ export interface OrderLineDetail {
   provisionalNumberSnapshot: string | null
   // 発注明細 備考 (spec 明細 No.26)
   remark: string | null
+  // 分納×倉庫の多次元明細 (PR5b)。空配列 = 分納なし (単一明細、従来挙動)。
+  deliveries: OrderLineDeliverySummary[]
 }
 
 export interface OrderDetail {
@@ -140,6 +154,14 @@ export interface CreateOrderPayload {
     estimateUnitPrice: number | null
     // 発注明細 備考 (spec 明細 No.26、任意)
     remark: string | null
+    // 分納×倉庫の多次元明細 (PR5b、任意)。null/空 = 分納なし (単一明細、従来挙動)。
+    // 1 件以上あればサーバ側で line.quantity = 分納 quantity 合計 (SUM) に再計算される。
+    deliveries?: {
+      warehouseId: number | null
+      deliveryDate: string | null
+      quantity: number
+      packQuantity: number | null
+    }[] | null
   }[]
   // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
   isOverseas: boolean

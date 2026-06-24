@@ -63,6 +63,14 @@ const form = ref({
   warehouse3Id: null as number | null,
 })
 
+// 分納×倉庫の多次元明細 (PR5b)。1 明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
+// 倉庫 / 納期 は任意 (null 許容)。数量は正の整数、入数は任意。
+interface DeliveryRow {
+  warehouseId: number | null
+  deliveryDate: string
+  quantity: number
+  packQuantity: number | null
+}
 interface LineRow {
   productId: number
   quantity: number
@@ -73,9 +81,13 @@ interface LineRow {
   estimateUnitPrice: number | null
   // 発注明細 備考 (spec 明細 No.26、任意)
   remark: string | null
+  // 分納×倉庫の多次元明細 (PR5b、任意)。空 = 分納なし (単一明細、従来挙動)。
+  deliveries: DeliveryRow[]
+  // 分納サブセクションの開閉 (UI 状態のみ、payload には含めない)。
+  showDeliveries: boolean
 }
 const lines = ref<LineRow[]>([
-  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, estimateUnitPrice: null, remark: null },
+  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, estimateUnitPrice: null, remark: null, deliveries: [], showDeliveries: false },
 ])
 
 // --- オートコンプリート選択肢（マスタ参照を部分一致検索可能に） ---
@@ -148,6 +160,8 @@ const addLine = () => {
     packQuantity: null,
     estimateUnitPrice: null,
     remark: null,
+    deliveries: [],
+    showDeliveries: false,
   })
   // 追加直後の明細にも現単価を補完する (reviewer M-1)。既定選択された SKU に対し size-aware に
   // サジェスト (force=true)。supplier 未選択や現単価なしなら applyPriceSuggestion 内で no-op。
@@ -158,6 +172,20 @@ const removeLine = (idx: number) => {
   if (lines.value.length <= 1) return
   lines.value.splice(idx, 1)
 }
+
+// 分納×倉庫の多次元明細 (PR5b)。行追加/削除は SETC (アソート明細) と同じパターン。
+const addDelivery = (lineIdx: number) => {
+  const l = lines.value[lineIdx]
+  l.showDeliveries = true
+  l.deliveries.push({ warehouseId: form.value.warehouseId || null, deliveryDate: '', quantity: 1, packQuantity: null })
+}
+const removeDelivery = (lineIdx: number, dIdx: number) => {
+  lines.value[lineIdx].deliveries.splice(dIdx, 1)
+}
+// 分納が 1 件以上ある明細の数量は分納数量の合計 (SUM) で表示する (単一数量入力は分納なし時のみ)。
+// サーバ側も line.Quantity = SUM に再計算するため、UI 表示とサーバ保存が一致する。
+const lineQuantity = (l: LineRow): number =>
+  l.deliveries.length > 0 ? l.deliveries.reduce((s, d) => s + (Number(d.quantity) || 0), 0) : Number(l.quantity) || 0
 
 // サイズ別仕入単価 (PR2)。SKU の size に対応する現単価を発注先からサジェストし、明細の単価/通貨を
 // 自動補完する (入力補助)。フォールバック: (family, supplier, SKUのsize) → 無ければ (…, 全サイズ既定)。
@@ -196,12 +224,19 @@ watch(() => form.value.supplierId, () => {
   lines.value.forEach((_, idx) => applyPriceSuggestion(idx))
 })
 
-const lineSubtotal = (l: LineRow) => l.quantity * l.unitPriceSnapshot
+// 小計 = 数量 × 単価。数量は分納合計 (lineQuantity) を使うため、分納展開しても合計は整合する。
+const lineSubtotal = (l: LineRow) => lineQuantity(l) * l.unitPriceSnapshot
 const totalAmount = computed(() => lines.value.reduce((sum, l) => sum + lineSubtotal(l), 0))
 
 const applyTemplate = (tpl: CommunicationSuggestion) => {
   form.value.communicationText = (form.value.communicationText ? form.value.communicationText + '\n' : '') + tpl.body
 }
+
+// 明細の数量妥当性: 分納なしは単一 quantity > 0、分納ありは全分納 quantity > 0 かつ合計 > 0。
+const lineQuantityValid = (l: LineRow): boolean =>
+  l.deliveries.length > 0
+    ? l.deliveries.every((d) => (Number(d.quantity) || 0) > 0) && lineQuantity(l) > 0
+    : (Number(l.quantity) || 0) > 0
 
 const canSubmit = computed(() =>
   form.value.supplierId > 0 &&
@@ -210,7 +245,7 @@ const canSubmit = computed(() =>
   form.value.warehouseId > 0 &&
   form.value.ordererUserId > 0 &&
   form.value.managerUserId > 0 &&
-  lines.value.every((l) => l.productId > 0 && l.quantity > 0 && l.unitPriceSnapshot >= 0) &&
+  lines.value.every((l) => l.productId > 0 && lineQuantityValid(l) && l.unitPriceSnapshot >= 0) &&
   !submitting.value)
 
 const onSubmit = async () => {
@@ -238,13 +273,24 @@ const onSubmit = async () => {
       communicationText: form.value.communicationText.trim() || null,
       lines: lines.value.map((l) => ({
         productId: l.productId,
-        quantity: Number(l.quantity),
+        // 分納あり明細は quantity = 分納合計 (lineQuantity)。サーバも SUM に再計算するが、整合のため
+        // 合計値を送る。分納なしは単一 quantity をそのまま送る (従来挙動)。
+        quantity: lineQuantity(l),
         unitPriceSnapshot: Number(l.unitPriceSnapshot),
         currencyCodeSnapshot: l.currencyCodeSnapshot,
         packQuantity: l.packQuantity != null ? Number(l.packQuantity) : null,
         estimateUnitPrice: l.estimateUnitPrice != null ? Number(l.estimateUnitPrice) : null,
         // 発注明細 備考 (spec 明細 No.26)。空欄は null で送る。
         remark: l.remark?.trim() || null,
+        // 分納×倉庫の多次元明細 (PR5b)。空 = null (分納なし、従来挙動)。1 件以上あれば配列で送る。
+        deliveries: l.deliveries.length > 0
+          ? l.deliveries.map((d) => ({
+              warehouseId: d.warehouseId,
+              deliveryDate: d.deliveryDate || null,
+              quantity: Number(d.quantity) || 0,
+              packQuantity: d.packQuantity != null ? Number(d.packQuantity) : null,
+            }))
+          : null,
       })),
       // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
       isOverseas: form.value.isOverseas,
@@ -437,13 +483,16 @@ const onSubmit = async () => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(l, idx) in lines" :key="idx" class="border-b border-gray-100 last:border-0">
+              <template v-for="(l, idx) in lines" :key="idx">
+              <tr class="border-b border-gray-100" :class="l.showDeliveries || l.deliveries.length > 0 ? '' : 'last:border-0'">
                 <td class="px-2 py-1.5">
                   <!-- サイズ別仕入単価 (PR2): SKU 選択時に単価をサジェスト補完 (onLineProductChange)。 -->
                   <MasterSelect :model-value="l.productId" :items="skuOptions" placeholder="SKU・品名で検索…" @update:model-value="(v) => onLineProductChange(idx, v)" />
                 </td>
                 <td class="px-2 py-1.5 text-right">
-                  <input v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                  <!-- 分納あり時は数量を合計の読取表示 (単一数量入力は分納なし時のみ、PR5b)。 -->
+                  <input v-if="l.deliveries.length === 0" v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                  <span v-else class="inline-block w-20 px-2 py-1 text-right font-mono text-gray-700" title="分納数量の合計">{{ lineQuantity(l).toLocaleString() }}</span>
                 </td>
                 <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
@@ -464,9 +513,50 @@ const onSubmit = async () => {
                 </td>
                 <td class="px-2 py-1.5 text-right font-mono">{{ lineSubtotal(l).toLocaleString() }}</td>
                 <td class="px-2 py-1.5 text-right">
-                  <button type="button" :disabled="lines.length <= 1" class="text-xs text-red-600 hover:underline disabled:opacity-30" @click="removeLine(idx)">削除</button>
+                  <div class="flex items-center justify-end gap-2">
+                    <!-- 分納 / 倉庫別 サブセクションの開閉トグル (PR5b)。分納あり件数をバッジ表示。 -->
+                    <button type="button" class="text-xs text-blue-600 hover:underline" @click="l.showDeliveries = !l.showDeliveries">
+                      分納{{ l.deliveries.length > 0 ? ` (${l.deliveries.length})` : '' }}
+                    </button>
+                    <button type="button" :disabled="lines.length <= 1" class="text-xs text-red-600 hover:underline disabled:opacity-30" @click="removeLine(idx)">削除</button>
+                  </div>
                 </td>
               </tr>
+              <!-- 分納 / 倉庫別 サブセクション (PR5b、任意・折りたたみ可)。倉庫 + 納期 + 数量 + 入数 を行追加/削除。 -->
+              <tr v-if="l.showDeliveries" class="border-b border-gray-100 last:border-0 bg-gray-50">
+                <td colspan="9" class="px-3 py-2">
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-xs font-semibold text-gray-600">分納 / 倉庫別 (任意 — 倉庫×納期で多次元化。空なら単一明細)</span>
+                    <button type="button" class="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs hover:bg-gray-100" @click="addDelivery(idx)">+ 分納行を追加</button>
+                  </div>
+                  <div v-if="l.deliveries.length === 0" class="py-2 text-center text-xs text-gray-400">
+                    分納なし (単一明細)。倉庫別・複数納期で分けたい場合は「+ 分納行を追加」してください。
+                  </div>
+                  <div v-else class="space-y-2">
+                    <div v-for="(d, dIdx) in l.deliveries" :key="dIdx" class="grid grid-cols-1 gap-2 rounded-md border border-gray-200 bg-white p-2 sm:grid-cols-[1fr_10rem_7rem_7rem_auto] sm:items-end">
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">倉庫</span>
+                        <MasterSelect v-model="d.warehouseId" :items="warehouses" allow-empty empty-label="（未指定）" placeholder="（任意）" />
+                      </label>
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">納期</span>
+                        <input v-model="d.deliveryDate" type="date" class="rounded-md border border-gray-300 px-2 py-1 text-sm" />
+                      </label>
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">数量 <span class="text-red-500">*</span></span>
+                        <input v-model.number="d.quantity" type="number" min="1" class="rounded-md border border-gray-300 px-2 py-1 text-right text-sm" />
+                      </label>
+                      <label class="flex flex-col gap-0.5">
+                        <span class="text-xs font-medium text-gray-600">入数</span>
+                        <input v-model.number="d.packQuantity" type="number" min="0" placeholder="—" class="rounded-md border border-gray-300 px-2 py-1 text-right text-sm" />
+                      </label>
+                      <button type="button" class="h-fit rounded-md border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50" @click="removeDelivery(idx, dIdx)">削除</button>
+                    </div>
+                    <div class="text-right text-xs text-gray-500">分納合計数量: <span class="font-mono font-semibold">{{ lineQuantity(l).toLocaleString() }}</span></div>
+                  </div>
+                </td>
+              </tr>
+              </template>
             </tbody>
           </table>
         </section>

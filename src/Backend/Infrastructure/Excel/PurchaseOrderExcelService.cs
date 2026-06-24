@@ -39,6 +39,8 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             ?? throw new InvalidOperationException($"発注書 id={purchaseOrderId} 不在");
 
         var lines = await db.PurchaseOrderLines
+            // 分納×倉庫の多次元明細 (PR5b)。倉庫名解決のため Warehouse ナビも Include。
+            .Include(l => l.Deliveries).ThenInclude(d => d.Warehouse)
             .Where(l => l.PurchaseOrderId == purchaseOrderId)
             .OrderBy(l => l.LineNo)
             .ToListAsync(ct);
@@ -122,6 +124,8 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             ws.Cell(dataRow, 1).Value = (int)line.LineNo;
             ws.Cell(dataRow, 2).Value = line.SkuSnapshot;
             ws.Cell(dataRow, 3).Value = line.ProductNameSnapshot;
+            // 数量 = line.Quantity。分納あり明細では line.Quantity = 分納数量の合計 (SUM、PR5b) のため、
+            // 明細合計数量・小計は従来表示を維持する。分納内訳は下の追記行で出力する。
             ws.Cell(dataRow, 4).Value = line.Quantity;
             ws.Cell(dataRow, 5).Value = line.UnitPriceSnapshot;
             ws.Cell(dataRow, 5).Style.NumberFormat.Format = "#,##0.00";
@@ -133,6 +137,25 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             totalAmount += line.Subtotal;
             currency = line.CurrencyCodeSnapshot;
             dataRow++;
+
+            // 分納×倉庫の多次元明細 (PR5b): 分納がある明細は、明細直下に「分納スケジュール」追記行を
+            // 1 分納 = 1 行で出力する (倉庫 / 納期 / 数量 / 入数)。金額・合計には影響しない (明細行の
+            // line.Subtotal が SUM ベースで既に正しいため二重計上しない)。商品名列に内訳を寄せて表示する。
+            if (line.Deliveries.Count > 0)
+            {
+                foreach (var d in line.Deliveries.OrderBy(x => x.Seq).ThenBy(x => x.Id))
+                {
+                    var wh = d.Warehouse?.Name ?? "倉庫未指定";
+                    var date = d.DeliveryDate?.ToString("yyyy-MM-dd") ?? "(発注明細日)";
+                    var pack = d.PackQuantity is { } p ? $" 入数 {p}" : "";
+                    ws.Cell(dataRow, 3).Value = $"  └ 分納: {wh} / {date}{pack}";
+                    ws.Cell(dataRow, 3).Style.Font.SetItalic().Font.FontColor = XLColor.Gray;
+                    ws.Cell(dataRow, 4).Value = d.Quantity;
+                    for (var col = 1; col <= 7; col++)
+                        ws.Cell(dataRow, col).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                    dataRow++;
+                }
+            }
         }
 
         // 合計行

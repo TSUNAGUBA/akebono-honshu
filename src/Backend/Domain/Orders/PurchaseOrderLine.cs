@@ -39,4 +39,11 @@ public class PurchaseOrderLine
 
     public PurchaseOrder? PurchaseOrder { get; set; }
     public Product? Product { get; set; }
+
+    /// <summary>
+    /// 分納×倉庫の多次元明細 (PR5b、任意 = 0 件可)。0 件 = 従来どおりの単一明細
+    /// (<see cref="Quantity"/> をそのまま使う)。N 件 = 分納で構成 (<see cref="Quantity"/> は SUM)。
+    /// 発注の作成/更新時に全置換するコレクション。
+    /// </summary>
+    public List<PurchaseOrderLineDelivery> Deliveries { get; set; } = new();
 }
