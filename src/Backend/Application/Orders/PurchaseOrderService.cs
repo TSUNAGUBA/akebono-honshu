@@ -54,7 +54,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                 LandingPlace = req.LandingPlace,
                 CustomerRef = req.CustomerRef,
                 FactoryShippingDate = req.FactoryShippingDate,
-                InspectionShippingDate = req.InspectionShippingDate,
+                DeliveryPlaceShippingDate = req.DeliveryPlaceShippingDate,
                 OverseasDepartureDate = req.OverseasDepartureDate,
                 Warehouse2Id = req.Warehouse2Id,
                 Warehouse3Id = req.Warehouse3Id,
@@ -85,6 +85,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                     ProvisionalNumberSnapshot = product.ProductFamily?.ProvisionalNumber,
                     PackQuantity = l.PackQuantity,
                     EstimateUnitPrice = l.EstimateUnitPrice,
+                    Remark = l.Remark,
                     Quantity = l.Quantity,
                     UnitPriceSnapshot = l.UnitPriceSnapshot,
                     CurrencyCodeSnapshot = l.CurrencyCodeSnapshot,
@@ -217,14 +218,14 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                 l.Id, l.LineNo, l.ProductId, l.SkuSnapshot, l.ProductNameSnapshot,
                 l.Product?.Color?.Name ?? "?", l.Product?.Size?.Name ?? "?",
                 l.Quantity, l.UnitPriceSnapshot, l.CurrencyCodeSnapshot, l.Subtotal,
-                // 旧 発注明細 項目 (Phase B)
-                l.PackQuantity, l.EstimateUnitPrice, l.ProvisionalNumberSnapshot)).ToList(),
+                // 旧 発注明細 項目 (Phase B) + 発注明細 備考 (spec 明細 No.26)
+                l.PackQuantity, l.EstimateUnitPrice, l.ProvisionalNumberSnapshot, l.Remark)).ToList(),
             // 旧 発注書 国内/海外 項目 (Phase B)。納入倉庫2/3 名は Include 済ナビから解決 (未設定時 null)。
             order.IsOverseas,
             order.LandingPlace,
             order.CustomerRef,
             order.FactoryShippingDate,
-            order.InspectionShippingDate,
+            order.DeliveryPlaceShippingDate,
             order.OverseasDepartureDate,
             order.Warehouse2Id, order.Warehouse2?.Name,
             order.Warehouse3Id, order.Warehouse3?.Name,
@@ -271,7 +272,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             order.LandingPlace = req.LandingPlace;
             order.CustomerRef = req.CustomerRef;
             order.FactoryShippingDate = req.FactoryShippingDate;
-            order.InspectionShippingDate = req.InspectionShippingDate;
+            order.DeliveryPlaceShippingDate = req.DeliveryPlaceShippingDate;
             order.OverseasDepartureDate = req.OverseasDepartureDate;
             order.Warehouse2Id = req.Warehouse2Id;
             order.Warehouse3Id = req.Warehouse3Id;
@@ -303,6 +304,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                     ProvisionalNumberSnapshot = product.ProductFamily?.ProvisionalNumber,
                     PackQuantity = l.PackQuantity,
                     EstimateUnitPrice = l.EstimateUnitPrice,
+                    Remark = l.Remark,
                     Quantity = l.Quantity,
                     UnitPriceSnapshot = l.UnitPriceSnapshot,
                     CurrencyCodeSnapshot = l.CurrencyCodeSnapshot,

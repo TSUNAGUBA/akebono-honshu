@@ -17,7 +17,7 @@ const downloading = ref(false)
 
 // 編集モード
 const editing = ref(false)
-const editLines = ref<{ id: number | null; productId: number; sku: string; productName: string; quantity: number; unitPriceSnapshot: number; currencyCodeSnapshot: string; packQuantity: number | null; estimateUnitPrice: number | null; provisionalNumberSnapshot: string | null }[]>([])
+const editLines = ref<{ id: number | null; productId: number; sku: string; productName: string; quantity: number; unitPriceSnapshot: number; currencyCodeSnapshot: string; packQuantity: number | null; estimateUnitPrice: number | null; provisionalNumberSnapshot: string | null; remark: string | null }[]>([])
 const editReason = ref<EditReason>('quantity')
 const editNote = ref('')
 
@@ -27,7 +27,7 @@ const editHeader = ref({
   landingPlace: '' as string,
   customerRef: '' as string,
   factoryShippingDate: '' as string,
-  inspectionShippingDate: '' as string,
+  deliveryPlaceShippingDate: '' as string,
   overseasDepartureDate: '' as string,
   warehouse2Id: null as number | null,
   warehouse3Id: null as number | null,
@@ -50,6 +50,7 @@ const reload = async () => {
         id: l.id, productId: l.productId, sku: l.sku, productName: l.productName,
         quantity: l.quantity, unitPriceSnapshot: l.unitPriceSnapshot, currencyCodeSnapshot: l.currencyCodeSnapshot,
         packQuantity: l.packQuantity, estimateUnitPrice: l.estimateUnitPrice, provisionalNumberSnapshot: l.provisionalNumberSnapshot,
+        remark: l.remark,
       }))
       // 旧 発注書 国内/海外 項目 (Phase B) の編集状態を detail から初期化 (null → 空文字に正規化)
       editHeader.value = {
@@ -57,7 +58,7 @@ const reload = async () => {
         landingPlace: detail.value.landingPlace ?? '',
         customerRef: detail.value.customerRef ?? '',
         factoryShippingDate: detail.value.factoryShippingDate ?? '',
-        inspectionShippingDate: detail.value.inspectionShippingDate ?? '',
+        deliveryPlaceShippingDate: detail.value.deliveryPlaceShippingDate ?? '',
         overseasDepartureDate: detail.value.overseasDepartureDate ?? '',
         warehouse2Id: detail.value.warehouse2Id,
         warehouse3Id: detail.value.warehouse3Id,
@@ -124,13 +125,15 @@ const onSaveEdit = async () => {
         currencyCodeSnapshot: l.currencyCodeSnapshot,
         packQuantity: l.packQuantity != null ? Number(l.packQuantity) : null,
         estimateUnitPrice: l.estimateUnitPrice != null ? Number(l.estimateUnitPrice) : null,
+        // 発注明細 備考 (spec 明細 No.26)。空欄は null で送る。
+        remark: l.remark?.trim() || null,
       })),
       // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
       isOverseas: editHeader.value.isOverseas,
       landingPlace: editHeader.value.isOverseas ? (editHeader.value.landingPlace.trim() || null) : null,
       customerRef: editHeader.value.isOverseas ? (editHeader.value.customerRef.trim() || null) : null,
       factoryShippingDate: editHeader.value.isOverseas ? (editHeader.value.factoryShippingDate || null) : null,
-      inspectionShippingDate: editHeader.value.isOverseas ? (editHeader.value.inspectionShippingDate || null) : null,
+      deliveryPlaceShippingDate: editHeader.value.isOverseas ? (editHeader.value.deliveryPlaceShippingDate || null) : null,
       overseasDepartureDate: editHeader.value.isOverseas ? (editHeader.value.overseasDepartureDate || null) : null,
       warehouse2Id: editHeader.value.isOverseas ? editHeader.value.warehouse2Id : null,
       warehouse3Id: editHeader.value.isOverseas ? editHeader.value.warehouse3Id : null,
@@ -354,7 +357,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <div><span class="text-gray-500">荷揚地:</span> {{ detail.landingPlace || '—' }}</div>
             <div><span class="text-gray-500">得意先:</span> {{ detail.customerRef || '—' }}</div>
             <div><span class="text-gray-500">工場出荷日:</span> {{ detail.factoryShippingDate || '—' }}</div>
-            <div><span class="text-gray-500">検品所出荷日:</span> {{ detail.inspectionShippingDate || '—' }}</div>
+            <div><span class="text-gray-500">納品所出荷日:</span> {{ detail.deliveryPlaceShippingDate || '—' }}</div>
             <div><span class="text-gray-500">海外出港日:</span> {{ detail.overseasDepartureDate || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫2:</span> {{ detail.warehouse2Name || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫3:</span> {{ detail.warehouse3Name || '—' }}</div>
@@ -404,6 +407,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
               <th class="px-2 py-1.5 text-right">入数</th>
               <th class="px-2 py-1.5 text-right">単価</th>
               <th class="px-2 py-1.5 text-right">見積単価</th>
+              <th class="px-2 py-1.5 text-left">備考</th>
               <th class="px-2 py-1.5 text-right">小計</th>
             </tr>
           </thead>
@@ -418,6 +422,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
               <td class="px-2 py-1.5 text-right font-mono">{{ l.packQuantity != null ? l.packQuantity.toLocaleString() : '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ l.unitPriceSnapshot.toLocaleString() }}</td>
               <td class="px-2 py-1.5 text-right font-mono">{{ l.estimateUnitPrice != null ? l.estimateUnitPrice.toLocaleString() : '—' }}</td>
+              <td class="px-2 py-1.5">{{ l.remark || '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono">{{ l.subtotal.toLocaleString() }}</td>
             </tr>
           </tbody>
@@ -435,6 +440,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <th class="px-2 py-1.5 text-right">入数</th>
                 <th class="px-2 py-1.5 text-right">単価</th>
                 <th class="px-2 py-1.5 text-right">見積単価</th>
+                <th class="px-2 py-1.5 text-left">備考</th>
                 <th class="px-2 py-1.5 text-right">小計</th>
               </tr>
             </thead>
@@ -454,6 +460,9 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 </td>
                 <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.estimateUnitPrice" type="number" min="0" step="0.01" placeholder="—" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                </td>
+                <td class="px-2 py-1.5">
+                  <input v-model="l.remark" type="text" maxlength="255" placeholder="—" class="w-32 rounded-md border border-gray-300 px-2 py-1" />
                 </td>
                 <td class="px-2 py-1.5 text-right font-mono">{{ (l.quantity * l.unitPriceSnapshot).toLocaleString() }}</td>
               </tr>
@@ -493,8 +502,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <input v-model="editHeader.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
-                <span class="font-medium">検品所出荷日</span>
-                <input v-model="editHeader.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+                <span class="font-medium">納品所出荷日</span>
+                <input v-model="editHeader.deliveryPlaceShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">海外出港日</span>

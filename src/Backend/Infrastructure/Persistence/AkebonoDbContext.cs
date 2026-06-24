@@ -367,7 +367,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.LandingPlace).HasColumnName("landing_place").HasMaxLength(128);
             b.Property(x => x.CustomerRef).HasColumnName("customer_ref").HasMaxLength(128);
             b.Property(x => x.FactoryShippingDate).HasColumnName("factory_shipping_date");
-            b.Property(x => x.InspectionShippingDate).HasColumnName("inspection_shipping_date");
+            b.Property(x => x.DeliveryPlaceShippingDate).HasColumnName("delivery_place_shipping_date");
             b.Property(x => x.OverseasDepartureDate).HasColumnName("overseas_departure_date");
             b.Property(x => x.Warehouse2Id).HasColumnName("warehouse2_id");
             b.Property(x => x.Warehouse3Id).HasColumnName("warehouse3_id");
@@ -414,6 +414,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.PackQuantity).HasColumnName("pack_quantity");
             b.Property(x => x.EstimateUnitPrice).HasColumnName("estimate_unit_price").HasColumnType("numeric(12,2)");
             b.Property(x => x.ProvisionalNumberSnapshot).HasColumnName("provisional_number_snapshot").HasMaxLength(64);
+            // 発注明細 備考 (spec 明細 No.26、NULL 許容)。TEXT 列のため HasMaxLength は付けない。
+            b.Property(x => x.Remark).HasColumnName("remark");
             b.Property(x => x.Subtotal)
                 .HasColumnName("subtotal")
                 .HasColumnType("numeric(14,2)")

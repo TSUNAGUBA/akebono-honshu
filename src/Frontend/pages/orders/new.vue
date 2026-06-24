@@ -57,7 +57,7 @@ const form = ref({
   landingPlace: '',
   customerRef: '',
   factoryShippingDate: '',
-  inspectionShippingDate: '',
+  deliveryPlaceShippingDate: '',
   overseasDepartureDate: '',
   warehouse2Id: null as number | null,
   warehouse3Id: null as number | null,
@@ -71,9 +71,11 @@ interface LineRow {
   // 旧 発注明細 項目 (Phase B、任意)
   packQuantity: number | null
   estimateUnitPrice: number | null
+  // 発注明細 備考 (spec 明細 No.26、任意)
+  remark: string | null
 }
 const lines = ref<LineRow[]>([
-  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, estimateUnitPrice: null },
+  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, estimateUnitPrice: null, remark: null },
 ])
 
 // --- オートコンプリート選択肢（マスタ参照を部分一致検索可能に） ---
@@ -145,6 +147,7 @@ const addLine = () => {
     currencyCodeSnapshot: 'JPY',
     packQuantity: null,
     estimateUnitPrice: null,
+    remark: null,
   })
   // 追加直後の明細にも現単価を補完する (reviewer M-1)。既定選択された SKU に対し size-aware に
   // サジェスト (force=true)。supplier 未選択や現単価なしなら applyPriceSuggestion 内で no-op。
@@ -240,13 +243,15 @@ const onSubmit = async () => {
         currencyCodeSnapshot: l.currencyCodeSnapshot,
         packQuantity: l.packQuantity != null ? Number(l.packQuantity) : null,
         estimateUnitPrice: l.estimateUnitPrice != null ? Number(l.estimateUnitPrice) : null,
+        // 発注明細 備考 (spec 明細 No.26)。空欄は null で送る。
+        remark: l.remark?.trim() || null,
       })),
       // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
       isOverseas: form.value.isOverseas,
       landingPlace: form.value.isOverseas ? (form.value.landingPlace.trim() || null) : null,
       customerRef: form.value.isOverseas ? (form.value.customerRef.trim() || null) : null,
       factoryShippingDate: form.value.isOverseas ? (form.value.factoryShippingDate || null) : null,
-      inspectionShippingDate: form.value.isOverseas ? (form.value.inspectionShippingDate || null) : null,
+      deliveryPlaceShippingDate: form.value.isOverseas ? (form.value.deliveryPlaceShippingDate || null) : null,
       overseasDepartureDate: form.value.isOverseas ? (form.value.overseasDepartureDate || null) : null,
       warehouse2Id: form.value.isOverseas ? form.value.warehouse2Id : null,
       warehouse3Id: form.value.isOverseas ? form.value.warehouse3Id : null,
@@ -381,8 +386,8 @@ const onSubmit = async () => {
               <input v-model="form.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="font-medium">検品所出荷日</span>
-              <input v-model="form.inspectionShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+              <span class="font-medium">納品所出荷日</span>
+              <input v-model="form.deliveryPlaceShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">海外出港日</span>
@@ -426,6 +431,7 @@ const onSubmit = async () => {
                 <th class="px-2 py-1.5 text-right">単価</th>
                 <th class="px-2 py-1.5 text-right">見積単価</th>
                 <th class="px-2 py-1.5 text-left">通貨</th>
+                <th class="px-2 py-1.5 text-left">備考</th>
                 <th class="px-2 py-1.5 text-right">小計</th>
                 <th class="px-2 py-1.5 text-right"></th>
               </tr>
@@ -452,6 +458,9 @@ const onSubmit = async () => {
                   <div class="w-20">
                     <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => l.currencyCodeSnapshot = v" />
                   </div>
+                </td>
+                <td class="px-2 py-1.5">
+                  <input v-model="l.remark" type="text" maxlength="255" placeholder="—" class="w-32 rounded-md border border-gray-300 px-2 py-1" />
                 </td>
                 <td class="px-2 py-1.5 text-right font-mono">{{ lineSubtotal(l).toLocaleString() }}</td>
                 <td class="px-2 py-1.5 text-right">

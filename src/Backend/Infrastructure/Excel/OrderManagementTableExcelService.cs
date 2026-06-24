@@ -15,7 +15,9 @@ namespace Akebono.Infrastructure.Excel;
 /// レイアウト: ヘッダ行 + 明細行 (発注をまたいで 1 明細 = 1 行) + 合計行 (発注数・金額)。
 /// 列: 管理番号 / 発注番号 / 発注日 / 区分 / 発注状態 / 仕入先 / 納品先 / 得意先 /
 ///     品番(7桁) / SKU / 商品名 / 色 / サイズ / 仮番号 / 発注数 / 入数 / 単価 / 見積単価 /
-///     金額(小計) / 通貨 / 納期
+///     金額(小計) / 通貨 / 納期 / 備考
+/// 備考 (発注明細 備考、spec 明細 No.26) は末尾に追加。発注数 (列15) / 金額 (列19) の
+/// 合計行ハードコード列番号を維持するため、既存列の手前には差し込まない。
 /// </summary>
 public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger audit)
     : IOrderManagementTableExcelService
@@ -24,7 +26,7 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
     {
         "管理番号", "発注番号", "発注日", "区分", "発注状態", "仕入先", "納品先", "得意先",
         "品番", "SKU", "商品名", "色", "サイズ", "仮番号", "発注数", "入数", "単価", "見積単価",
-        "金額", "通貨", "納期",
+        "金額", "通貨", "納期", "備考",
     };
 
     public async Task<(string FileName, byte[] Content)> ExportAsync(
@@ -122,6 +124,8 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
                 ws.Cell(dataRow, col++).Style.NumberFormat.Format = "#,##0.00";
                 ws.Cell(dataRow, col++).Value = line.CurrencyCodeSnapshot;
                 ws.Cell(dataRow, col++).Value = order.DueDate.ToString("yyyy-MM-dd");
+                // 備考 (発注明細 備考、spec 明細 No.26)。未設定は空欄。
+                ws.Cell(dataRow, col++).Value = line.Remark ?? "";
 
                 for (var c = 1; c <= Headers.Length; c++)
                     ws.Cell(dataRow, c).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;

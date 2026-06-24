@@ -26,7 +26,7 @@ public record CreateOrderRequest(
     string? LandingPlace = null,
     string? CustomerRef = null,
     DateOnly? FactoryShippingDate = null,
-    DateOnly? InspectionShippingDate = null,
+    DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
     long? Warehouse3Id = null);
@@ -38,7 +38,9 @@ public record OrderLineInput(
     string CurrencyCodeSnapshot,
     // 旧 発注明細 項目 (Phase B、任意)。仮番号は商品 family からコピーするため入力には含めない。
     int? PackQuantity = null,
-    decimal? EstimateUnitPrice = null);
+    decimal? EstimateUnitPrice = null,
+    // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
+    string? Remark = null);
 
 // ─────────────────────────────────────────────────
 // 一覧 (GET /api/v1/orders、O-03)
@@ -116,7 +118,7 @@ public record OrderDetail(
     string? LandingPlace = null,
     string? CustomerRef = null,
     DateOnly? FactoryShippingDate = null,
-    DateOnly? InspectionShippingDate = null,
+    DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
     string? Warehouse2Name = null,
@@ -143,7 +145,9 @@ public record OrderLineDetail(
     // 旧 発注明細 項目 (Phase B、任意)
     int? PackQuantity = null,
     decimal? EstimateUnitPrice = null,
-    string? ProvisionalNumberSnapshot = null);
+    string? ProvisionalNumberSnapshot = null,
+    // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
+    string? Remark = null);
 
 // ─────────────────────────────────────────────────
 // 更新 (PATCH /api/v1/orders/{id}、O-04、edit_reason 必須 F-16)
@@ -171,7 +175,7 @@ public record UpdateOrderRequest(
     string? LandingPlace = null,
     string? CustomerRef = null,
     DateOnly? FactoryShippingDate = null,
-    DateOnly? InspectionShippingDate = null,
+    DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
     long? Warehouse3Id = null);
@@ -184,7 +188,9 @@ public record UpdateLineInput(
     string CurrencyCodeSnapshot,
     // 旧 発注明細 項目 (Phase B、任意)。仮番号は商品 family からコピーするため入力には含めない。
     int? PackQuantity = null,
-    decimal? EstimateUnitPrice = null);
+    decimal? EstimateUnitPrice = null,
+    // 発注明細 備考 (spec 明細 No.26、任意)。末尾追加で下位互換。
+    string? Remark = null);
 
 // ─────────────────────────────────────────────────
 // 中止 (POST /api/v1/orders/{id}/cancel、O-05)

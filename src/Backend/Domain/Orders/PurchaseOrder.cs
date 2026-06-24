@@ -66,8 +66,8 @@ public class PurchaseOrder
     public string? CustomerRef { get; set; }
     /// <summary>工場出荷日</summary>
     public DateOnly? FactoryShippingDate { get; set; }
-    /// <summary>検品所出荷日</summary>
-    public DateOnly? InspectionShippingDate { get; set; }
+    /// <summary>納品所出荷日 (旧名: 検品所出荷日、設計判断Q6 で名称統一。列 delivery_place_shipping_date)</summary>
+    public DateOnly? DeliveryPlaceShippingDate { get; set; }
     /// <summary>海外出港日</summary>
     public DateOnly? OverseasDepartureDate { get; set; }
     /// <summary>納入倉庫2 (warehouses.id)</summary>

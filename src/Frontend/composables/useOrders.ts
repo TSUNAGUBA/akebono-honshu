@@ -58,6 +58,8 @@ export interface OrderLineDetail {
   packQuantity: number | null
   estimateUnitPrice: number | null
   provisionalNumberSnapshot: string | null
+  // 発注明細 備考 (spec 明細 No.26)
+  remark: string | null
 }
 
 export interface OrderDetail {
@@ -101,7 +103,7 @@ export interface OrderDetail {
   landingPlace: string | null
   customerRef: string | null
   factoryShippingDate: string | null
-  inspectionShippingDate: string | null
+  deliveryPlaceShippingDate: string | null
   overseasDepartureDate: string | null
   warehouse2Id: number | null
   warehouse2Name: string | null
@@ -136,13 +138,15 @@ export interface CreateOrderPayload {
     // 旧 発注明細 項目 (Phase B、任意)
     packQuantity: number | null
     estimateUnitPrice: number | null
+    // 発注明細 備考 (spec 明細 No.26、任意)
+    remark: string | null
   }[]
   // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
   isOverseas: boolean
   landingPlace: string | null
   customerRef: string | null
   factoryShippingDate: string | null
-  inspectionShippingDate: string | null
+  deliveryPlaceShippingDate: string | null
   overseasDepartureDate: string | null
   warehouse2Id: number | null
   warehouse3Id: number | null
