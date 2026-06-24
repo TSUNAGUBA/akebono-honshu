@@ -38,9 +38,15 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
       </p>
     </header>
 
+    <!-- 検索/絞込パネル (開閉可能)。検索ボックス + 中止済みトグル。 -->
+    <FilterPanel title="検索" storage-key="filters:material-orders" :active-count="search.trim() ? 1 : 0">
+      <div class="flex flex-wrap items-center gap-4">
+        <input v-model="search" type="search" placeholder="発注番号 / 素材仕入先で検索" class="w-80 max-w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none" />
+        <label class="inline-flex items-center gap-2 text-sm text-gray-600"><input v-model="includeCancelled" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> 中止済みを含む</label>
+      </div>
+    </FilterPanel>
+
     <div class="mb-3 flex items-center gap-4">
-      <input v-model="search" type="search" placeholder="発注番号 / 素材仕入先で検索" class="w-80 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none" />
-      <label class="inline-flex items-center gap-2 text-sm text-gray-600"><input v-model="includeCancelled" type="checkbox" class="h-4 w-4 rounded border-gray-300" /> 中止済みを含む</label>
       <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件</span>
     </div>
 
