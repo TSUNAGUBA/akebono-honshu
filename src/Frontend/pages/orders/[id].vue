@@ -498,8 +498,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <tr v-if="l.deliveries.length > 0" class="border-b border-gray-100 last:border-0 bg-gray-50 text-xs text-gray-600">
               <td colspan="11" class="px-3 py-2">
                 <span class="font-semibold">分納 / 倉庫別:</span>
-                <span v-for="(d, dIdx) in l.deliveries" :key="d.id" class="ml-2 inline-block rounded border border-gray-300 bg-white px-2 py-0.5">
-                  {{ d.warehouseName || '倉庫未指定' }} / {{ d.deliveryDate || '(発注明細日)' }} / 数量 {{ d.quantity.toLocaleString() }}<template v-if="d.packQuantity != null"> / 入数 {{ d.packQuantity.toLocaleString() }}</template>{{ dIdx < l.deliveries.length - 1 ? '' : '' }}
+                <span v-for="d in l.deliveries" :key="d.id" class="ml-2 inline-block rounded border border-gray-300 bg-white px-2 py-0.5">
+                  {{ d.warehouseName || '倉庫未指定' }} / {{ d.deliveryDate || '(発注明細日)' }} / 数量 {{ d.quantity.toLocaleString() }}<template v-if="d.packQuantity != null"> / 入数 {{ d.packQuantity.toLocaleString() }}</template>
                 </span>
               </td>
             </tr>
