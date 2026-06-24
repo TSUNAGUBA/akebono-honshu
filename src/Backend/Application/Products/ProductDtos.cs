@@ -96,7 +96,25 @@ public record FamilyListItem(
     decimal? CurrentMinPrice,
     decimal? CurrentMaxPrice,
     string CurrencyCode,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    // 一覧の SPLIT フィルタ用 ID / 値 (P-04 商品一覧の絞込をクライアント側で行うために追加。全て末尾追加 = 下位互換)。
+    // 既存の *Name 列は表示用、以下の *Id 列はフィルタの一致判定用 (MasterSelect の数値 ID と突合)。
+    /// <summary>商品タイプ (product_types.id)。一覧フィルタ「商品タイプ」用。</summary>
+    long ProductTypeId = 0,
+    /// <summary>商品季節 (product_seasons.id)。一覧フィルタ「商品季節」用。</summary>
+    long ProductSeasonId = 0,
+    /// <summary>仕入先 = 工場 (suppliers.id)。一覧フィルタ「仕入先」用。</summary>
+    long FactorySupplierId = 0,
+    /// <summary>ブランド (brands.id)。一覧フィルタ「ブランド」用。</summary>
+    long BrandId = 0,
+    /// <summary>商品年度 (9999=通年、Phase A)。一覧フィルタ「商品年度」用 (前方/部分一致)。未設定時 null。</summary>
+    short? ProductYear = null,
+    /// <summary>仮番号 (Phase A)。一覧フィルタ「仮番号」用 (部分一致)。未設定時 null。</summary>
+    string? ProvisionalNumber = null,
+    /// <summary>企画者 (users.id、Phase A)。一覧フィルタ「企画者」用。未設定時 null。</summary>
+    long? PlannerUserId = null,
+    /// <summary>企画者名 (表示用、Phase A)。未設定時 null。</summary>
+    string? PlannerName = null);
 
 // ─────────────────────────────────────────────────
 // 詳細 (GET /api/v1/products/families/{id}、P-05)

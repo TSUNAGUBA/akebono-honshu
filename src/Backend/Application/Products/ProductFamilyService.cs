@@ -193,6 +193,8 @@ public class ProductFamilyService(
             .Include(pf => pf.ProductType)
             .Include(pf => pf.ProductSeason)
             .Include(pf => pf.FactorySupplier)
+            // 企画者名 (Phase A) を一覧フィルタ/表示用に解決。未設定 (PlannerUserId == null) の family は null のまま。
+            .Include(pf => pf.Planner)
             .AsQueryable();
         if (!includeDeleted) query = query.Where(pf => !pf.IsDeleted);
 
@@ -254,7 +256,16 @@ public class ProductFamilyService(
                 x.PrimaryImageS3Key,
                 primaryUrls[idx],
                 x.MinPrice, x.MaxPrice, x.Currency,
-                x.Family.UpdatedAt));
+                x.Family.UpdatedAt,
+                // 一覧 SPLIT フィルタ用 ID / 値 (クライアント側絞込)。表示名は上の *Name、ここはフィルタ突合用。
+                x.Family.ProductTypeId,
+                x.Family.ProductSeasonId,
+                x.Family.FactorySupplierId,
+                x.Family.BrandId,
+                x.Family.ProductYear,
+                x.Family.ProvisionalNumber,
+                x.Family.PlannerUserId,
+                x.Family.Planner?.DisplayName));
         }
         return result;
     }
