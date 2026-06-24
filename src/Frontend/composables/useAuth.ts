@@ -35,9 +35,14 @@ interface SyncApiResponse {
   processRecordPermission: number
 }
 
+// onAuthStateChanged の初回発火 (+ Backend 同期) 完了を表すゲート Promise。
+// client でのみ生成されるアプリ内シングルトン (module スコープ)。middleware はこれを
+// await して「認証状態が確定してから」認可判定し、リロード時に復元前の null 状態で
+// /login へ誤遷移する race を防ぐ (nuxt/nuxt#8174 と同種)。SSR では生成されない。
+let authReadyPromise: Promise<void> | null = null
+
 export const useAuth = () => {
   const auth = useState<AkebonoUser | null>('auth', () => null)
-  const initialized = useState<boolean>('auth-initialized', () => false)
 
   // Firebase ID Token を都度取得 (refresh は SDK が自動)。
   // currentUser は plugin の provide 経由 (Proxy 経由でなく直参照)。
@@ -76,33 +81,55 @@ export const useAuth = () => {
 
   /**
    * onAuthStateChanged を購読し、リロード時に Firebase が復元する currentUser から
-   * Backend と再同期する。plugin が読み込まれた後に 1 回だけ実行 (initialized で多重防止)。
+   * Backend と再同期する。client で 1 回だけ購読する (authReadyPromise で多重防止)。
+   *
+   * 戻り値は「認証状態が確定した」ことを表す Promise。初回の onAuthStateChanged 発火
+   * (ログイン済なら Backend 同期まで) 完了で resolve する。middleware はこれを await して
+   * から認可判定することで、復元前の null 状態で /login へ誤遷移する race を防ぐ。
    */
-  const watchAuthState = () => {
-    if (!import.meta.client || initialized.value) return
-    initialized.value = true
+  const watchAuthState = (): Promise<void> => {
+    // SSR では Firebase Web SDK が動かないため何もしない (app.vue 全体が <ClientOnly>)。
+    if (!import.meta.client) return Promise.resolve()
+    // 既に購読済みなら、初回確定を表す同一 Promise を返す (多重購読防止 + ゲート共有)。
+    if (authReadyPromise) return authReadyPromise
+
     const { $firebaseAuth } = useNuxtApp()
-    onAuthStateChanged($firebaseAuth as Auth, async (fbUser) => {
-      if (fbUser) {
-        // ログイン済 (リロード等)。Backend と再同期。
+    authReadyPromise = new Promise<void>((resolve) => {
+      let settled = false
+      onAuthStateChanged($firebaseAuth as Auth, async (fbUser) => {
         try {
-          await syncWithBackend(fbUser)
-        }
-        catch {
-          // sync 失敗 (例: users.firebase_uid 未紐付け / inactive) は Firebase もログアウト。
-          // signOut が失敗しても UI の認証済状態を残さないよう、auth.value=null は finally で保証 (レビュー CR-6)。
-          try {
-            await signOut($firebaseAuth as Auth)
+          if (fbUser) {
+            // ログイン済 (リロード時は Firebase が永続化セッションから *非同期* に復元)。Backend と再同期。
+            try {
+              await syncWithBackend(fbUser)
+            }
+            catch {
+              // sync 失敗 (例: users.firebase_uid 未紐付け / inactive) は Firebase もログアウト。
+              // signOut が失敗しても UI の認証済状態を残さないよう、auth.value=null は finally で保証 (レビュー CR-6)。
+              try {
+                await signOut($firebaseAuth as Auth)
+              }
+              finally {
+                auth.value = null
+              }
+            }
           }
-          finally {
+          else {
             auth.value = null
           }
         }
-      }
-      else {
-        auth.value = null
-      }
+        finally {
+          // 初回の emission (= 認証状態の確定) で middleware のゲートを 1 度だけ解放する。
+          // 以降の emission (token refresh / login / logout) でも auth.value は更新し続ける。
+          // 失敗時も finally で必ず解放し、リロードがローディングのまま固まらないようにする (原則4)。
+          if (!settled) {
+            settled = true
+            resolve()
+          }
+        }
+      })
     })
+    return authReadyPromise
   }
 
   const login = async (email: string, password: string): Promise<void> => {
