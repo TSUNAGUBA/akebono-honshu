@@ -64,6 +64,14 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
                 Warehouse2Id = req.Warehouse2Id,
                 Warehouse3Id = req.Warehouse3Id,
                 CommunicationText = req.CommunicationText,
+                // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列を SoT として保存する。CommunicationText は
+                // 旧クライアント互換のため受理して保存するが、新フロントは 6 列のみ送る (空欄は null)。
+                CommunicationLine1 = req.CommunicationLine1,
+                CommunicationLine2 = req.CommunicationLine2,
+                CommunicationLine3 = req.CommunicationLine3,
+                CommunicationLine4 = req.CommunicationLine4,
+                CommunicationLine5 = req.CommunicationLine5,
+                CommunicationLine6 = req.CommunicationLine6,
                 CreatedAt = now, UpdatedAt = now,
                 CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
             };
@@ -261,7 +269,15 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             // 発注状態 5 値モデル (#3a)。納品完了/発注削除 の状態表示・操作可否判定に使う。
             order.DeliveredAt,
             order.IsDeleted,
-            order.DeletedAt);
+            order.DeletedAt,
+            // 連絡文書 6 行 (構造化、PR6)。新フローの SoT を返す。6 列が全 NULL の旧発注は
+            // フロント側で CommunicationText を改行分割してブリッジ表示する (本メソッドは両方返すだけ)。
+            order.CommunicationLine1,
+            order.CommunicationLine2,
+            order.CommunicationLine3,
+            order.CommunicationLine4,
+            order.CommunicationLine5,
+            order.CommunicationLine6);
     }
 
     /// <summary>編集 (O-04)。F-16 edit_reason 必須、audit_logs.changes に before/after 記録。</summary>
@@ -311,6 +327,14 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             order.Warehouse2Id = req.Warehouse2Id;
             order.Warehouse3Id = req.Warehouse3Id;
             order.CommunicationText = req.CommunicationText;
+            // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列で上書き保存する (SoT)。空欄は null。
+            // CommunicationText は新フロントが従来値をそのまま送り返すため値は保持される (旧データ温存)。
+            order.CommunicationLine1 = req.CommunicationLine1;
+            order.CommunicationLine2 = req.CommunicationLine2;
+            order.CommunicationLine3 = req.CommunicationLine3;
+            order.CommunicationLine4 = req.CommunicationLine4;
+            order.CommunicationLine5 = req.CommunicationLine5;
+            order.CommunicationLine6 = req.CommunicationLine6;
             order.UpdatedAt = now;
             order.UpdatedByUserId = actorUserId;
 

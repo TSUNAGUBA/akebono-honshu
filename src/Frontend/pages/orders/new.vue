@@ -51,7 +51,10 @@ const form = ref({
   subOrderer4UserId: null as number | null,
   subOrderer5UserId: null as number | null,
   subOrderer6UserId: null as number | null,
-  communicationText: '',
+  // 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」。各行はテンプレ
+  // 選択式 (連絡文書サジェスト再利用) + 自由編集可。新フローは本 6 列を SoT として送る (communicationText
+  // は新フロントから書かない)。固定長 6 の配列で各スロットを保持する。
+  communicationLines: ['', '', '', '', '', ''] as string[],
   // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
   isOverseas: false,
   landingPlace: '',
@@ -228,8 +231,18 @@ watch(() => form.value.supplierId, () => {
 const lineSubtotal = (l: LineRow) => lineQuantity(l) * l.unitPriceSnapshot
 const totalAmount = computed(() => lines.value.reduce((sum, l) => sum + lineSubtotal(l), 0))
 
-const applyTemplate = (tpl: CommunicationSuggestion) => {
-  form.value.communicationText = (form.value.communicationText ? form.value.communicationText + '\n' : '') + tpl.body
+// 連絡文書 6 行 (PR6): テンプレ選択肢を AutoComplete 用に変換 (value=本文、label=出典ラベル)。
+// 同一本文の重複は value 重複になるため出典ラベルを付して一意化する。
+const commTemplateOptions = computed(() =>
+  commTemplates.value.map((t, i) => ({ value: `${i}`, label: t.sourceLabel, searchText: t.body })),
+)
+// テンプレを指定スロットに適用する。AutoComplete は index 文字列を value にするため body を引き直す。
+const applyTemplateToLine = (slot: number, optionValue: string) => {
+  const idx = Number(optionValue)
+  const tpl = commTemplates.value[idx]
+  if (tpl && slot >= 0 && slot < form.value.communicationLines.length) {
+    form.value.communicationLines[slot] = tpl.body
+  }
 }
 
 // 明細の数量妥当性: 分納なしは単一 quantity > 0、分納ありは全分納 quantity > 0 かつ合計 > 0。
@@ -270,7 +283,15 @@ const onSubmit = async () => {
       subOrderer4UserId: form.value.subOrderer4UserId,
       subOrderer5UserId: form.value.subOrderer5UserId,
       subOrderer6UserId: form.value.subOrderer6UserId,
-      communicationText: form.value.communicationText.trim() || null,
+      // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列を SoT として送る (空欄は null)。
+      // communicationText は新規作成では書かない (旧データ専用フォールバック列のため null)。
+      communicationText: null,
+      communicationLine1: form.value.communicationLines[0].trim() || null,
+      communicationLine2: form.value.communicationLines[1].trim() || null,
+      communicationLine3: form.value.communicationLines[2].trim() || null,
+      communicationLine4: form.value.communicationLines[3].trim() || null,
+      communicationLine5: form.value.communicationLines[4].trim() || null,
+      communicationLine6: form.value.communicationLines[5].trim() || null,
       lines: lines.value.map((l) => ({
         productId: l.productId,
         // 分納あり明細は quantity = 分納合計 (lineQuantity)。サーバも SUM に再計算するが、整合のため
@@ -561,24 +582,37 @@ const onSubmit = async () => {
           </table>
         </section>
 
-        <!-- 連絡文章 (O-07) -->
+        <!-- 連絡文書 6 行 (構造化、PR6。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」) -->
         <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
-            <h2 class="font-semibold">⑤ 連絡文章 (O-07)</h2>
-            <div v-if="commTemplates.length > 0" class="text-xs text-gray-500">
-              テンプレ:
-              <button
-                v-for="(t, i) in commTemplates"
-                :key="i"
-                type="button"
-                class="ml-1 rounded border border-gray-300 px-2 py-0.5 hover:bg-blue-50"
-                @click="applyTemplate(t)"
+          <div class="mb-3 flex flex-col gap-1 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 class="font-semibold">⑤ 連絡文書 (O-07、6 行)</h2>
+            <p class="text-xs text-gray-500">各行はテンプレ選択 + 自由編集できます (空行は出力されません)。</p>
+          </div>
+          <!-- 6 行スロット。各行: テンプレ選択 (AutoComplete) + テキスト入力。モバイルは縦積み (原則8)。 -->
+          <div class="space-y-2">
+            <div
+              v-for="(_, i) in form.communicationLines"
+              :key="i"
+              class="flex flex-col gap-2 sm:flex-row sm:items-center"
+            >
+              <span class="w-12 shrink-0 text-xs font-medium text-gray-500">{{ (i + 1).toString().padStart(2, '0') }} 行</span>
+              <input
+                v-model="form.communicationLines[i]"
+                type="text"
+                :placeholder="`連絡文書 ${(i + 1).toString().padStart(2, '0')} 行目...`"
+                class="flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
               >
-                {{ t.sourceLabel }}
-              </button>
+              <div v-if="commTemplates.length > 0" class="sm:w-64">
+                <AutoComplete
+                  :model-value="''"
+                  :options="commTemplateOptions"
+                  placeholder="テンプレから選択…"
+                  empty-label="（選択しない）"
+                  @update:model-value="(v) => applyTemplateToLine(i, v)"
+                />
+              </div>
             </div>
           </div>
-          <textarea v-model="form.communicationText" rows="4" placeholder="発注先への連絡事項..." class="w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
         </section>
 
         <div v-if="errorMessage" class="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">

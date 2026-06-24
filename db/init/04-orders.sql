@@ -55,6 +55,16 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     warehouse3_id                   BIGINT       NULL REFERENCES warehouses(id),            -- 納入倉庫3
 
     communication_text              TEXT         NULL,
+    -- 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」(選択式) に対応。
+    -- 各行はテンプレ選択式 (連絡文書サジェスト再利用) + 自由編集可。新フローは本 6 列を SoT とする。
+    -- 既存 communication_text 列は削除しない (後方互換)。6 列が全 NULL の旧発注は Excel/編集ロードで
+    -- communication_text にフォールバックする (既存表示を壊さない)。全 NULL 許容 = 既存行は不変。
+    communication_line_1            TEXT         NULL,                                      -- 連絡文書01行 (spec 明細 No.27)
+    communication_line_2            TEXT         NULL,                                      -- 連絡文書02行 (spec 明細 No.28)
+    communication_line_3            TEXT         NULL,                                      -- 連絡文書03行 (spec 明細 No.29)
+    communication_line_4            TEXT         NULL,                                      -- 連絡文書04行 (spec 明細 No.30)
+    communication_line_5            TEXT         NULL,                                      -- 連絡文書05行 (spec 明細 No.31)
+    communication_line_6            TEXT         NULL,                                      -- 連絡文書06行 (spec 明細 No.32)
     first_exported_at               TIMESTAMP    NULL,
     last_exported_at                TIMESTAMP    NULL,
 

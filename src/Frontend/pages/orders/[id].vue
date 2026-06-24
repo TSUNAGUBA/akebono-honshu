@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrderDetail, EditReason } from '~/composables/useOrders'
+import type { OrderDetail, EditReason, CommunicationSuggestion } from '~/composables/useOrders'
 import { editReasonLabel, deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
 
 const route = useRoute()
@@ -7,7 +7,7 @@ const id = computed(() => Number(route.params.id))
 const { user } = useAuth()
 const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 
-const { get, update, cancel, markDelivered, softDelete, downloadExcel } = useOrders()
+const { get, update, cancel, markDelivered, softDelete, downloadExcel, communicationSuggestions } = useOrders()
 
 const detail = ref<OrderDetail | null>(null)
 const loading = ref(true)
@@ -59,6 +59,53 @@ const editHeader = ref({
 const { list: listMasters } = useMasters()
 const warehouses = ref<{ id: number; code?: string | null; name?: string | null }[]>([])
 
+// 連絡文書 6 行 (構造化、PR6)。編集用の固定長 6 スロット + テンプレ候補。reload() で detail から初期化する。
+const editCommLines = ref<string[]>(['', '', '', '', '', ''])
+const commTemplates = ref<CommunicationSuggestion[]>([])
+const commTemplateOptions = computed(() =>
+  commTemplates.value.map((t, i) => ({ value: `${i}`, label: t.sourceLabel, searchText: t.body })),
+)
+// テンプレを指定スロットに適用する (AutoComplete は index 文字列を value にするため body を引き直す)。
+const applyTemplateToLine = (slot: number, optionValue: string) => {
+  const idx = Number(optionValue)
+  const tpl = commTemplates.value[idx]
+  if (tpl && slot >= 0 && slot < editCommLines.value.length) {
+    editCommLines.value[slot] = tpl.body
+  }
+}
+// 連絡文書 6 行 (PR6) の編集ロード。新フローは 6 列を各スロットへ。6 列が全て空でも communicationText が
+// ある旧発注は、communicationText を改行分割して 6 スロットへブリッジする (最大6行、超過は6行目に集約)。
+const buildEditCommLines = (d: OrderDetail): string[] => {
+  const cols = [
+    d.communicationLine1, d.communicationLine2, d.communicationLine3,
+    d.communicationLine4, d.communicationLine5, d.communicationLine6,
+  ]
+  const hasStructured = cols.some((c) => c != null && c.trim() !== '')
+  if (hasStructured) {
+    // 新データ: 6 列をそのままスロットへ (null → 空文字に正規化)。
+    return cols.map((c) => c ?? '')
+  }
+  // 旧データ: communicationText を改行分割。先頭5行はそのまま、6行目以降は残り全部を結合して集約。
+  const text = d.communicationText ?? ''
+  if (text.trim() === '') return ['', '', '', '', '', '']
+  const parts = text.split('\n')
+  const slots = parts.slice(0, 5)
+  if (parts.length > 5) slots.push(parts.slice(5).join('\n'))
+  else slots.push(parts[5] ?? '')
+  while (slots.length < 6) slots.push('')
+  return slots.slice(0, 6)
+}
+// 連絡文書 6 行 (PR6) の読取表示用。新データは 6 列、旧データは communicationText を表示する。
+// 表示は read-only セクション (編集モード外) で使う。
+const displayCommLines = computed<string[]>(() => {
+  if (!detail.value) return []
+  const cols = [
+    detail.value.communicationLine1, detail.value.communicationLine2, detail.value.communicationLine3,
+    detail.value.communicationLine4, detail.value.communicationLine5, detail.value.communicationLine6,
+  ].filter((c): c is string => c != null && c.trim() !== '')
+  return cols
+})
+
 // 中止モーダル
 const showCancelForm = ref(false)
 const cancelReason = ref('')
@@ -95,6 +142,8 @@ const reload = async () => {
         warehouse2Id: detail.value.warehouse2Id,
         warehouse3Id: detail.value.warehouse3Id,
       }
+      // 連絡文書 6 行 (PR6) の編集スロットを初期化 (6 列優先、旧データは communicationText を改行ブリッジ)。
+      editCommLines.value = buildEditCommLines(detail.value)
     }
   } catch (e) {
     const err = e as { statusCode?: number }
@@ -105,11 +154,17 @@ const reload = async () => {
 }
 
 onMounted(async () => {
-  // 納入倉庫2/3 編集用マスタを読み込む (失敗しても本体表示は継続、原則 4 非ブロッキング)
+  // 納入倉庫2/3 編集用マスタ + 連絡文書テンプレ候補を読み込む
+  // (失敗しても本体表示は継続、原則 4 非ブロッキング)。
   try {
     warehouses.value = await listMasters('warehouses')
   } catch {
     warehouses.value = []
+  }
+  try {
+    commTemplates.value = await communicationSuggestions()
+  } catch {
+    commTemplates.value = []
   }
   await reload()
 })
@@ -175,7 +230,16 @@ const onSaveEdit = async () => {
       subOrderer4UserId: detail.value.subOrderer4UserId,
       subOrderer5UserId: detail.value.subOrderer5UserId,
       subOrderer6UserId: detail.value.subOrderer6UserId,
+      // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列で上書き保存する (SoT、空欄は null)。
+      // communicationText は新フローで書かないが、旧データを温存するため従来値をそのまま送り返す
+      // (サーバは受理値を保存。6 列が埋まれば Excel/編集ロードは 6 列を優先する)。
       communicationText: detail.value.communicationText,
+      communicationLine1: editCommLines.value[0].trim() || null,
+      communicationLine2: editCommLines.value[1].trim() || null,
+      communicationLine3: editCommLines.value[2].trim() || null,
+      communicationLine4: editCommLines.value[3].trim() || null,
+      communicationLine5: editCommLines.value[4].trim() || null,
+      communicationLine6: editCommLines.value[5].trim() || null,
       lines: editLines.value.map((l) => ({
         productId: l.productId,
         // 分納あり明細は quantity = 分納合計 (editLineQuantity)。サーバも SUM に再計算する。
@@ -643,6 +707,39 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             </div>
           </div>
 
+          <!-- 連絡文書 6 行 (構造化、PR6。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」) -->
+          <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <span class="font-semibold text-gray-700">連絡文書 (6 行)</span>
+              <p class="text-xs text-gray-500">各行はテンプレ選択 + 自由編集できます (空行は出力されません)。</p>
+            </div>
+            <!-- 6 行スロット。各行: テンプレ選択 (AutoComplete) + テキスト入力。モバイルは縦積み (原則8)。 -->
+            <div class="space-y-2">
+              <div
+                v-for="(_, i) in editCommLines"
+                :key="i"
+                class="flex flex-col gap-2 sm:flex-row sm:items-center"
+              >
+                <span class="w-12 shrink-0 text-xs font-medium text-gray-500">{{ (i + 1).toString().padStart(2, '0') }} 行</span>
+                <input
+                  v-model="editCommLines[i]"
+                  type="text"
+                  :placeholder="`連絡文書 ${(i + 1).toString().padStart(2, '0')} 行目...`"
+                  class="flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                >
+                <div v-if="commTemplates.length > 0" class="sm:w-64">
+                  <AutoComplete
+                    :model-value="''"
+                    :options="commTemplateOptions"
+                    placeholder="テンプレから選択…"
+                    empty-label="（選択しない）"
+                    @update:model-value="(v) => applyTemplateToLine(i, v)"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- F-16 EditReason 必須 -->
           <div class="mt-4 rounded-md bg-yellow-50 p-4">
             <div class="mb-2 font-semibold text-yellow-800">編集理由 (F-16 必須)</div>
@@ -665,10 +762,21 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
         </div>
       </section>
 
-      <!-- 連絡文章 -->
-      <section v-if="detail.communicationText" class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">連絡文章</h2>
-        <pre class="whitespace-pre-wrap text-sm">{{ detail.communicationText }}</pre>
+      <!-- 連絡文書 (構造化 6 行優先、PR6)。編集中は上の編集スロットを使うため非表示。
+           新データは 6 列を 1 行ずつ表示。6 列が全て空の旧発注は communicationText にフォールバック。 -->
+      <section
+        v-if="!editing && (displayCommLines.length > 0 || detail.communicationText)"
+        class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+      >
+        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">連絡文書</h2>
+        <ol v-if="displayCommLines.length > 0" class="space-y-1 text-sm">
+          <li v-for="(line, i) in displayCommLines" :key="i" class="flex gap-2">
+            <span class="shrink-0 font-mono text-xs text-gray-400">{{ (i + 1).toString().padStart(2, '0') }}</span>
+            <span class="whitespace-pre-wrap">{{ line }}</span>
+          </li>
+        </ol>
+        <!-- フォールバック (旧データ): 6 列が全て空の発注は従来の communicationText を表示。 -->
+        <pre v-else class="whitespace-pre-wrap text-sm">{{ detail.communicationText }}</pre>
       </section>
 
       <p class="mt-3 text-xs text-gray-400">

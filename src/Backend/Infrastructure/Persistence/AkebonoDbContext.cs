@@ -374,6 +374,13 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.Warehouse2Id).HasColumnName("warehouse2_id");
             b.Property(x => x.Warehouse3Id).HasColumnName("warehouse3_id");
             b.Property(x => x.CommunicationText).HasColumnName("communication_text");
+            // 連絡文書 6 行 (構造化、PR6)。TEXT 列のため HasMaxLength は付けない。
+            b.Property(x => x.CommunicationLine1).HasColumnName("communication_line_1");
+            b.Property(x => x.CommunicationLine2).HasColumnName("communication_line_2");
+            b.Property(x => x.CommunicationLine3).HasColumnName("communication_line_3");
+            b.Property(x => x.CommunicationLine4).HasColumnName("communication_line_4");
+            b.Property(x => x.CommunicationLine5).HasColumnName("communication_line_5");
+            b.Property(x => x.CommunicationLine6).HasColumnName("communication_line_6");
             b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
             b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");

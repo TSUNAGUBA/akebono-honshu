@@ -29,7 +29,15 @@ public record CreateOrderRequest(
     DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
-    long? Warehouse3Id = null);
+    long? Warehouse3Id = null,
+    // 連絡文書 6 行 (構造化、PR6、末尾・nullable = 下位互換)。旧 spec 発注明細 No.27-32。
+    // 新フローは本 6 列を保存する (SoT)。旧クライアントが未指定なら全 NULL で保存される。
+    string? CommunicationLine1 = null,
+    string? CommunicationLine2 = null,
+    string? CommunicationLine3 = null,
+    string? CommunicationLine4 = null,
+    string? CommunicationLine5 = null,
+    string? CommunicationLine6 = null);
 
 public record OrderLineInput(
     long ProductId,
@@ -140,7 +148,16 @@ public record OrderDetail(
     // 操作者名は cancelled_by と同じく詳細では非表示 (日時のみ表示)。
     DateTime? DeliveredAt = null,
     bool IsDeleted = false,
-    DateTime? DeletedAt = null);
+    DateTime? DeletedAt = null,
+    // 連絡文書 6 行 (構造化、PR6、末尾追加 = 下位互換)。新フローの SoT を返す。フロントは 6 列を各
+    // スロットへ載せる。6 列が全て空でも CommunicationText がある旧発注は、フロント側で改行分割して
+    // ブリッジ表示する (本 DTO は 6 列と CommunicationText の両方をそのまま返すだけ)。
+    string? CommunicationLine1 = null,
+    string? CommunicationLine2 = null,
+    string? CommunicationLine3 = null,
+    string? CommunicationLine4 = null,
+    string? CommunicationLine5 = null,
+    string? CommunicationLine6 = null);
 
 public record OrderLineDetail(
     long Id,
@@ -203,7 +220,15 @@ public record UpdateOrderRequest(
     DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
     long? Warehouse2Id = null,
-    long? Warehouse3Id = null);
+    long? Warehouse3Id = null,
+    // 連絡文書 6 行 (構造化、PR6、末尾・nullable = 下位互換)。旧 spec 発注明細 No.27-32。
+    // 新フローは本 6 列で上書き保存する (SoT)。CommunicationText は新フローで書かない (旧データのみ保持)。
+    string? CommunicationLine1 = null,
+    string? CommunicationLine2 = null,
+    string? CommunicationLine3 = null,
+    string? CommunicationLine4 = null,
+    string? CommunicationLine5 = null,
+    string? CommunicationLine6 = null);
 
 public record UpdateLineInput(
     long? Id,

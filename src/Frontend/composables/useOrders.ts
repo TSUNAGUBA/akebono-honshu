@@ -107,6 +107,14 @@ export interface OrderDetail {
   subOrderer5UserId: number | null
   subOrderer6UserId: number | null
   communicationText: string | null
+  // 連絡文書 6 行 (構造化、PR6)。新フローの SoT。6 列が全て空の旧発注は communicationText を
+  // 改行分割してブリッジ表示する (編集ロード時、フロント側で実施)。
+  communicationLine1: string | null
+  communicationLine2: string | null
+  communicationLine3: string | null
+  communicationLine4: string | null
+  communicationLine5: string | null
+  communicationLine6: string | null
   firstExportedAt: string | null
   lastExportedAt: string | null
   createdAt: string
@@ -172,6 +180,15 @@ export interface CreateOrderPayload {
   overseasDepartureDate: string | null
   warehouse2Id: number | null
   warehouse3Id: number | null
+  // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列を SoT として送る。各行は空欄なら null。
+  // communicationText は新フロントから書かない (旧データのみ保持) が、I/F 互換のため従来値を
+  // そのまま送り返す (作成時は null)。
+  communicationLine1: string | null
+  communicationLine2: string | null
+  communicationLine3: string | null
+  communicationLine4: string | null
+  communicationLine5: string | null
+  communicationLine6: string | null
 }
 
 export interface UpdateOrderPayload extends CreateOrderPayload {
