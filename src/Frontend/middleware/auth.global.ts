@@ -1,13 +1,15 @@
-export default defineNuxtRouteMiddleware((to) => {
+export default defineNuxtRouteMiddleware(async (to) => {
   // SSR では Firebase Web SDK が動作しないため middleware を skip。
   // app.vue 全体を <ClientOnly> ラップして実コンテンツは CSR でのみ描画するため、
   // 認証チェックも CSR でのみ実行することで /masters/* リロード時の誤遷移を防ぐ。
   if (import.meta.server) return
 
   const { isAuthenticated, watchAuthState } = useAuth()
-  // 初回マウントで Firebase の onAuthStateChanged を購読開始
-  // (initialized フラグで多重防止、リロード時に Firebase から currentUser 復元 → /auth/sync 実行)
-  watchAuthState()
+  // Firebase はリロード時、永続化済みセッションから currentUser を *非同期* に復元する
+  // (onAuthStateChanged 経由)。watchAuthState() は初回発火 + Backend 同期の完了で resolve
+  // する Promise を返すため、これを await してから認可判定する。await しないと復元前の
+  // null 状態で判定し、ログイン状態のリロードでも /login へ誤遷移してしまう (本不具合の原因)。
+  await watchAuthState()
 
   const publicPaths = ['/login']
 
