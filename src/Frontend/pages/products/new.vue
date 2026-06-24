@@ -57,6 +57,9 @@ const form = ref({
   brandCost: null as number | null,
   royaltyTarget: null as number | null,
   royaltyRate: null as number | null,
+  // 旧 品番台帳 項目 追補 (PR1、全て任意)
+  remark: '',
+  colorRemark: '',
 })
 
 const expansion = ref({
@@ -79,7 +82,7 @@ const supplierPrice = ref({
   purchaseCost: null as number | null,
   purchaseMarginRate: null as number | null,
   lossCost: null as number | null,
-  trayCost: null as number | null,
+  drayageCost: null as number | null,
   taxRate: null as number | null,
 })
 
@@ -185,6 +188,9 @@ const onSubmit = async () => {
         brandCost: form.value.brandCost,
         royaltyTarget: form.value.royaltyTarget,
         royaltyRate: form.value.royaltyRate,
+        // 旧 品番台帳 項目 追補 (PR1、未入力は null)
+        remark: form.value.remark.trim() || null,
+        colorRemark: form.value.colorRemark.trim() || null,
       },
       expansion: {
         colorIds: [...expansion.value.colorIds],
@@ -206,7 +212,7 @@ const onSubmit = async () => {
           purchaseCost: supplierPrice.value.purchaseCost,
           purchaseMarginRate: supplierPrice.value.purchaseMarginRate,
           lossCost: supplierPrice.value.lossCost,
-          trayCost: supplierPrice.value.trayCost,
+          drayageCost: supplierPrice.value.drayageCost,
           taxRate: supplierPrice.value.taxRate,
         },
       ],
@@ -369,6 +375,14 @@ const onSubmit = async () => {
               <input v-model.number="form.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
           </div>
+
+          <!-- 備考 (旧 品番台帳 項目 追補 PR1、spec No.39、任意) -->
+          <div class="mt-3">
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">備考</span>
+              <textarea v-model="form.remark" rows="2" maxlength="2000" placeholder="商品本体に関する備考 (任意)" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"></textarea>
+            </label>
+          </div>
         </section>
 
         <!-- Section 3: 色×サイズ展開 -->
@@ -411,6 +425,14 @@ const onSubmit = async () => {
                 </button>
               </div>
             </div>
+          </div>
+
+          <!-- 備考（色）(旧 品番台帳 項目 追補 PR1、spec No.33、商品単位の単一テキスト、任意) -->
+          <div class="mt-4">
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">備考（色）</span>
+              <textarea v-model="form.colorRemark" rows="2" maxlength="2000" placeholder="色に関する備考 (商品全体で 1 つ、任意)" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"></textarea>
+            </label>
           </div>
         </section>
 
@@ -484,8 +506,8 @@ const onSubmit = async () => {
                 <input v-model.number="supplierPrice.lossCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
-                <span class="text-sm font-medium">トレー代</span>
-                <input v-model.number="supplierPrice.trayCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+                <span class="text-sm font-medium">ドレー代</span>
+                <input v-model.number="supplierPrice.drayageCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">税率 (%)</span>

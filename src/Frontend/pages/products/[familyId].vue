@@ -44,6 +44,9 @@ const editForm = ref({
   brandCost: null as number | null,
   royaltyTarget: null as number | null,
   royaltyRate: null as number | null,
+  // 旧 品番台帳 項目 追補 (PR1、全て任意)
+  remark: '',
+  colorRemark: '',
 })
 
 // 単価追加フォーム
@@ -63,7 +66,7 @@ const priceForm = ref({
   purchaseCost: null as number | null,
   purchaseMarginRate: null as number | null,
   lossCost: null as number | null,
-  trayCost: null as number | null,
+  drayageCost: null as number | null,
   taxRate: null as number | null,
 })
 
@@ -114,6 +117,9 @@ const reload = async () => {
         brandCost: detail.value.family.brandCost,
         royaltyTarget: detail.value.family.royaltyTarget,
         royaltyRate: detail.value.family.royaltyRate,
+        // 旧 品番台帳 項目 追補 (PR1)
+        remark: detail.value.family.remark ?? '',
+        colorRemark: detail.value.family.colorRemark ?? '',
       }
     }
   } catch (e) {
@@ -185,6 +191,9 @@ const onSaveEdit = async () => {
       brandCost: editForm.value.brandCost,
       royaltyTarget: editForm.value.royaltyTarget,
       royaltyRate: editForm.value.royaltyRate,
+      // 旧 品番台帳 項目 追補 (PR1、未入力は null)
+      remark: editForm.value.remark.trim() || null,
+      colorRemark: editForm.value.colorRemark.trim() || null,
     })
     successMessage.value = '更新しました'
     editing.value = false
@@ -226,7 +235,7 @@ const onAddPrice = async () => {
       purchaseCost: priceForm.value.purchaseCost,
       purchaseMarginRate: priceForm.value.purchaseMarginRate,
       lossCost: priceForm.value.lossCost,
-      trayCost: priceForm.value.trayCost,
+      drayageCost: priceForm.value.drayageCost,
       taxRate: priceForm.value.taxRate,
     })
     successMessage.value = '単価を追加しました (旧単価の有効終了日も自動更新済)'
@@ -239,7 +248,7 @@ const onAddPrice = async () => {
     priceForm.value.purchaseCost = null
     priceForm.value.purchaseMarginRate = null
     priceForm.value.lossCost = null
-    priceForm.value.trayCost = null
+    priceForm.value.drayageCost = null
     priceForm.value.taxRate = null
     await reload()
   } catch (e) {
@@ -391,6 +400,17 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <div><span class="text-gray-500">ブランド費:</span> {{ detail.family.brandCost != null ? detail.family.brandCost.toLocaleString() : '—' }}</div>
           <div><span class="text-gray-500">版権対象:</span> {{ royaltyTargetLabel(detail.family.royaltyTarget) }}</div>
           <div><span class="text-gray-500">版権料率:</span> {{ detail.family.royaltyRate != null ? `${detail.family.royaltyRate}%` : '—' }}</div>
+          <!-- 備考 / 備考（色）(旧 品番台帳 項目 追補 PR1、未設定は —)。長文のため横幅をまたぐ。 -->
+          <div class="col-span-2 sm:col-span-3 lg:col-span-4"><span class="text-gray-500">備考:</span> <span class="whitespace-pre-wrap">{{ detail.family.remark ?? '—' }}</span></div>
+          <div class="col-span-2 sm:col-span-3 lg:col-span-4"><span class="text-gray-500">備考（色）:</span> <span class="whitespace-pre-wrap">{{ detail.family.colorRemark ?? '—' }}</span></div>
+        </div>
+
+        <!-- 登録/更新 情報 (旧 spec No.27/28、PR1)。編集不可の表示のみ。 -->
+        <div v-if="!editing" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-gray-100 pt-3 text-sm sm:grid-cols-4">
+          <div><span class="text-gray-500">登録日:</span> {{ new Date(detail.family.createdAt).toLocaleString('ja-JP') }}</div>
+          <div><span class="text-gray-500">登録者:</span> {{ detail.family.createdByUserName ?? '—' }}</div>
+          <div><span class="text-gray-500">最終更新日:</span> {{ new Date(detail.family.updatedAt).toLocaleString('ja-JP') }}</div>
+          <div><span class="text-gray-500">最終更新者:</span> {{ detail.family.updatedByUserName ?? '—' }}</div>
         </div>
 
         <form v-else class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3" @submit.prevent="onSaveEdit">
@@ -476,6 +496,15 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <label class="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
             <span class="font-medium">商品名 2</span>
             <input v-model="editForm.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+          </label>
+          <!-- 備考 / 備考（色）(旧 品番台帳 項目 追補 PR1、任意) -->
+          <label class="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
+            <span class="font-medium">備考</span>
+            <textarea v-model="editForm.remark" rows="2" maxlength="2000" placeholder="商品本体に関する備考 (任意)" class="rounded-md border border-gray-300 px-2.5 py-1.5"></textarea>
+          </label>
+          <label class="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
+            <span class="font-medium">備考（色）</span>
+            <textarea v-model="editForm.colorRemark" rows="2" maxlength="2000" placeholder="色に関する備考 (商品全体で 1 つ、任意)" class="rounded-md border border-gray-300 px-2.5 py-1.5"></textarea>
           </label>
           <div class="flex justify-end gap-2 pt-2 sm:col-span-2 lg:col-span-3">
             <button type="button" class="rounded-md border border-gray-300 bg-white px-4 py-1.5 hover:bg-gray-50" @click="onCancelEdit">キャンセル</button>
@@ -583,8 +612,8 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
                 <input v-model.number="priceForm.lossCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
-                <span class="font-medium">トレー代</span>
-                <input v-model.number="priceForm.trayCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
+                <span class="font-medium">ドレー代</span>
+                <input v-model.number="priceForm.drayageCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="font-medium">税率 (%)</span>

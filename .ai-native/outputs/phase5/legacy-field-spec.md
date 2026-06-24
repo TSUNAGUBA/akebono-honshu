@@ -70,7 +70,8 @@
 
 ### A-6. 仕入・コスト計算明細（最下部・横スクロール）= product_supplier_prices 拡張（Phase C）
 仕入先(DD) / **為替レート(DD)**✅ / 見積単価 / 見積単価受領日 / 見積原価 / 見積利益率 / 仕入単価✅ / 仕入単価決定日✅ / ロス費 / トレー代 / 税率 / 仕入原価 / 仕入利益率 / 削除 / 備考。
-→ 🔶**Phase C**: `product_supplier_prices` に estimate_unit_price / estimate_received_date / estimate_cost / estimate_margin_rate / loss_cost / tray_cost / tax_rate / purchase_cost / purchase_margin_rate を追加。
+→ 🔶**Phase C**: `product_supplier_prices` に estimate_unit_price / estimate_received_date / estimate_cost / estimate_margin_rate / loss_cost / drayage_cost / tax_rate / purchase_cost / purchase_margin_rate を追加。
+（注: 旧画面の「トレー代」列は PR1 / 設計判断Q6 で「ドレー代」に名称統一し、DB 列は `tray_cost` → `drayage_cost` にリネーム済。iter14-product-master-fields.sql 参照。）
 
 ---
 
@@ -126,7 +127,7 @@ ORDER SHEET 帳票固有: SUPPLIER（仕入先正式名）✅snapshot / order NO
 |---|---|---|---|
 | **A** | 品番台帳の属性・価格・版権（本書 A-2〜A-4 の🆕） | product_families +11列 | ✅完了（PR #17 マージ済） |
 | **B** | 発注 国内/海外の追加ヘッダ・明細項目（本書 B-4 / C）。発注区分(is_overseas) + 荷揚地/得意先/工場出荷日/検品所出荷日/海外出港日/納入倉庫2・3 + 明細の入数/見積単価/仮番号snapshot | purchase_orders +8列 / _lines +3列 | ✅完了（PR #18 マージ済） |
-| **C** | 仕入コスト計算明細（本書 A-6）。見積単価/見積単価受領日/見積原価/見積利益率/仕入原価/仕入利益率/ロス費/トレー代/税率（為替/仕入単価/決定日は既存） | product_supplier_prices +9列 | ✅完了（PR #19 マージ＋本番 migrate 済） |
+| **C** | 仕入コスト計算明細（本書 A-6）。見積単価/見積単価受領日/見積原価/見積利益率/仕入原価/仕入利益率/ロス費/ドレー代（旧「トレー代」、PR1 で名称統一）/税率（為替/仕入単価/決定日は既存） | product_supplier_prices +9列 | ✅完了（PR #19 マージ＋本番 migrate 済。ドレー代 名称統一は PR1 / iter14） |
 | **D** | マスタ選択肢の確定値反映 | 各マスタ seed | ⚠️一部完了（安全な改名/追加のみ。下記 D-1 の5件は設計判断待ち） |
 
 > 各 Phase 着手時、本書の確定値を seed / マスタ管理 / バリデーションへ反映し、CLAUDE.md「新規方針追加時の自己整合性 grep 手順」で受け入れ基準・データフローへの波及を確認する。

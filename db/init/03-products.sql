@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS product_families (
     brand_cost            NUMERIC(12,2) NULL,                                      -- ブランド費
     royalty_target        SMALLINT     NULL,                                       -- 版権対象 (1=小売価格, 2=納品価格)
     royalty_rate          NUMERIC(5,2) NULL,                                       -- 版権料率(%)
+    -- 旧 品番台帳 項目 追補 (PR1、全 NULL 許容 = 既存行は NULL のまま下位互換)
+    remark                TEXT         NULL,                                       -- 商品本体 備考 (spec No.39)
+    color_remark          TEXT         NULL,                                       -- 備考（色）(spec No.33、商品単位の単一テキスト)
     status                SMALLINT     NOT NULL DEFAULT 0,
     is_deleted            BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
@@ -115,7 +118,7 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
     purchase_cost         NUMERIC(12,2)  NULL,  -- 仕入原価
     purchase_margin_rate  NUMERIC(5,2)   NULL,  -- 仕入利益率(%)
     loss_cost             NUMERIC(12,2)  NULL,  -- ロス費
-    tray_cost             NUMERIC(12,2)  NULL,  -- トレー代
+    drayage_cost          NUMERIC(12,2)  NULL,  -- ドレー代 (旧「トレー代」tray_cost、設計判断Q6 で名称統一)
     tax_rate              NUMERIC(5,2)   NULL,  -- 税率(%)
     effective_from        DATE           NOT NULL,
     effective_to          DATE           NULL,

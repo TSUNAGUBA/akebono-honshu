@@ -115,7 +115,7 @@ public static class ProductEndpoints
                 p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt,
                 // 旧 仕入コスト計算明細 項目 (Phase C)
                 p.EstimateUnitPrice, p.EstimateReceivedDate, p.EstimateCost, p.EstimateMarginRate,
-                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.TrayCost, p.TaxRate));
+                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate));
             return Results.Ok(new { data });
         });
 
