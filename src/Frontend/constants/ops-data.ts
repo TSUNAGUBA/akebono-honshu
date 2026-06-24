@@ -21,16 +21,16 @@ export interface OpsDataset {
 }
 
 export const OPS_DATASETS: Record<string, OpsDataset> = {
-  // ── 販売管理 ──────────────────────────────────────
+  // ── 販売管理: 売上 ─────────────────────────────────
   sales: {
-    title: '受注一覧',
-    note: '取引先からの受注・売上を管理します。',
+    title: '売上',
+    note: '取引先別の受注・売上計上を管理します。',
     table: 'sales_orders',
     columns: [
       { key: 'order_no', label: '受注番号' },
-      { key: 'customer_name', label: '取引先' },
-      { key: 'order_date', label: '受注日' },
-      { key: 'total_amount', label: '合計金額', align: 'right' },
+      { key: 'customer_name', label: '得意先' },
+      { key: 'order_date', label: '売上日' },
+      { key: 'total_amount', label: '売上金額', align: 'right' },
       { key: 'status', label: '状態' },
     ],
     rows: [
@@ -40,6 +40,70 @@ export const OPS_DATASETS: Record<string, OpsDataset> = {
       { order_no: 'SO-26-0004', customer_name: 'しまむら', order_date: '2026-06-12', total_amount: '¥2,310,000', status: '受注' },
       { order_no: 'SO-26-0005', customer_name: 'ベルメゾン', order_date: '2026-06-15', total_amount: '¥587,400', status: '出荷済' },
       { order_no: 'SO-26-0006', customer_name: 'AEON', order_date: '2026-06-18', total_amount: '¥134,200', status: '取消' },
+    ],
+  },
+
+  // ── 販売管理: 請求 ─────────────────────────────────
+  'sales-billing': {
+    title: '請求',
+    note: '得意先への請求書発行・入金予定を管理します。',
+    table: 'billing_invoices',
+    columns: [
+      { key: 'invoice_no', label: '請求書番号' },
+      { key: 'customer_name', label: '得意先' },
+      { key: 'invoice_date', label: '請求日' },
+      { key: 'invoice_amount', label: '請求金額', align: 'right' },
+      { key: 'due_date', label: '入金予定日' },
+      { key: 'status', label: 'ステータス' },
+    ],
+    rows: [
+      { invoice_no: 'INV-26-0501', customer_name: 'しまむら', invoice_date: '2026-05-31', invoice_amount: '¥3,652,000', due_date: '2026-06-30', status: '入金済' },
+      { invoice_no: 'INV-26-0502', customer_name: 'AEON', invoice_date: '2026-05-31', invoice_amount: '¥1,130,200', due_date: '2026-06-30', status: '一部入金' },
+      { invoice_no: 'INV-26-0601', customer_name: 'しまむら', invoice_date: '2026-06-30', invoice_amount: '¥4,152,000', due_date: '2026-07-31', status: '請求済' },
+      { invoice_no: 'INV-26-0602', customer_name: 'KEYUCA', invoice_date: '2026-06-30', invoice_amount: '¥423,500', due_date: '2026-07-31', status: '請求済' },
+      { invoice_no: 'INV-26-0603', customer_name: 'ベルメゾン', invoice_date: '2026-06-30', invoice_amount: '¥587,400', due_date: '2026-07-31', status: '発行待ち' },
+    ],
+  },
+
+  // ── 販売管理: 入金 ─────────────────────────────────
+  'sales-payments': {
+    title: '入金',
+    note: '得意先からの入金実績と請求消込の状況を管理します。',
+    table: 'payment_receipts',
+    columns: [
+      { key: 'payment_no', label: '入金番号' },
+      { key: 'payment_date', label: '入金日' },
+      { key: 'customer_name', label: '得意先' },
+      { key: 'payment_amount', label: '入金額', align: 'right' },
+      { key: 'method', label: '入金方法' },
+      { key: 'status', label: '消込状況' },
+    ],
+    rows: [
+      { payment_no: 'PAY-26-0601', payment_date: '2026-06-30', customer_name: 'しまむら', payment_amount: '¥3,652,000', method: '銀行振込', status: '消込済' },
+      { payment_no: 'PAY-26-0602', payment_date: '2026-06-30', customer_name: 'AEON', payment_amount: '¥600,000', method: '銀行振込', status: '一部消込' },
+      { payment_no: 'PAY-26-0603', payment_date: '2026-06-28', customer_name: 'KEYUCA', payment_amount: '¥381,200', method: '手形', status: '消込済' },
+      { payment_no: 'PAY-26-0604', payment_date: '2026-06-25', customer_name: 'ベルメゾン', payment_amount: '¥220,000', method: '相殺', status: '未消込' },
+    ],
+  },
+
+  // ── 販売管理: 債権（売掛） ──────────────────────────
+  'sales-receivables': {
+    title: '債権',
+    note: '得意先別の売掛残高と回収期日・滞留状況を管理します。',
+    table: 'accounts_receivable',
+    columns: [
+      { key: 'customer_name', label: '得意先' },
+      { key: 'balance', label: '売掛残高', align: 'right' },
+      { key: 'due_date', label: '期日' },
+      { key: 'overdue_days', label: '滞留日数', align: 'right' },
+      { key: 'status', label: 'ステータス' },
+    ],
+    rows: [
+      { customer_name: 'しまむら', balance: '¥4,152,000', due_date: '2026-07-31', overdue_days: 0, status: '正常' },
+      { customer_name: 'AEON', balance: '¥530,200', due_date: '2026-06-30', overdue_days: 0, status: '正常' },
+      { customer_name: 'KEYUCA', balance: '¥423,500', due_date: '2026-07-31', overdue_days: 0, status: '正常' },
+      { customer_name: 'ベルメゾン', balance: '¥367,400', due_date: '2026-05-31', overdue_days: 24, status: '滞留' },
+      { customer_name: 'ニッセン', balance: '¥88,000', due_date: '2026-04-30', overdue_days: 55, status: '督促中' },
     ],
   },
 

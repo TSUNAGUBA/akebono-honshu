@@ -1,0 +1,16 @@
+-- ============================================================================
+-- iter12-sales-submodule-tables.sql — 販売管理サブメニュー(請求/入金/債権)テーブルを既存DBへ適用
+-- ----------------------------------------------------------------------------
+-- 背景: ホーム「販売管理」を 売上/請求/入金/債権 の4メニューに分割するにあたり、
+--       db/init/07-ops-data.sql に billing_invoices(請求) / payment_receipts(入金) /
+--       accounts_receivable(債権) の3テーブル+サンプルデータを追加した(売上は既存 sales_orders)。
+--       07 は新規DB構築時のみ自動投入されるため、稼働中RDSへは action=migrate で反映する。
+--       iter6/iter7 と同方式。単一 SoT を保つため \ir で 07 本体を取り込む(本ファイルからの相対)。
+-- 冪等: 取り込む 07 は CREATE TABLE IF NOT EXISTS + INSERT ON CONFLICT DO NOTHING のため安全。
+--       iter7 で作成済の既存 ops テーブルは IF NOT EXISTS でスキップされ、本 iter12 では
+--       新規3テーブルのみ作成される。新規 init では 07 が直接投入され、本ファイルは
+--       run-migrations.sh が baseline 記録(実行せず)。
+-- 注: 画面(pages/sales/*)は当面 constants/ops-data.ts のサンプル表示。本テーブルは
+--     後日 API 連携時の参照先スキーマ(既存 ops モジュールと同方針)。
+-- ============================================================================
+\ir ../init/07-ops-data.sql

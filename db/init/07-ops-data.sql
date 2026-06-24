@@ -3,6 +3,8 @@
 -- ----------------------------------------------------------------------------
 -- 目的: ホームに追加する新メニュー（販売管理・出荷・在庫管理）の各画面が参照する
 --       軽量な業務テーブルを新設し、表示用サンプルデータを投入する。
+--       販売管理は 売上(sales_orders) / 請求(billing_invoices) / 入金(payment_receipts) /
+--       債権(accounts_receivable) の 4 画面で構成する。
 --       （分析メニューは既存 API の集計のため専用テーブル不要。）
 --
 -- 設計方針:
@@ -38,6 +40,59 @@ INSERT INTO sales_orders (order_no, customer_name, order_date, total_amount, sta
     ('SO-26-0005', 'ベルメゾン', DATE '2026-06-15',  587400.00, '出荷済'),
     ('SO-26-0006', 'AEON',     DATE '2026-06-18',  134200.00, '取消')
 ON CONFLICT (order_no) DO NOTHING;
+
+-- 請求: 請求書発行/入金予定
+CREATE TABLE IF NOT EXISTS billing_invoices (
+    id             BIGSERIAL PRIMARY KEY,
+    invoice_no     VARCHAR(16)   NOT NULL UNIQUE,
+    customer_name  VARCHAR(255)  NOT NULL,
+    invoice_date   DATE          NOT NULL,
+    invoice_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+    due_date       DATE          NOT NULL,   -- 入金予定日
+    status         VARCHAR(16)   NOT NULL DEFAULT '請求済',
+    created_at     TIMESTAMP     NOT NULL DEFAULT NOW()
+);
+INSERT INTO billing_invoices (invoice_no, customer_name, invoice_date, invoice_amount, due_date, status) VALUES
+    ('INV-26-0501', 'しまむら',  DATE '2026-05-31', 3652000.00, DATE '2026-06-30', '入金済'),
+    ('INV-26-0502', 'AEON',     DATE '2026-05-31', 1130200.00, DATE '2026-06-30', '一部入金'),
+    ('INV-26-0601', 'しまむら',  DATE '2026-06-30', 4152000.00, DATE '2026-07-31', '請求済'),
+    ('INV-26-0602', 'KEYUCA',   DATE '2026-06-30',  423500.00, DATE '2026-07-31', '請求済'),
+    ('INV-26-0603', 'ベルメゾン', DATE '2026-06-30',  587400.00, DATE '2026-07-31', '発行待ち')
+ON CONFLICT (invoice_no) DO NOTHING;
+
+-- 入金: 入金実績/消込
+CREATE TABLE IF NOT EXISTS payment_receipts (
+    id             BIGSERIAL PRIMARY KEY,
+    payment_no     VARCHAR(16)   NOT NULL UNIQUE,
+    payment_date   DATE          NOT NULL,
+    customer_name  VARCHAR(255)  NOT NULL,
+    payment_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+    method         VARCHAR(16)   NOT NULL,   -- 入金方法(銀行振込/手形/相殺 等)
+    status         VARCHAR(16)   NOT NULL DEFAULT '未消込'   -- 消込状況
+);
+INSERT INTO payment_receipts (payment_no, payment_date, customer_name, payment_amount, method, status) VALUES
+    ('PAY-26-0601', DATE '2026-06-30', 'しまむら',  3652000.00, '銀行振込', '消込済'),
+    ('PAY-26-0602', DATE '2026-06-30', 'AEON',      600000.00, '銀行振込', '一部消込'),
+    ('PAY-26-0603', DATE '2026-06-28', 'KEYUCA',    381200.00, '手形',     '消込済'),
+    ('PAY-26-0604', DATE '2026-06-25', 'ベルメゾン',  220000.00, '相殺',     '未消込')
+ON CONFLICT (payment_no) DO NOTHING;
+
+-- 債権: 得意先別売掛残高/滞留
+CREATE TABLE IF NOT EXISTS accounts_receivable (
+    id            BIGSERIAL PRIMARY KEY,
+    customer_name VARCHAR(255)  NOT NULL UNIQUE,
+    balance       NUMERIC(14,2) NOT NULL DEFAULT 0,   -- 売掛残高
+    due_date      DATE          NOT NULL,             -- 期日
+    overdue_days  INTEGER       NOT NULL DEFAULT 0,   -- 滞留日数
+    status        VARCHAR(16)   NOT NULL DEFAULT '正常'
+);
+INSERT INTO accounts_receivable (customer_name, balance, due_date, overdue_days, status) VALUES
+    ('しまむら',  4152000.00, DATE '2026-07-31',  0, '正常'),
+    ('AEON',      530200.00, DATE '2026-06-30',  0, '正常'),
+    ('KEYUCA',    423500.00, DATE '2026-07-31',  0, '正常'),
+    ('ベルメゾン',  367400.00, DATE '2026-05-31', 24, '滞留'),
+    ('ニッセン',    88000.00, DATE '2026-04-30', 55, '督促中')
+ON CONFLICT (customer_name) DO NOTHING;
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 出荷: データ受信 / ピッキングリスト / 帳票出力 / ASN送信
