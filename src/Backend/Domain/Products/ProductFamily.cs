@@ -52,6 +52,12 @@ public class ProductFamily
     /// <summary>版権料率(%)</summary>
     public decimal? RoyaltyRate { get; set; }
 
+    // 旧 品番台帳 項目 追補 (PR1、全て NULL 許容 = 既存行は NULL のまま下位互換)
+    /// <summary>商品本体 備考 (旧 spec No.39)</summary>
+    public string? Remark { get; set; }
+    /// <summary>備考（色）(旧 spec No.33)。色ごとではなく商品単位の単一テキスト。</summary>
+    public string? ColorRemark { get; set; }
+
     /// <summary>0=Draft, 1=Active, 2=Discontinued</summary>
     public short Status { get; set; }
 

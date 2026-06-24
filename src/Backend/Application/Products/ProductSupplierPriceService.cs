@@ -59,7 +59,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
                 PurchaseCost = req.PurchaseCost,
                 PurchaseMarginRate = req.PurchaseMarginRate,
                 LossCost = req.LossCost,
-                TrayCost = req.TrayCost,
+                DrayageCost = req.DrayageCost,
                 TaxRate = req.TaxRate,
                 EffectiveFrom = req.EffectiveFrom,
                 EffectiveTo = null,

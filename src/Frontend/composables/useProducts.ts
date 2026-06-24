@@ -112,8 +112,8 @@ export interface CurrentSupplierPrice {
   purchaseMarginRate: number | null
   /** ロス費 */
   lossCost: number | null
-  /** トレー代 */
-  trayCost: number | null
+  /** ドレー代 (旧「トレー代」、設計判断Q6) */
+  drayageCost: number | null
   /** 税率(%) */
   taxRate: number | null
 }
@@ -179,6 +179,16 @@ export interface FamilyFullInfo {
   royaltyTarget: number | null
   /** 版権料率(%) */
   royaltyRate: number | null
+  // 旧 品番台帳 項目 追補 (PR1、全て任意)
+  /** 商品本体 備考 (spec No.39) */
+  remark: string | null
+  /** 備考（色）(spec No.33、商品単位の単一テキスト) */
+  colorRemark: string | null
+  // 登録者/最終更新者 表示 (PR1、spec No.27/28)。display_name を join 解決。未解決時は null。
+  /** 登録者名 (created_by_user_id の display_name) */
+  createdByUserName: string | null
+  /** 最終更新者名 (updated_by_user_id の display_name) */
+  updatedByUserName: string | null
 }
 
 export interface FamilyDetail {
@@ -214,6 +224,9 @@ export interface CompleteFamilyPayload {
     brandCost: number | null
     royaltyTarget: number | null
     royaltyRate: number | null
+    // 旧 品番台帳 項目 追補 (PR1、全て任意)
+    remark: string | null
+    colorRemark: string | null
   }
   expansion: {
     colorIds: number[]
@@ -234,7 +247,7 @@ export interface CompleteFamilyPayload {
     purchaseCost: number | null
     purchaseMarginRate: number | null
     lossCost: number | null
-    trayCost: number | null
+    drayageCost: number | null
     taxRate: number | null
   }[]
 }
@@ -298,6 +311,9 @@ export const useProducts = () => {
     brandCost: number | null
     royaltyTarget: number | null
     royaltyRate: number | null
+    // 旧 品番台帳 項目 追補 (PR1、全て任意)
+    remark: string | null
+    colorRemark: string | null
   }) => {
     return await apiFetch<FamilyFullInfo>(`/products/families/${id}`, {
       method: 'PATCH',
@@ -324,7 +340,7 @@ export const useProducts = () => {
     purchaseCost: number | null
     purchaseMarginRate: number | null
     lossCost: number | null
-    trayCost: number | null
+    drayageCost: number | null
     taxRate: number | null
   }) => {
     return await apiFetch<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string }>(

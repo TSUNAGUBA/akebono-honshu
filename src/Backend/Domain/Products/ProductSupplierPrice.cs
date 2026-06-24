@@ -26,7 +26,8 @@ public class ProductSupplierPrice
     public decimal? PurchaseCost { get; set; }
     public decimal? PurchaseMarginRate { get; set; }
     public decimal? LossCost { get; set; }
-    public decimal? TrayCost { get; set; }
+    /// <summary>ドレー代 (旧 spec 仕入先サブ No.10 / 設計判断Q6 で「トレー代」から名称統一)</summary>
+    public decimal? DrayageCost { get; set; }
     public decimal? TaxRate { get; set; }
     public DateOnly EffectiveFrom { get; set; }
     public DateOnly? EffectiveTo { get; set; }

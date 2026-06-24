@@ -33,7 +33,10 @@ public record FamilyInput(
     decimal? PlanningCost = null,
     decimal? BrandCost = null,
     short? RoyaltyTarget = null,
-    decimal? RoyaltyRate = null);
+    decimal? RoyaltyRate = null,
+    // 旧 品番台帳 項目 追補 (PR1、末尾追加 = 下位互換)
+    string? Remark = null,        // 商品本体 備考 (spec No.39)
+    string? ColorRemark = null);  // 備考（色）(spec No.33、商品単位の単一テキスト)
 
 public record ExpansionInput(
     List<long> ColorIds,
@@ -54,7 +57,7 @@ public record SupplierPriceInput(
     decimal? PurchaseCost = null,
     decimal? PurchaseMarginRate = null,
     decimal? LossCost = null,
-    decimal? TrayCost = null,
+    decimal? DrayageCost = null,  // ドレー代 (旧「トレー代」、設計判断Q6)
     decimal? TaxRate = null);
 
 public record CompleteFamilyResponse(
@@ -173,7 +176,14 @@ public record FamilyFullInfo(
     decimal? PlanningCost,
     decimal? BrandCost,
     short? RoyaltyTarget,
-    decimal? RoyaltyRate);
+    decimal? RoyaltyRate,
+    // 旧 品番台帳 項目 追補 (PR1、末尾追加 = 下位互換)
+    string? Remark = null,        // 商品本体 備考 (spec No.39)
+    string? ColorRemark = null,   // 備考（色）(spec No.33)
+    // 登録者/最終更新者 表示 (PR1、spec No.27/28)。users.display_name を join 解決。
+    // 既存列 (created_by_user_id / updated_by_user_id) からの導出のため新規列追加なし。
+    string? CreatedByUserName = null,
+    string? UpdatedByUserName = null);
 
 public record SkuSummary(
     long Id,
@@ -222,7 +232,7 @@ public record CurrentSupplierPrice(
     decimal? PurchaseCost,
     decimal? PurchaseMarginRate,
     decimal? LossCost,
-    decimal? TrayCost,
+    decimal? DrayageCost,  // ドレー代 (旧「トレー代」、設計判断Q6)
     decimal? TaxRate);
 
 public record FamilySummary(long Id, string SequenceNo, char PlannedYearCode);
@@ -253,7 +263,10 @@ public record UpdateFamilyRequest(
     decimal? PlanningCost = null,
     decimal? BrandCost = null,
     short? RoyaltyTarget = null,
-    decimal? RoyaltyRate = null);
+    decimal? RoyaltyRate = null,
+    // 旧 品番台帳 項目 追補 (PR1、末尾追加 = 下位互換)
+    string? Remark = null,        // 商品本体 備考 (spec No.39)
+    string? ColorRemark = null);  // 備考（色）(spec No.33、商品単位の単一テキスト)
 
 // ─────────────────────────────────────────────────
 // 新単価追加 (POST /api/v1/products/families/{id}/supplier-prices、BR-04 履歴管理)
@@ -274,5 +287,5 @@ public record AddSupplierPriceRequest(
     decimal? PurchaseCost = null,
     decimal? PurchaseMarginRate = null,
     decimal? LossCost = null,
-    decimal? TrayCost = null,
+    decimal? DrayageCost = null,  // ドレー代 (旧「トレー代」、設計判断Q6)
     decimal? TaxRate = null);

@@ -100,6 +100,9 @@ public class ProductFamilyService(
                 BrandCost = req.Family.BrandCost,
                 RoyaltyTarget = req.Family.RoyaltyTarget,
                 RoyaltyRate = req.Family.RoyaltyRate,
+                // 旧 品番台帳 項目 追補 (PR1、任意)。備考 / 備考（色）。
+                Remark = req.Family.Remark,
+                ColorRemark = req.Family.ColorRemark,
                 Status = 1, // Active
                 CreatedAt = now, UpdatedAt = now,
                 CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
@@ -148,7 +151,7 @@ public class ProductFamilyService(
                 PurchaseCost = p.PurchaseCost,
                 PurchaseMarginRate = p.PurchaseMarginRate,
                 LossCost = p.LossCost,
-                TrayCost = p.TrayCost,
+                DrayageCost = p.DrayageCost,
                 TaxRate = p.TaxRate,
                 EffectiveFrom = p.EffectiveFrom,
                 EffectiveTo = null,
@@ -344,6 +347,17 @@ public class ProductFamilyService(
             .Where(p => p.ProductFamilyId == familyId && !p.IsDeleted && p.EffectiveTo == null)
             .ToListAsync(ct);
 
+        // 登録者/最終更新者名 (PR1、spec No.27/28)。created_by_user_id / updated_by_user_id は
+        // scalar FK (ナビ無し) のため、users を 1 クエリで引いて display_name を解決する。
+        // 削除済ユーザでも表示は維持したいので IsDeleted で絞らない (監査表示の性質)。
+        var actorIds = new[] { family.CreatedByUserId, family.UpdatedByUserId };
+        var userNames = await db.Users
+            .Where(u => actorIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.DisplayName })
+            .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+        userNames.TryGetValue(family.CreatedByUserId, out var createdByUserName);
+        userNames.TryGetValue(family.UpdatedByUserId, out var updatedByUserName);
+
         await audit.LogAsync(actorUserId, "ProductFamily.View",
             entityType: "ProductFamily", entityId: familyId, cancellationToken: ct);
 
@@ -384,7 +398,11 @@ public class ProductFamilyService(
                 family.ProvisionalNumber, family.SampleApprovalDate,
                 family.RetailPrice, family.DeliveryPrice,
                 family.PlanningCost, family.BrandCost,
-                family.RoyaltyTarget, family.RoyaltyRate),
+                family.RoyaltyTarget, family.RoyaltyRate,
+                // 旧 品番台帳 項目 追補 (PR1)。備考 / 備考（色）。
+                family.Remark, family.ColorRemark,
+                // 登録者/最終更新者名 (PR1、spec No.27/28)。未解決 (該当ユーザ不在) 時は null。
+                createdByUserName, updatedByUserName),
             products.Select(p => new SkuSummary(
                 p.Id, p.Sku, p.ColorId, p.Color?.Code ?? "?", p.Color?.Name ?? "?",
                 p.SizeId, p.Size?.Code ?? "?", p.Size?.Name ?? "?", p.IsDeleted)).ToList(),
@@ -394,7 +412,7 @@ public class ProductFamilyService(
                 p.UnitPrice, p.CurrencyCode, p.ExchangeRate, p.EffectiveFrom, p.EffectiveTo, p.DecidedAt,
                 // 旧 仕入コスト計算明細 項目 (Phase C)
                 p.EstimateUnitPrice, p.EstimateReceivedDate, p.EstimateCost, p.EstimateMarginRate,
-                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.TrayCost, p.TaxRate)).ToList());
+                p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate)).ToList());
     }
 
     /// <summary>商品企画更新 (P-05)。属性カラムのみ。FK 構成 (planned_year/type/season/seq/factory) は不変。</summary>
@@ -424,6 +442,9 @@ public class ProductFamilyService(
         family.BrandCost = req.BrandCost;
         family.RoyaltyTarget = req.RoyaltyTarget;
         family.RoyaltyRate = req.RoyaltyRate;
+        // 旧 品番台帳 項目 追補 (PR1、任意)。備考 / 備考（色）。
+        family.Remark = req.Remark;
+        family.ColorRemark = req.ColorRemark;
         family.UpdatedAt = SystemTime.Now;
         family.UpdatedByUserId = actorUserId;
 

@@ -192,6 +192,9 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.BrandCost).HasColumnName("brand_cost").HasColumnType("numeric(12,2)");
             b.Property(x => x.RoyaltyTarget).HasColumnName("royalty_target");
             b.Property(x => x.RoyaltyRate).HasColumnName("royalty_rate").HasColumnType("numeric(5,2)");
+            // 旧 品番台帳 項目 追補 (PR1、全 NULL 許容)。備考 / 備考（色）。
+            b.Property(x => x.Remark).HasColumnName("remark");
+            b.Property(x => x.ColorRemark).HasColumnName("color_remark");
             b.Property(x => x.Status).HasColumnName("status");
             b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
@@ -279,7 +282,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.PurchaseCost).HasColumnName("purchase_cost").HasColumnType("numeric(12,2)");
             b.Property(x => x.PurchaseMarginRate).HasColumnName("purchase_margin_rate").HasColumnType("numeric(5,2)");
             b.Property(x => x.LossCost).HasColumnName("loss_cost").HasColumnType("numeric(12,2)");
-            b.Property(x => x.TrayCost).HasColumnName("tray_cost").HasColumnType("numeric(12,2)");
+            // ドレー代 (旧「トレー代」tray_cost、設計判断Q6 で名称統一 → drayage_cost)
+            b.Property(x => x.DrayageCost).HasColumnName("drayage_cost").HasColumnType("numeric(12,2)");
             b.Property(x => x.TaxRate).HasColumnName("tax_rate").HasColumnType("numeric(5,2)");
             b.Property(x => x.EffectiveFrom).HasColumnName("effective_from");
             b.Property(x => x.EffectiveTo).HasColumnName("effective_to");
