@@ -228,7 +228,10 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             entityType: "PurchaseOrder", entityId: id, cancellationToken: ct);
 
         return new OrderDetail(
-            order.Id, order.MgmtNo, order.OrderNo, (short)order.Status,
+            order.Id, order.MgmtNo, order.OrderNo,
+            // 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力フォームの初期表示用。
+            order.OrderDate, order.ShippingInstructionNo,
+            (short)order.Status,
             order.CancelledAt, order.CancelReason,
             order.SupplierId, order.Supplier?.Code ?? "?", order.Supplier?.Name ?? "?",
             order.SupplierOfficialNameSnapshot, order.SupplierCodeSnapshot,
@@ -490,6 +493,53 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
         await audit.LogAsync(actorUserId, "PurchaseOrder.Delete",
             entityType: "PurchaseOrder", entityId: id,
             note: $"mgmt_no={order.MgmtNo}", cancellationToken: ct);
+
+        return true;
+    }
+
+    /// <summary>
+    /// 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号 / 発注番号) を発注に保存する。
+    /// 帳票生成 (発注書 / 管理表) の前に呼び、保存値を帳票に反映する (再出力時はフォームへ初期表示)。
+    ///   - OrderDate / ShippingInstructionNo: 入力値で上書き (空白は null 化)。
+    ///   - OrderNo: 空でなければ上書き。空なら既存値を維持する (初回出力時の自動採番フォールバックは
+    ///     <see cref="IPurchaseOrderExcelService"/> 側で order.OrderNo が null のときのみ行う)。
+    ///     他発注と重複する OrderNo は一意制約 (idx_po_order_no) 違反になるため事前に検出して 409 を投げる。
+    /// 戻り値: 発注が存在し保存したら true、不在なら false。
+    /// </summary>
+    public async Task<bool> ApplyExportFormFieldsAsync(
+        long id, DateOnly? orderDate, string? shippingInstructionNo, string? orderNo,
+        long actorUserId, CancellationToken ct = default)
+    {
+        var order = await db.PurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
+        if (order is null) return false;
+        // 削除済は出力対象外 (一覧・詳細でも操作不可)。中止/納品完了は印字メタデータ更新を許容する
+        // (旧画面も「発注中止」チェック状態のまま出力可能だったため)。
+        if (order.IsDeleted)
+            throw new InvalidOperationException("削除済みの発注書は出力できません (ORDER-011)");
+
+        var trimmedOrderNo = string.IsNullOrWhiteSpace(orderNo) ? null : orderNo.Trim();
+        var trimmedShip = string.IsNullOrWhiteSpace(shippingInstructionNo) ? null : shippingInstructionNo.Trim();
+
+        // 発注番号の重複チェック (order_no は部分一意索引 idx_po_order_no)。自分以外が同じ order_no を
+        // 持つと一意制約違反になるため、DB 例外より前にアプリ側で検出してわかりやすい 409 を返す。
+        if (trimmedOrderNo is not null)
+        {
+            var dup = await db.PurchaseOrders.AnyAsync(o => o.Id != id && o.OrderNo == trimmedOrderNo, ct);
+            if (dup)
+                throw new InvalidOperationException($"発注番号 '{trimmedOrderNo}' は既に使用されています (ORDER-012)");
+            order.OrderNo = trimmedOrderNo;
+        }
+
+        order.OrderDate = orderDate;
+        order.ShippingInstructionNo = trimmedShip;
+        order.UpdatedAt = SystemTime.Now;
+        order.UpdatedByUserId = actorUserId;
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync(actorUserId, "PurchaseOrder.ExportFields",
+            entityType: "PurchaseOrder", entityId: id,
+            note: $"mgmt_no={order.MgmtNo}, order_no={order.OrderNo}, order_date={orderDate}, ship_no={trimmedShip}",
+            cancellationToken: ct);
 
         return true;
     }

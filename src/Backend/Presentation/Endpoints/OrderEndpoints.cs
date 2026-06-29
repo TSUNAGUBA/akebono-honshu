@@ -119,22 +119,58 @@ public static class OrderEndpoints
             return ok ? Results.NoContent() : Results.NotFound();
         });
 
-        // Excel 出力 (O-06、MVP クリティカルパス)
-        orders.MapGet("/{id:long}/export.xlsx", async (HttpContext http, IAkebonoDbContext db,
-                                                        IPurchaseOrderExcelService excel, long id, CancellationToken ct) =>
+        // Excel 出力 (O-06)。旧システムの「発注書出力」画面と同様に、出力前に「発注日」「出荷指示番号」
+        // 「発注番号」を手入力するフォームを経由して出力する (即時出力は廃止。下の POST /{id}/export)。
+        // 帳票出力フォーム経由の出力 (旧システム「発注書出力」画面相当)。
+        // 「発注日」「出荷指示番号」「発注番号」を手入力し、出力帳票 (発注書 / 管理表 / 発注書+管理表) を
+        // 選んで出力する。入力 3 項目は発注に保存してから帳票を生成する (再出力時に初期表示)。
+        //   format=order      → 発注書 .xlsx (単一)
+        //   format=management → 管理表 .xlsx (単一)
+        //   format=both       → 発注書+管理表 を ZIP (OrderBulkExportService を [id] で再利用)
+        orders.MapPost("/{id:long}/export", async (HttpContext http, IAkebonoDbContext db,
+                                                    PurchaseOrderService svc,
+                                                    IPurchaseOrderExcelService excel,
+                                                    IOrderManagementTableExcelService mgmt,
+                                                    IOrderBulkExportService bulk,
+                                                    long id, ExportOrderRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
+
+            var format = (req.Format ?? "").Trim().ToLowerInvariant();
+            if (format is not ("order" or "management" or "both"))
+                return Results.Problem(statusCode: 400, title: "Bad Request",
+                    detail: $"format は order / management / both のいずれかです: '{req.Format}'");
+
             try
             {
-                var (fileName, content) = await excel.ExportAsync(id, auth.ActorId!.Value, ct);
+                // 手入力 3 項目 (発注日 / 出荷指示番号 / 発注番号) を発注に保存してから帳票を生成する。
+                var applied = await svc.ApplyExportFormFieldsAsync(
+                    id, req.OrderDate, req.ShippingInstructionNo, req.OrderNo, auth.ActorId!.Value, ct);
+                if (!applied) return Results.NotFound();
+
+                if (format == "both")
+                {
+                    var result = await bulk.ExportAsync(
+                        new BulkExportRequest(new List<long> { id }, "both"), auth.ActorId!.Value, ct);
+                    return Results.File(result.Content, contentType: result.ContentType, fileDownloadName: result.FileName);
+                }
+
+                var (fileName, content) = format == "order"
+                    ? await excel.ExportAsync(id, auth.ActorId!.Value, ct)
+                    : await mgmt.ExportAsync(new List<long> { id }, auth.ActorId!.Value, ct);
                 return Results.File(content,
                     contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     fileDownloadName: fileName);
             }
             catch (InvalidOperationException ex)
             {
-                return Results.Problem(statusCode: 404, title: "Not Found", detail: ex.Message);
+                // 発注番号重複 (ORDER-012) / 削除済 (ORDER-011) 等は 409。
+                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
             }
         });
 

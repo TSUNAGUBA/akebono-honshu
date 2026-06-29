@@ -8,23 +8,24 @@ using Microsoft.EntityFrameworkCore;
 namespace Akebono.Infrastructure.Excel;
 
 /// <summary>
-/// 発注書 Excel 出力の Iter 3 仮テンプレ版 (ClosedXML 動的生成)。
-/// Iter 4 Hardening で業務担当者提供の本テンプレ (templates/purchase-order-domestic.xlsx) +
-/// セルマッピング版に置換予定。本実装の I/F は同一。
+/// 発注書 (ORDER SHEET) Excel 出力。旧システムの発注書帳票レイアウトに合わせる
+/// (ヘッダ: SUPPLIER / order NO. / order date / process NO. / 仕入先コード、
+///  明細: art NO / color / size / product name / bland / order / assort box /
+///        depart 群×3 (Q'yt of box / Q'yt in box / depart 倉庫コード) / estimate price / order price / remarks、
+///  フッタ: 連絡欄 / Factory Shipping・Shipping・Departure・Delivery / 納品先・受注先・Port of entry /
+///          発注者 / 責任者・管理部・担当者 捺印欄)。
+/// 表記は発注区分で切替: 国内=日本語 / 海外=英語 (<see cref="OrderReportText"/>)。
 ///
-/// レイアウト (仮):
-///  - A1:G1 タイトル「発注書」
-///  - A3 「<official_name> 御中 <supplier_code>」(F-22 帳票宛名)
-///  - A4 「mgmt_no: ..., order_no: ..., due_date: ...」
-///  - A6 表ヘッダ (line_no / sku / 商品名 / 数量 / 単価 / 小計 / 通貨)
-///  - A7〜 明細
-///  - 末尾「連絡文書:」+ 構造化 6 行 (communication_line_1..6 の非空行を優先)。
-///    6 列が全て空の旧発注は communication_text にフォールバック (PR6 後方互換)。
+/// 副作用 (従来どおり): 初回出力時に 3 件 snapshot 凍結 (F-22) + first_exported_at SET、
+/// last_exported_at 更新、PurchaseOrderExportLog INSERT、audit_logs 記録。
+/// 発注番号 (order_no) は帳票出力フォームで手入力する方式に変更したため、本サービスでは
+/// order.OrderNo が未設定 (null) のときのみ自動採番にフォールバックする (後方互換)。
 /// </summary>
 public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
     : IPurchaseOrderExcelService
 {
-    private const string TemplateVersion = "iter3-v1";
+    private const string TemplateVersion = "ordersheet-v1";
+    private const int ColCount = 20; // A..T
 
     public async Task<(string FileName, byte[] Content)> ExportAsync(
         long purchaseOrderId, long actorUserId, CancellationToken ct = default)
@@ -34,14 +35,17 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             .Include(o => o.DeliveryDestination)
             .Include(o => o.Department)
             .Include(o => o.Warehouse)
+            .Include(o => o.Warehouse2)
+            .Include(o => o.Warehouse3)
             .Include(o => o.Orderer)
             .Include(o => o.Manager)
             .FirstOrDefaultAsync(o => o.Id == purchaseOrderId, ct)
             ?? throw new InvalidOperationException($"発注書 id={purchaseOrderId} 不在");
 
         var lines = await db.PurchaseOrderLines
-            // 分納×倉庫の多次元明細 (PR5b)。倉庫名解決のため Warehouse ナビも Include。
-            .Include(l => l.Deliveries).ThenInclude(d => d.Warehouse)
+            .Include(l => l.Product).ThenInclude(p => p!.Size)
+            .Include(l => l.Product).ThenInclude(p => p!.ProductFamily)
+            .Include(l => l.Deliveries)
             .Where(l => l.PurchaseOrderId == purchaseOrderId)
             .OrderBy(l => l.LineNo)
             .ToListAsync(ct);
@@ -52,14 +56,20 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            // 初回出力: order_no 採番 + 3 件 snapshot 凍結 (F-22)
+            // 初回出力: 3 件 snapshot 凍結 (F-22)。発注番号は手入力フォーム方式へ移行したため、
+            // 既に order.OrderNo が設定済 (フォーム入力 or 過去採番) ならそれを使い、未設定なら自動採番する。
             if (isFirstExport)
             {
-                order.OrderNo = await GenerateOrderNoAsync(ct);
+                order.OrderNo ??= await GenerateOrderNoAsync(ct);
                 order.SupplierOfficialNameSnapshot = order.Supplier?.OfficialName ?? order.Supplier?.Name ?? "";
                 order.SupplierCodeSnapshot = order.Supplier?.Code;
                 order.CustomerNameSnapshot = order.DeliveryDestination?.CustomerName;
                 order.FirstExportedAt = now;
+            }
+            else
+            {
+                // 2 回目以降でも、未採番のまま (旧データ) なら採番しておく (order_no 列の一意性を維持)。
+                order.OrderNo ??= await GenerateOrderNoAsync(ct);
             }
             order.LastExportedAt = now;
             order.UpdatedAt = now;
@@ -83,92 +93,206 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             throw;
         }
 
-        // Excel 生成 (動的)
+        var t = OrderReportText.For(order.IsOverseas);
         using var wb = new XLWorkbook();
-        var ws = wb.AddWorksheet("発注書");
+        var ws = wb.AddWorksheet(t.OrderSheetTitle);
+        ws.PageSetup.PageOrientation = XLPageOrientation.Landscape;
 
-        ws.Cell("A1").Value = "発注書";
-        ws.Range("A1:G1").Merge().Style.Font.SetBold().Font.FontSize = 18;
-        ws.Range("A1:G1").Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+        BuildHeaderBlock(ws, order, t);
+        var totalsRow = BuildLineTable(ws, order, lines, t);
+        BuildFooterBlock(ws, order, t, totalsRow);
 
-        // 宛名 (F-22: <official_name> 御中 <supplier_code>)
+        SetColumnWidths(ws);
+
+        using var stream = new MemoryStream();
+        wb.SaveAs(stream);
+
+        await audit.LogAsync(actorUserId, "PurchaseOrder.Export",
+            entityType: "PurchaseOrder", entityId: purchaseOrderId,
+            note: $"mgmt_no={order.MgmtNo}, order_no={order.OrderNo}, is_first={isFirstExport}, region={(order.IsOverseas ? "overseas" : "domestic")}, total_amount=***",
+            cancellationToken: ct);
+
+        var fileName = $"{t.OrderSheetTitle}_{order.OrderNo ?? order.MgmtNo}_{now:yyyyMMdd_HHmmss}.xlsx";
+        return (fileName, stream.ToArray());
+    }
+
+    // ── ヘッダ部 (タイトル / SUPPLIER / 仕入先コード / order NO. / order date / process NO. / 出荷指示番号) ──
+    private static void BuildHeaderBlock(IXLWorksheet ws, PurchaseOrder order, OrderReportText t)
+    {
+        ws.Range(1, 1, 1, ColCount).Merge();
+        var title = ws.Cell(1, 1);
+        title.Value = $"honshu  {t.OrderSheetTitle}";
+        title.Style.Font.Bold = true;
+        title.Style.Font.FontSize = 20;
+        title.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
         var officialName = order.SupplierOfficialNameSnapshot ?? order.Supplier?.OfficialName ?? order.Supplier?.Name ?? "";
         var supplierCode = order.SupplierCodeSnapshot ?? order.Supplier?.Code ?? "";
-        ws.Cell("A3").Value = $"{officialName} 御中 {supplierCode}";
-        ws.Range("A3:G3").Merge().Style.Font.SetBold().Font.FontSize = 14;
 
-        ws.Cell("A4").Value = $"管理番号: {order.MgmtNo}";
-        ws.Cell("C4").Value = $"発注番号: {order.OrderNo ?? "(未採番)"}";
-        ws.Cell("E4").Value = $"納入日: {order.DueDate:yyyy-MM-dd}";
-        ws.Cell("A5").Value = $"納品先: {order.DeliveryDestination?.Name ?? ""}";
-        ws.Cell("C5").Value = $"発注事業部: {order.Department?.Name ?? ""}";
-        ws.Cell("E5").Value = $"納入倉庫: {order.Warehouse?.Name ?? ""}";
+        // SUPPLIER (左)
+        ws.Range(2, 1, 2, 8).Merge();
+        var sup = ws.Cell(2, 1);
+        sup.Value = $"{t.Supplier}: {officialName}";
+        sup.Style.Font.Bold = true;
+        sup.Style.Font.FontSize = 13;
 
-        // 表ヘッダ
-        var headerRow = 7;
-        var headers = new[] { "No", "品番", "商品名", "数量", "単価", "通貨", "小計" };
+        // 仕入先コード (中央、旧帳票の "434" 相当)
+        ws.Range(3, 7, 3, 9).Merge();
+        var code = ws.Cell(3, 7);
+        code.Value = supplierCode;
+        code.Style.Font.Bold = true;
+        code.Style.Font.FontSize = 13;
+        code.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+        // order NO. (右、大きく) + ページ
+        var onLabel = ws.Cell(2, 14);
+        onLabel.Value = t.OrderNo;
+        onLabel.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+        ws.Range(2, 15, 2, 18).Merge();
+        var onVal = ws.Cell(2, 15);
+        onVal.Value = order.OrderNo ?? "";
+        onVal.Style.Font.Bold = true;
+        onVal.Style.Font.FontSize = 16;
+        ws.Range(2, 19, 2, 20).Merge();
+        var page = ws.Cell(2, 19);
+        page.Value = string.Format(t.Page, 1, 1);
+        page.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+
+        // order date + process NO. (右、order NO. の下)
+        var odLabel = ws.Cell(3, 14);
+        odLabel.Value = t.OrderDate;
+        odLabel.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+        ws.Range(3, 15, 3, 16).Merge();
+        ws.Cell(3, 15).Value = order.OrderDate?.ToString("yyyy/MM/dd") ?? "";
+        var pnLabel = ws.Cell(3, 17);
+        pnLabel.Value = t.ProcessNo;
+        pnLabel.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+        ws.Range(3, 18, 3, 20).Merge();
+        ws.Cell(3, 18).Value = order.MgmtNo;
+
+        // 出荷指示番号 (右、process NO. の下)。未入力なら空欄。
+        var siLabel = ws.Cell(4, 14);
+        siLabel.Value = t.ShippingInstructionNo;
+        siLabel.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+        ws.Range(4, 15, 4, 18).Merge();
+        ws.Cell(4, 15).Value = order.ShippingInstructionNo ?? "";
+    }
+
+    // ── 明細テーブル。戻り値 = 合計行 (フッタ配置に使う)。 ──
+    private static int BuildLineTable(
+        IXLWorksheet ws, PurchaseOrder order, List<PurchaseOrderLine> lines, OrderReportText t)
+    {
+        const int headerRow = 6;
+
+        string DepartHeader(string? c) => string.IsNullOrEmpty(c) ? t.ColDepart : $"{t.ColDepart} {c}";
+        var headers = new[]
+        {
+            "", t.ColArtNo, t.ColColor, t.ColSize, t.ColProductName, t.ColBland, t.ColOrder, t.ColAssortBox,
+            t.ColQtyOfBox, t.ColQtyInBox, DepartHeader(order.Warehouse?.Code),
+            t.ColQtyOfBox, t.ColQtyInBox, DepartHeader(order.Warehouse2?.Code),
+            t.ColQtyOfBox, t.ColQtyInBox, DepartHeader(order.Warehouse3?.Code),
+            t.ColEstimatePrice, t.ColOrderPrice, t.ColRemarks,
+        };
         for (var i = 0; i < headers.Length; i++)
-        {
-            var cell = ws.Cell(headerRow, i + 1);
-            cell.Value = headers[i];
-            cell.Style.Font.SetBold();
-            cell.Style.Fill.BackgroundColor = XLColor.LightGray;
-            cell.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-        }
+            StyleHeaderCell(ws.Cell(headerRow, i + 1), headers[i]);
+        ws.Row(headerRow).Height = 30;
 
-        // 明細
+        var wh1 = order.WarehouseId;
+        var wh2 = order.Warehouse2Id;
+        var wh3 = order.Warehouse3Id;
+
+        var bodyRows = Math.Max(lines.Count, 14);
         var dataRow = headerRow + 1;
-        decimal totalAmount = 0m;
-        string currency = "JPY";
-        foreach (var line in lines)
-        {
-            ws.Cell(dataRow, 1).Value = (int)line.LineNo;
-            ws.Cell(dataRow, 2).Value = line.SkuSnapshot;
-            ws.Cell(dataRow, 3).Value = line.ProductNameSnapshot;
-            // 数量 = line.Quantity。分納あり明細では line.Quantity = 分納数量の合計 (SUM、PR5b) のため、
-            // 明細合計数量・小計は従来表示を維持する。分納内訳は下の追記行で出力する。
-            ws.Cell(dataRow, 4).Value = line.Quantity;
-            ws.Cell(dataRow, 5).Value = line.UnitPriceSnapshot;
-            ws.Cell(dataRow, 5).Style.NumberFormat.Format = "#,##0.00";
-            ws.Cell(dataRow, 6).Value = line.CurrencyCodeSnapshot;
-            ws.Cell(dataRow, 7).Value = line.Subtotal;
-            ws.Cell(dataRow, 7).Style.NumberFormat.Format = "#,##0.00";
-            for (var col = 1; col <= 7; col++)
-                ws.Cell(dataRow, col).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-            totalAmount += line.Subtotal;
-            currency = line.CurrencyCodeSnapshot;
-            dataRow++;
+        long totalOrder = 0;
+        var totalBox = new long[3];
+        var totalDepart = new long[3];
 
-            // 分納×倉庫の多次元明細 (PR5b): 分納がある明細は、明細直下に「分納スケジュール」追記行を
-            // 1 分納 = 1 行で出力する (倉庫 / 納期 / 数量 / 入数)。金額・合計には影響しない (明細行の
-            // line.Subtotal が SUM ベースで既に正しいため二重計上しない)。商品名列に内訳を寄せて表示する。
-            if (line.Deliveries.Count > 0)
+        for (var r = 0; r < bodyRows; r++)
+        {
+            var row = dataRow + r;
+            if (r < lines.Count)
             {
-                foreach (var d in line.Deliveries.OrderBy(x => x.Seq).ThenBy(x => x.Id))
+                var line = lines[r];
+                var family = line.Product?.ProductFamily;
+                var departs = OrderReportLineMath.Departs(line, wh1, wh2, wh3);
+
+                ws.Cell(row, 1).Value = r + 1;
+                ws.Cell(row, 2).Value = OrderReportLineMath.ArtNo(line.SkuSnapshot);
+                ws.Cell(row, 3).Value = OrderReportLineMath.ColorCode(line.SkuSnapshot);
+                ws.Cell(row, 4).Value = line.Product?.Size?.Name ?? "";
+                ws.Cell(row, 5).Value = line.ProductNameSnapshot;
+                ws.Cell(row, 6).Value = OrderReportLineMath.Bland(family);
+                ws.Cell(row, 7).Value = line.Quantity;
+                // col 8 assort box: per-line アソート箱情報が現データに無いため空欄 (旧帳票も大半は空欄)。
+
+                var col = 9;
+                for (var g = 0; g < 3; g++)
                 {
-                    var wh = d.Warehouse?.Name ?? "倉庫未指定";
-                    var date = d.DeliveryDate?.ToString("yyyy-MM-dd") ?? "(発注明細日)";
-                    var pack = d.PackQuantity is { } p ? $" 入数 {p}" : "";
-                    ws.Cell(dataRow, 3).Value = $"  └ 分納: {wh} / {date}{pack}";
-                    ws.Cell(dataRow, 3).Style.Font.SetItalic().Font.FontColor = XLColor.Gray;
-                    ws.Cell(dataRow, 4).Value = d.Quantity;
-                    for (var col = 1; col <= 7; col++)
-                        ws.Cell(dataRow, col).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-                    dataRow++;
+                    var d = departs[g];
+                    if (d.Quantity > 0)
+                    {
+                        if (d.BoxCount is { } bc) { ws.Cell(row, col).Value = bc; totalBox[g] += bc; }
+                        if (d.PackQuantity is { } pk) ws.Cell(row, col + 1).Value = pk;
+                        ws.Cell(row, col + 2).Value = d.Quantity;
+                        totalDepart[g] += d.Quantity;
+                    }
+                    col += 3;
                 }
+
+                if (line.EstimateUnitPrice is { } est) ws.Cell(row, 18).Value = est;
+                ws.Cell(row, 18).Style.NumberFormat.Format = "#,##0.00";
+                ws.Cell(row, 19).Value = line.UnitPriceSnapshot;
+                ws.Cell(row, 19).Style.NumberFormat.Format = "#,##0.00";
+                ws.Cell(row, 20).Value = line.Remark ?? "";
+
+                totalOrder += line.Quantity;
             }
+            for (var c = 1; c <= ColCount; c++)
+                ws.Cell(row, c).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            ws.Row(row).Height = 16;
         }
 
         // 合計行
-        ws.Cell(dataRow, 6).Value = "合計";
-        ws.Cell(dataRow, 6).Style.Font.SetBold();
-        ws.Cell(dataRow, 7).Value = totalAmount;
-        ws.Cell(dataRow, 7).Style.Font.SetBold().NumberFormat.Format = "#,##0.00";
+        var totalsRow = dataRow + bodyRows;
+        ws.Cell(totalsRow, 7).Value = totalOrder;
+        ws.Cell(totalsRow, 7).Style.Font.Bold = true;
+        var tcol = 9;
+        for (var g = 0; g < 3; g++)
+        {
+            if (totalBox[g] > 0) ws.Cell(totalsRow, tcol).Value = totalBox[g];
+            if (totalDepart[g] > 0) ws.Cell(totalsRow, tcol + 2).Value = totalDepart[g];
+            ws.Cell(totalsRow, tcol).Style.Font.Bold = true;
+            ws.Cell(totalsRow, tcol + 2).Style.Font.Bold = true;
+            tcol += 3;
+        }
+        for (var c = 1; c <= ColCount; c++)
+            ws.Cell(totalsRow, c).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
 
-        // 連絡文書 (PR6): 構造化 6 行を優先してレンダリングする (line_1..6 の非 null/非空を順に、
-        // 1 行 = 1 セル行)。6 列が全て空の発注 (= 旧データ) では communication_text にフォールバックして
-        // 従来どおり描画する (既存発注の連絡文書表示を壊さない、後方互換)。
-        // 合計行 (dataRow) の下に 1 行空けて見出し → 本文の順で出力するレイアウトは従来と同一。
+        return totalsRow;
+    }
+
+    // ── フッタ部 (Order Stamp / 連絡欄 / 各種日付 / 納品先・受注先・Port of entry / 発注者 / 責任者・管理部・担当者) ──
+    private static void BuildFooterBlock(IXLWorksheet ws, PurchaseOrder order, OrderReportText t, int totalsRow)
+    {
+        // 発注者: 事業部 + 発注担当者 (合計行の右側に印字)。
+        ws.Range(totalsRow, 15, totalsRow, 20).Merge();
+        var orderer = ws.Cell(totalsRow, 15);
+        orderer.Value = $"{t.Orderer}: {order.Department?.Name ?? ""}  {order.Orderer?.DisplayName ?? ""}";
+        orderer.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+
+        var top = totalsRow + 2;
+
+        // Order Stamp (左上の捺印枠)
+        var stamp = ws.Cell(top, 1);
+        stamp.Value = t.OrderStamp;
+        stamp.Style.Font.FontSize = 9;
+        ws.Range(top, 1, top + 4, 4).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+
+        // 連絡欄 (中央、連絡文書 6 行 or communication_text フォールバック)。
+        var comm = ws.Cell(top, 5);
+        comm.Value = t.Communication;
+        comm.Style.Font.Bold = true;
+        comm.Style.Font.FontSize = 9;
         var commLines = new[]
         {
             order.CommunicationLine1, order.CommunicationLine2, order.CommunicationLine3,
@@ -176,46 +300,98 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
         }
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToList();
-        if (commLines.Count > 0)
+        var commBody = commLines.Count > 0 ? string.Join("\n", commLines) : (order.CommunicationText ?? "");
+        ws.Range(top + 1, 5, top + 7, 13).Merge();
+        var commCell = ws.Cell(top + 1, 5);
+        commCell.Value = commBody;
+        commCell.Style.Alignment.WrapText = true;
+        commCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+        ws.Range(top, 5, top + 7, 13).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+
+        // 責任者 / 管理部 / 担当者 (右、3 段の捺印枠)
+        var stampLabels = new[] { t.Responsible, t.ManagerDept, t.Staff };
+        for (var i = 0; i < 3; i++)
         {
-            // 新フロー: 6 列の非空行を順に出力。各行は 1〜7 列を結合して wrap 表示 (本文行と同レイアウト)。
-            var commRow = dataRow + 2;
-            ws.Cell(commRow, 1).Value = "連絡文書:";
-            ws.Cell(commRow, 1).Style.Font.SetBold();
-            var bodyRow = commRow + 1;
-            foreach (var l in commLines)
-            {
-                ws.Cell(bodyRow, 1).Value = l;
-                ws.Range(bodyRow, 1, bodyRow, 7).Merge().Style.Alignment.SetWrapText(true);
-                bodyRow++;
-            }
-        }
-        else if (!string.IsNullOrEmpty(order.CommunicationText))
-        {
-            // フォールバック (旧データ): 6 列が全て空の発注は従来の communication_text を描画する。
-            var commRow = dataRow + 2;
-            ws.Cell(commRow, 1).Value = "連絡文書:";
-            ws.Cell(commRow, 1).Style.Font.SetBold();
-            ws.Cell(commRow + 1, 1).Value = order.CommunicationText;
-            ws.Range(commRow + 1, 1, commRow + 1, 7).Merge().Style.Alignment.SetWrapText(true);
+            var r1 = top + i * 3;
+            ws.Range(r1, 14, r1 + 2, 20).Merge();
+            ws.Range(r1, 14, r1 + 2, 20).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            var lbl = ws.Cell(r1, 14);
+            lbl.Value = stampLabels[i];
+            lbl.Style.Font.FontSize = 9;
+            lbl.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         }
 
-        // 列幅自動調整
-        ws.Columns().AdjustToContents();
+        // 各種日付 (左下)
+        var dateRow = top + 9;
+        void DateLine(int row, string label, DateOnly? value)
+        {
+            var lc = ws.Cell(row, 1);
+            lc.Value = label;
+            lc.Style.Font.FontSize = 9;
+            ws.Range(row, 2, row, 4).Merge();
+            var vc = ws.Cell(row, 2);
+            vc.Value = value?.ToString("yyyy/MM/dd") ?? "";
+            vc.Style.Font.FontSize = 9;
+            vc.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+        }
+        DateLine(dateRow, t.FactoryShipping, order.FactoryShippingDate);
+        DateLine(dateRow + 1, t.Shipping, order.DeliveryPlaceShippingDate);
+        DateLine(dateRow + 2, t.Departure, order.OverseasDepartureDate);
+        DateLine(dateRow + 3, t.Delivery, order.DueDate);
 
-        using var stream = new MemoryStream();
-        wb.SaveAs(stream);
+        // Port of entry / 納品先 / 受注先 (中央下)
+        void RefLine(int row, string label, string? value)
+        {
+            var lc = ws.Cell(row, 5);
+            lc.Value = $"{label}:";
+            lc.Style.Font.FontSize = 9;
+            ws.Range(row, 6, row, 10).Merge();
+            var vc = ws.Cell(row, 6);
+            vc.Value = value ?? "";
+            vc.Style.Font.FontSize = 9;
+        }
+        RefLine(dateRow, t.PortOfEntry, order.LandingPlace);
+        RefLine(dateRow + 1, t.DeliveryTo, order.DeliveryDestination?.Name);
+        RefLine(dateRow + 2, t.OrderTo, order.CustomerRef);
 
-        await audit.LogAsync(actorUserId, "PurchaseOrder.Export",
-            entityType: "PurchaseOrder", entityId: purchaseOrderId,
-            note: $"mgmt_no={order.MgmtNo}, order_no={order.OrderNo}, is_first={isFirstExport}, total_amount=***",
-            cancellationToken: ct);
-
-        var fileName = $"PO_{order.OrderNo ?? order.MgmtNo}_{now:yyyyMMdd_HHmmss}.xlsx";
-        return (fileName, stream.ToArray());
+        // 会社フッタ (最下部、中央〜右)
+        var footRow = dateRow + 4;
+        ws.Range(footRow, 5, footRow, 20).Merge();
+        var foot = ws.Cell(footRow, 5);
+        foot.Value = t.CompanyFooter;
+        foot.Style.Font.FontSize = 8;
+        foot.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
     }
 
-    /// <summary>order_no 採番 (例: "S00001")。"S" + 5 桁ゼロ埋め連番、全期間通し。</summary>
+    private static void StyleHeaderCell(IXLCell cell, string text)
+    {
+        cell.Value = text;
+        cell.Style.Font.Bold = true;
+        cell.Style.Font.FontSize = 9;
+        cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+        cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+        cell.Style.Alignment.WrapText = true;
+        cell.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+    }
+
+    private static void SetColumnWidths(IXLWorksheet ws)
+    {
+        ws.Column(1).Width = 3.5;
+        ws.Column(2).Width = 10;
+        ws.Column(3).Width = 5;
+        ws.Column(4).Width = 5;
+        ws.Column(5).Width = 22;
+        ws.Column(6).Width = 5;
+        ws.Column(7).Width = 7;
+        ws.Column(8).Width = 6;
+        for (var c = 9; c <= 17; c++) ws.Column(c).Width = 7;
+        ws.Column(18).Width = 9;
+        ws.Column(19).Width = 9;
+        ws.Column(20).Width = 18;
+    }
+
+    /// <summary>order_no 採番 (例: "S00001")。"S" + 5 桁ゼロ埋め連番、全期間通し。手入力が無いときのフォールバック。</summary>
     private async Task<string> GenerateOrderNoAsync(CancellationToken ct)
     {
         var existing = await db.PurchaseOrders

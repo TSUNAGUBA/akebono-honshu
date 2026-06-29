@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrderDetail, EditReason, CommunicationSuggestion } from '~/composables/useOrders'
+import type { OrderDetail, EditReason, CommunicationSuggestion, OrderExportFormat } from '~/composables/useOrders'
 import { editReasonLabel, deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
 
 const route = useRoute()
@@ -7,7 +7,7 @@ const id = computed(() => Number(route.params.id))
 const { user } = useAuth()
 const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 
-const { get, update, cancel, markDelivered, softDelete, downloadExcel, communicationSuggestions } = useOrders()
+const { get, update, cancel, markDelivered, softDelete, exportOrder, communicationSuggestions } = useOrders()
 
 const detail = ref<OrderDetail | null>(null)
 const loading = ref(true)
@@ -340,16 +340,51 @@ const onSoftDelete = async () => {
   }
 }
 
-const onDownload = async () => {
+// ─── 帳票出力フォーム (旧システム「発注書出力」画面相当) ───────────────
+// 「発注日」「出荷指示番号」「発注番号」を手入力し、出力帳票 (発注書 / 管理表 / 発注書+管理表) を
+// 選んで出力する。入力 3 項目はサーバ側で発注に保存され、再出力時に初期表示される。
+const showExportForm = ref(false)
+const exportForm = ref<{ orderDate: string; shippingInstructionNo: string; orderNo: string; format: OrderExportFormat }>({
+  orderDate: '', shippingInstructionNo: '', orderNo: '', format: 'order',
+})
+const exportFormats: { key: OrderExportFormat; label: string }[] = [
+  { key: 'order', label: '発注書のみ' },
+  { key: 'management', label: '管理表のみ' },
+  { key: 'both', label: '発注書+管理表' },
+]
+
+const openExportForm = () => {
+  if (!detail.value) return
+  // 既存の保存値をフォームへ初期表示する (発注日は未保存なら本日)。
+  exportForm.value = {
+    orderDate: detail.value.orderDate ?? new Date().toISOString().slice(0, 10),
+    shippingInstructionNo: detail.value.shippingInstructionNo ?? '',
+    orderNo: detail.value.orderNo ?? '',
+    format: 'order',
+  }
+  errorMessage.value = ''
+  successMessage.value = ''
+  showExportForm.value = true
+}
+
+const onSubmitExport = async () => {
+  if (!detail.value || downloading.value) return
   downloading.value = true
   errorMessage.value = ''
   try {
-    await downloadExcel(id.value)
-    successMessage.value = 'Excel をダウンロードしました'
+    await exportOrder(id.value, {
+      orderDate: exportForm.value.orderDate || null,
+      shippingInstructionNo: exportForm.value.shippingInstructionNo.trim() || null,
+      orderNo: exportForm.value.orderNo.trim() || null,
+      format: exportForm.value.format,
+    })
+    successMessage.value = '帳票を出力しました'
+    showExportForm.value = false
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? 'Excel 出力に失敗しました'
+    const err = e as { statusCode?: number; data?: { detail?: string } }
+    errorMessage.value = err.data?.detail
+      ?? (err.statusCode === 409 ? '発注番号が重複しています' : '帳票出力に失敗しました')
   } finally {
     downloading.value = false
   }
@@ -401,11 +436,11 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <button
             v-if="canEditOrder"
             type="button"
-            :disabled="downloading"
+            :disabled="downloading || editing"
             class="rounded-md bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700 disabled:opacity-50"
-            @click="onDownload"
+            @click="openExportForm"
           >
-            {{ downloading ? '出力中…' : '📥 Excel ダウンロード' }}
+            {{ downloading ? '出力中…' : '📥 帳票出力' }}
           </button>
           <!-- 編集/中止 は終端状態 (発注中止/納品完了/発注削除) では不可。発注依頼中/正式発注済 のみ (#3a)。
                バックエンド UpdateAsync/CancelAsync も同じガードを持つ (UI は操作可否の早期表示)。 -->
@@ -461,6 +496,57 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
         </div>
       </div>
 
+      <!-- 帳票出力フォーム (旧システム「発注書出力」画面相当)。発注日 / 出荷指示番号 / 発注番号 を
+           手入力し、出力帳票 (発注書 / 管理表 / 発注書+管理表) を選んで出力する。モバイルは縦積み (原則8)。 -->
+      <div v-if="showExportForm" class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center">
+        <div class="w-full max-w-lg rounded-lg border border-gray-200 bg-white p-5 shadow-xl">
+          <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
+            <h2 class="font-semibold text-gray-800">帳票出力</h2>
+            <button type="button" class="text-gray-400 hover:text-gray-600" aria-label="閉じる" @click="showExportForm = false">✕</button>
+          </div>
+          <p class="mb-3 text-xs text-gray-500">
+            発注日・出荷指示番号・発注番号を入力して出力します。入力内容は発注に保存され、次回出力時に初期表示されます。
+          </p>
+          <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">発注日</span>
+              <input v-model="exportForm.orderDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">発注番号</span>
+              <input v-model="exportForm.orderNo" type="text" maxlength="16" placeholder="例: S3858" class="rounded-md border border-gray-300 px-2.5 py-1.5 font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </label>
+            <label class="flex flex-col gap-1 sm:col-span-2">
+              <span class="font-medium">出荷指示番号</span>
+              <input v-model="exportForm.shippingInstructionNo" type="text" maxlength="32" placeholder="（任意）" class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </label>
+          </div>
+
+          <!-- 出力帳票選択 (発注書のみ / 管理表のみ / 発注書+管理表) -->
+          <fieldset class="mt-4">
+            <legend class="mb-2 text-sm font-medium text-gray-700">出力帳票選択</legend>
+            <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-4">
+              <label v-for="f in exportFormats" :key="f.key" class="inline-flex items-center gap-2 text-sm">
+                <input v-model="exportForm.format" type="radio" :value="f.key" class="h-4 w-4 border-gray-300" />
+                <span>{{ f.label }}</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" class="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm hover:bg-gray-50" @click="showExportForm = false">キャンセル</button>
+            <button
+              type="button"
+              :disabled="downloading"
+              class="rounded-md bg-green-600 px-4 py-1.5 text-sm text-white hover:bg-green-700 disabled:opacity-50"
+              @click="onSubmitExport"
+            >
+              {{ downloading ? '出力中…' : '出力' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- ヘッダ情報 -->
       <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
@@ -480,6 +566,9 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <div><span class="text-gray-500">発注担当:</span> {{ detail.ordererName }}</div>
           <div><span class="text-gray-500">発注管理者:</span> {{ detail.managerName }}</div>
           <div><span class="text-gray-500">作成日:</span> {{ new Date(detail.createdAt).toLocaleString('ja-JP') }}</div>
+          <!-- 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力時に保存された値を表示。 -->
+          <div><span class="text-gray-500">発注日:</span> {{ detail.orderDate || '—' }}</div>
+          <div><span class="text-gray-500">出荷指示番号:</span> {{ detail.shippingInstructionNo || '—' }}</div>
         </div>
 
         <!-- 海外発注情報 (is_overseas=true のときのみ、Phase B) -->

@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     id                              BIGSERIAL PRIMARY KEY,
     mgmt_no                         VARCHAR(16)  NOT NULL UNIQUE,
     order_no                        VARCHAR(16)  NULL,
+    -- 帳票出力フォーム 手入力項目 (旧システム「発注書出力」画面)。発注日 / 出荷指示番号。
+    -- 発注番号 (order_no 上述) と合わせ、出力フォームで手入力し発注に保存する (再出力時に初期表示)。
+    order_date                      DATE         NULL,                                      -- 発注日 (帳票 order date)
+    shipping_instruction_no         VARCHAR(32)  NULL,                                      -- 出荷指示番号
     status                          SMALLINT     NOT NULL DEFAULT 0,
     cancelled_at                    TIMESTAMP    NULL,
     cancelled_by_user_id            BIGINT       NULL REFERENCES users(id),
