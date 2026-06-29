@@ -101,6 +101,9 @@ public record OrderDetail(
     long Id,
     string MgmtNo,
     string? OrderNo,
+    // 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力フォームの初期表示に使う。
+    DateOnly? OrderDate,
+    string? ShippingInstructionNo,
     short Status,
     DateTime? CancelledAt,
     string? CancelReason,
@@ -250,6 +253,18 @@ public record UpdateLineInput(
 // 中止 (POST /api/v1/orders/{id}/cancel、O-05)
 // ─────────────────────────────────────────────────
 public record CancelOrderRequest(string CancelReason);
+
+// ─────────────────────────────────────────────────
+// 帳票出力フォーム (POST /api/v1/orders/{id}/export、旧システム「発注書出力」画面相当)
+//   旧画面と同様に「発注日」「出荷指示番号」「発注番号」を手入力し、Excel 帳票に反映して出力する。
+//   Format = 出力帳票選択 (order=発注書のみ / management=管理表のみ / both=発注書+管理表)。
+//   入力した 3 項目は発注に保存し (order_no は未入力なら既存値/自動採番を維持)、再出力時に初期表示する。
+// ─────────────────────────────────────────────────
+public record ExportOrderRequest(
+    DateOnly? OrderDate,
+    string? ShippingInstructionNo,
+    string? OrderNo,
+    string Format);
 
 // ─────────────────────────────────────────────────
 // 連絡文章 (O-07、テンプレ複写)

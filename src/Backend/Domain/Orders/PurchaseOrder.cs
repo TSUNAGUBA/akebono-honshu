@@ -13,8 +13,19 @@ public class PurchaseOrder
     /// <summary>作成管理番号 (作成時採番、例: "26-00001"、BR-03)</summary>
     public string MgmtNo { get; set; } = string.Empty;
 
-    /// <summary>発注番号 (初回 Excel 出力時採番、例: "S3858"、BR-03)。未出力時は null</summary>
+    /// <summary>
+    /// 発注番号 (例: "S3858"、BR-03)。帳票出力フォームで手入力する (旧システムの発注書出力画面と同様)。
+    /// 後方互換: フォームで未入力かつ既存採番が無い初回出力時は自動採番 ("S00001") にフォールバックする。
+    /// 未出力時は null。
+    /// </summary>
     public string? OrderNo { get; set; }
+
+    // 帳票出力フォーム 手入力項目 (旧システム「発注書出力」画面)。発注番号 (OrderNo 上述) と合わせて
+    // 出力時にフォームで入力し発注に保存する (再出力時は保存値を初期表示)。全 NULL 許容 = 既存行は不変。
+    /// <summary>発注日 (帳票 order date)。出力フォームで手入力。未入力可。</summary>
+    public DateOnly? OrderDate { get; set; }
+    /// <summary>出荷指示番号 (旧システム発注書出力画面の手入力欄)。出力フォームで手入力。未入力可。</summary>
+    public string? ShippingInstructionNo { get; set; }
 
     public OrderStatus Status { get; set; }
     public DateTime? CancelledAt { get; set; }

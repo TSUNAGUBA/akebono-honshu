@@ -413,14 +413,15 @@ pnpm dev
 1. **発注書一覧 (O-03):** `http://localhost:3000/orders` → 発注書が一覧表示される（`26-00001` ほか、`06-demo-data.sql` 投入時は未出力／出力済（`S00021` 等）／中止が混在）
 2. **新規発注書 (O-01):** ホーム（ポータル）の「発注」カード → `/orders` →「+ 新規発注書」→ ヘッダ + 明細 + 連絡文章テンプレ複写 (O-07) → 登録で `mgmt_no` 自動採番
 3. **詳細・編集 (O-04、F-16):** 行クリック → 詳細画面で「編集」→ 数量/単価変更 → **編集理由 5 値 select 必須** + メモ任意 → 保存で `audit_logs.note` に `edit_reason=quantity` 記録
-4. **Excel ダウンロード (O-06、MVP クリティカルパス):**
-   - 「📥 Excel ダウンロード」→ ファイル名 `PO_S00001_YYYYMMDD_HHmmss.xlsx`
-   - 初回出力で `order_no` 採番 (S00001) + 3 件 snapshot 凍結 (F-22):
-     - `supplier_official_name_snapshot` = "DEPARTURES"
-     - `supplier_code_snapshot` = "336"
-     - `customer_name_snapshot` = "しまむら"
-   - Excel を開くと「**DEPARTURES 御中 336**」宛名 (F-22 帳票表記) + 明細表 + 合計
-5. **中止 (O-05):** 「中止」→ 中止理由必須入力 → 詳細画面が Cancelled (オレンジ)、編集ボタン消失。**Excel ダウンロードは引き続き可能** (Phase 6 F-11 仕様)
+4. **帳票出力 (O-06、MVP クリティカルパス。旧システム「発注書出力」画面相当):**
+   - 「📥 帳票出力」→ **出力フォーム**が開く。「発注日」「出荷指示番号」「発注番号」を手入力し、
+     「出力帳票選択」(発注書のみ / 管理表のみ / 発注書+管理表) を選んで「出力」。
+   - 入力した 3 項目は発注に保存され (`order_date` / `shipping_instruction_no` / `order_no`)、再出力時に初期表示される。
+   - 発注書 (ORDER SHEET) / 管理表 (ORDER DETAIL) は旧帳票レイアウトに準拠。**国内は日本語・海外は英語**表記。
+   - 初回出力で 3 件 snapshot 凍結 (F-22): `supplier_official_name_snapshot` / `supplier_code_snapshot` / `customer_name_snapshot`。
+     発注番号はフォーム手入力が優先、未入力かつ未採番の初回出力のみ自動採番 (`S00001`) にフォールバック。
+   - 発注書の管理表は分納の納期 (`delivery_date`) を「shipping date (納入日)」列として日付ごとに動的展開する。
+5. **中止 (O-05):** 「中止」→ 中止理由必須入力 → 詳細画面が Cancelled (オレンジ)、編集ボタン消失。**帳票出力は引き続き可能** (Phase 6 F-11 仕様)
 6. **権限制御:** planner / sales でログイン → 編集ボタン全て非表示、Swagger で直接 POST すると 403 (`purchase_order_create_permission` 必須)
 7. **監査ログ:**
    ```sql
@@ -433,7 +434,7 @@ pnpm dev
    SELECT purchase_order_id, exported_at, is_first_export, excel_template_version
    FROM purchase_order_export_logs ORDER BY id DESC LIMIT 10;
    ```
-   期待: 初回出力は `is_first_export=true`、テンプレ版 `iter3-v1`
+   期待: 初回出力は `is_first_export=true`、テンプレ版 `ordersheet-v1`
 
 ---
 
@@ -465,7 +466,8 @@ pnpm dev
 | POST | `/api/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |
 | PATCH | `/api/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission >= 1` |
 | POST | `/api/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission >= 1` |
-| GET | `/api/v1/orders/{id}/export.xlsx` | Excel 出力 (O-06、初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/v1/orders/{id}/export` | 帳票出力フォーム (O-06、発注日/出荷指示番号/発注番号 を手入力 + 帳票選択。初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/v1/orders/bulk-export` | 一括ダウンロード (#3b、発注書 ZIP / 管理表 xlsx / 両方 ZIP) | Bearer | `purchase_order_create_permission >= 1` |
 | GET | `/api/v1/orders/communication-suggestions` | 連絡文章テンプレ (O-07) | Bearer | – |
 
 `{master}` は: brands / sizes / functions / countries / suppliers / departments / product-types / product-seasons / product-groups / colors / materials / material-classifications / warehouses / delivery-destinations / document-template-purchases / document-template-confirmations / document-text-purchases

@@ -80,6 +80,9 @@ export interface OrderDetail {
   id: number
   mgmtNo: string
   orderNo: string | null
+  // 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力フォームの初期表示に使う。
+  orderDate: string | null
+  shippingInstructionNo: string | null
   status: number
   cancelledAt: string | null
   cancelReason: string | null
@@ -196,6 +199,17 @@ export interface UpdateOrderPayload extends CreateOrderPayload {
   editNote: string | null
 }
 
+// 帳票出力フォーム (旧システム「発注書出力」画面相当)。出力帳票選択 = 発注書 / 管理表 / 発注書+管理表。
+export type OrderExportFormat = 'order' | 'management' | 'both'
+
+export interface ExportOrderPayload {
+  // 手入力 3 項目 (発注日 / 出荷指示番号 / 発注番号)。空欄は null で送る。
+  orderDate: string | null
+  shippingInstructionNo: string | null
+  orderNo: string | null
+  format: OrderExportFormat
+}
+
 export interface CommunicationSuggestion {
   body: string
   standardPrintFlag: boolean
@@ -249,23 +263,12 @@ export const useOrders = () => {
     await apiFetch<void>(`/orders/${id}/delete`, { method: 'POST' })
   }
 
-  /** Excel ダウンロード (O-06)。Blob を取得して a タグで download。 */
-  const downloadExcel = async (id: number): Promise<void> => {
-    const { getIdToken } = useAuth()
-    const token = await getIdToken()
-    if (!token) throw new Error('未認証')
-    const response = await $fetch.raw<Blob>(
-      `${config.public.apiBase}/orders/${id}/export.xlsx`,
-      {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-        responseType: 'blob',
-      },
-    )
-    // Content-Disposition から filename を抽出 (フォールバック付)
+  // Blob レスポンス (Excel/ZIP) を Content-Disposition の filename で download する共有ヘルパー。
+  // exportOrder / bulkExport で共通利用 (原則3 既存パターン再利用)。
+  const saveBlobResponse = (response: { headers: Headers; _data?: unknown }, fallbackName: string): void => {
     const cd = response.headers.get('content-disposition') ?? ''
     const match = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
-    const filename = match ? decodeURIComponent(match[1]) : `PO_${id}.xlsx`
+    const filename = match ? decodeURIComponent(match[1]) : fallbackName
     const url = URL.createObjectURL(response._data as Blob)
     const a = document.createElement('a')
     a.href = url
@@ -277,8 +280,31 @@ export const useOrders = () => {
   }
 
   /**
+   * 帳票出力 (旧システム「発注書出力」画面相当)。発注日 / 出荷指示番号 / 発注番号 を手入力し、
+   * 出力帳票 (発注書 / 管理表 / 発注書+管理表) を選んで出力する。入力 3 項目はサーバ側で発注に保存される。
+   *   - 'order' / 'management' → 単一 .xlsx
+   *   - 'both'                 → 発注書+管理表 を ZIP
+   */
+  const exportOrder = async (id: number, payload: ExportOrderPayload): Promise<void> => {
+    const { getIdToken } = useAuth()
+    const token = await getIdToken()
+    if (!token) throw new Error('未認証')
+    const response = await $fetch.raw<Blob>(
+      `${config.public.apiBase}/orders/${id}/export`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: payload,
+        responseType: 'blob',
+      },
+    )
+    const fallbackExt = payload.format === 'both' ? 'zip' : 'xlsx'
+    saveBlobResponse(response, `order_${id}.${fallbackExt}`)
+  }
+
+  /**
    * 一括ダウンロード (#3b)。チェックした発注を 発注書 / 管理表 / 発注書+管理表 でまとめて取得。
-   * downloadExcel と同じ Blob → a タグ download のパターン。
+   * exportOrder と同じく saveBlobResponse で Blob を download する。
    *   - 'order'      → 発注書を ZIP で (各発注の初回出力は order_no 採番等の副作用あり)
    *   - 'management' → 管理表を単一 .xlsx で (読み取り専用、副作用なし)
    *   - 'both'       → 管理表 + 各発注の発注書 を ZIP で
@@ -299,19 +325,9 @@ export const useOrders = () => {
         responseType: 'blob',
       },
     )
-    // Content-Disposition から filename を抽出 (フォールバック付。zip/xlsx は server 側が決定)。
-    const cd = response.headers.get('content-disposition') ?? ''
-    const match = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
+    // フォールバック名は zip/xlsx を format から推定 (実際の名前は server 側 Content-Disposition が決定)。
     const fallbackExt = format === 'management' ? 'xlsx' : 'zip'
-    const filename = match ? decodeURIComponent(match[1]) : `orders_export.${fallbackExt}`
-    const url = URL.createObjectURL(response._data as Blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+    saveBlobResponse(response, `orders_export.${fallbackExt}`)
   }
 
   const communicationSuggestions = async (): Promise<CommunicationSuggestion[]> => {
@@ -326,7 +342,7 @@ export const useOrders = () => {
   const priceSuggestion = async (productId: number, supplierId: number): Promise<PriceSuggestion> =>
     await apiFetch<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
 
-  return { list, get, create, update, cancel, markDelivered, softDelete, downloadExcel, bulkExport, communicationSuggestions, priceSuggestion }
+  return { list, get, create, update, cancel, markDelivered, softDelete, exportOrder, bulkExport, communicationSuggestions, priceSuggestion }
 }
 
 // ─────────────────────────────────────────────────

@@ -61,8 +61,8 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
     .AllowAnyMethod()
     .AllowCredentials()
     // Content-Disposition は CORS のデフォルト simple response header に
-    // 含まれないため明示 expose。Frontend の Excel ダウンロード (useOrders.
-    // downloadExcel) で filename 抽出に使用 (Iter 3 O-06)。
+    // 含まれないため明示 expose。Frontend の帳票出力 (useOrders.exportOrder /
+    // bulkExport) で filename 抽出に使用 (O-06)。
     .WithExposedHeaders("Content-Disposition")));
 
 // Firebase Auth + JwtBearer 認証 (Iter 4 段階 B、4 周目レビュー反映の最終形)

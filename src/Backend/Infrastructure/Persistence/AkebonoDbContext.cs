@@ -337,6 +337,9 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.Id).HasColumnName("id");
             b.Property(x => x.MgmtNo).HasColumnName("mgmt_no").IsRequired().HasMaxLength(16);
             b.Property(x => x.OrderNo).HasColumnName("order_no").HasMaxLength(16);
+            // 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。全 NULL 許容。
+            b.Property(x => x.OrderDate).HasColumnName("order_date");
+            b.Property(x => x.ShippingInstructionNo).HasColumnName("shipping_instruction_no").HasMaxLength(32);
             b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
             b.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
             b.Property(x => x.CancelledByUserId).HasColumnName("cancelled_by_user_id");
