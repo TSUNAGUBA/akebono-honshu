@@ -353,11 +353,17 @@ const exportFormats: { key: OrderExportFormat; label: string }[] = [
   { key: 'both', label: '発注書+管理表' },
 ]
 
+// 本日のローカル日付を YYYY-MM-DD で返す (toISOString は UTC のため JST 深夜に前日へずれる)。
+const todayLocal = (): string => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 const openExportForm = () => {
   if (!detail.value) return
   // 既存の保存値をフォームへ初期表示する (発注日は未保存なら本日)。
   exportForm.value = {
-    orderDate: detail.value.orderDate ?? new Date().toISOString().slice(0, 10),
+    orderDate: detail.value.orderDate ?? todayLocal(),
     shippingInstructionNo: detail.value.shippingInstructionNo ?? '',
     orderNo: detail.value.orderNo ?? '',
     format: 'order',
@@ -869,7 +875,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </section>
 
       <p class="mt-3 text-xs text-gray-400">
-        API: GET/PATCH/POST cancel/GET export.xlsx /api/v1/orders/{{ id }}
+        API: GET/PATCH/POST cancel/POST export /api/v1/orders/{{ id }}
       </p>
     </template>
   </main>

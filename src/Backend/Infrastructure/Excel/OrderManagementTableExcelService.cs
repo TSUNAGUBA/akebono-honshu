@@ -116,11 +116,15 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
         ws.Cell(1, 1).Style.Font.SetBold().Font.FontSize = 18;
         ws.Cell(1, 1).Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
 
+        // SUPPLIER (左) と order NO./order date/process NO. (右) を別ブロックにマージして重なりを防ぐ。
+        var metaStart = Math.Max(8, colCount - 5);
+        ws.Range(2, 1, 2, metaStart - 1).Merge();
         ws.Cell(2, 1).Value = $"{t.Supplier}: {officialName}  ({supplierCode})";
         ws.Cell(2, 1).Style.Font.SetBold().Font.FontSize = 12;
-        ws.Cell(2, Math.Max(7, colCount - 3)).Value =
+        ws.Range(2, metaStart, 2, colCount).Merge();
+        ws.Cell(2, metaStart).Value =
             $"{t.OrderNo} {order.OrderNo ?? ""}   {t.OrderDate} {order.OrderDate?.ToString("yyyy/MM/dd") ?? ""}   {t.ProcessNo} {order.MgmtNo}";
-        ws.Cell(2, Math.Max(7, colCount - 3)).Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Right);
+        ws.Cell(2, metaStart).Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Right);
 
         // ── 明細ヘッダ行 ──
         const int headerRow = 4;
