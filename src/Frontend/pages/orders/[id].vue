@@ -422,7 +422,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-5">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
     <div v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
     <div v-else-if="!detail" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
@@ -535,7 +535,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <p class="mb-3 text-xs text-gray-500">
             発注日・出荷指示番号・発注番号を入力して出力します。入力内容は発注に保存され、次回出力時に初期表示されます。
           </p>
-          <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2">
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注日</span>
               <input v-model="exportForm.orderDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
@@ -576,7 +576,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </div>
 
       <!-- ヘッダ情報 -->
-      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
           <h2 class="font-semibold">発注書情報</h2>
           <!-- 発注区分 国内/海外 バッジ (Phase B、is_overseas) -->
@@ -639,7 +639,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </section>
 
       <!-- 明細 -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
           明細 ({{ detail.lines.length }} 件、合計 {{ detail.lines[0]?.currencyCodeSnapshot ?? 'JPY' }} {{ totalAmount.toLocaleString() }})
         </h2>
@@ -793,7 +793,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 >海外</button>
               </div>
             </div>
-            <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <div class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
               <label class="flex flex-col gap-1">
                 <span class="font-medium">荷揚地</span>
                 <input v-model="editHeader.landingPlace" type="text" maxlength="128" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
@@ -861,7 +861,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <!-- F-16 EditReason 必須 -->
           <div class="mt-4 rounded-md bg-yellow-50 p-4">
             <div class="mb-2 font-semibold text-yellow-800">編集理由 (F-16 必須)</div>
-            <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2">
               <label class="flex flex-col gap-1">
                 <span class="font-medium">理由 <span class="text-red-500">*</span></span>
                 <AutoComplete :model-value="editReason" :options="editReasonOptions.map((r) => ({ value: r, label: editReasonLabel(r) }))" :allow-empty="false" placeholder="理由を選択…" @update:model-value="(v) => editReason = v as EditReason" />
@@ -884,7 +884,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
            新データは 6 列を 1 行ずつ表示。6 列が全て空の旧発注は communicationText にフォールバック。 -->
       <section
         v-if="!editing && (displayCommLines.length > 0 || detail.communicationText)"
-        class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+        class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
       >
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">連絡文書</h2>
         <ol v-if="displayCommLines.length > 0" class="space-y-1 text-sm">

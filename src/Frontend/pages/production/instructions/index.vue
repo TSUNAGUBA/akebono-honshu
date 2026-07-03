@@ -44,8 +44,8 @@ const exportBadge = (i: PiListItem) => i.firstExportedAt
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-8">
-    <header class="mb-6 flex items-start justify-between gap-4">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+    <header class="mb-4 flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold">生産指示書</h1>
         <p class="mt-1 text-sm text-gray-500">PI-02 一覧 / PI-04 Excel 出力（加工指図書）</p>
@@ -75,27 +75,27 @@ const exportBadge = (i: PiListItem) => i.firstExportedAt
       <table class="w-full">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">指示番号</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">品番</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">品名</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">加工先</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">生産数量</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">納期</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">出力</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">指示番号</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">品番</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">品名</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">加工先</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">生産数量</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">納期</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">出力</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="filtered.length === 0"><td colspan="8" class="px-4 py-8 text-center text-sm text-gray-500">データがありません</td></tr>
           <tr v-for="i in filtered" :key="i.id" class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-blue-50" @click="navigateTo(`/production/instructions/${i.id}`)">
-            <td class="px-4 py-3 font-mono text-sm">{{ i.instructionNo }}</td>
-            <td class="px-4 py-3 font-mono text-sm">{{ i.productSku9 }}</td>
-            <td class="px-4 py-3 text-sm">{{ i.productName }}</td>
-            <td class="px-4 py-3 text-sm"><div class="font-medium">{{ i.factoryName }}</div><div class="font-mono text-xs text-gray-500">{{ i.factoryCode }}</div></td>
-            <td class="px-4 py-3 text-right font-mono text-sm">{{ i.plannedQuantity.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-sm">{{ i.dueDate }}</td>
-            <td class="px-4 py-3 text-sm"><span :class="exportBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ exportBadge(i).label }}</span></td>
-            <td class="px-4 py-3 text-sm"><span :class="statusBadge(i.status).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ piStatusLabel(i.status) }}</span></td>
+            <td class="px-3 py-2 font-mono text-sm">{{ i.instructionNo }}</td>
+            <td class="px-3 py-2 font-mono text-sm">{{ i.productSku9 }}</td>
+            <td class="px-3 py-2 text-sm">{{ i.productName }}</td>
+            <td class="px-3 py-2 text-sm"><div class="font-medium">{{ i.factoryName }}</div><div class="font-mono text-xs text-gray-500">{{ i.factoryCode }}</div></td>
+            <td class="px-3 py-2 text-right font-mono text-sm">{{ i.plannedQuantity.toLocaleString() }}</td>
+            <td class="px-3 py-2 text-sm">{{ i.dueDate }}</td>
+            <td class="px-3 py-2 text-sm"><span :class="exportBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ exportBadge(i).label }}</span></td>
+            <td class="px-3 py-2 text-sm"><span :class="statusBadge(i.status).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ piStatusLabel(i.status) }}</span></td>
           </tr>
         </tbody>
       </table>

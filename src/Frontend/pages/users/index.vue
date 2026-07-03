@@ -34,8 +34,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-5xl px-4 py-8">
-    <header class="mb-6">
+  <main class="mx-auto max-w-7xl px-4 py-4">
+    <header class="mb-4">
       <h1 class="text-2xl font-bold">ユーザ一覧</h1>
       <p class="text-sm text-gray-500">M-03 ユーザマスタ (Iteration 1 で権限管理拡張予定)</p>
     </header>
@@ -50,10 +50,10 @@ onMounted(async () => {
       <table v-else class="w-full">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
-            <th class="px-4 py-3 text-left text-sm font-semibold">社員番号</th>
-            <th class="px-4 py-3 text-left text-sm font-semibold">ログイン ID</th>
-            <th class="px-4 py-3 text-left text-sm font-semibold">表示名</th>
-            <th class="px-4 py-3 text-left text-sm font-semibold">状態</th>
+            <th class="px-3 py-2 text-left text-sm font-semibold">社員番号</th>
+            <th class="px-3 py-2 text-left text-sm font-semibold">ログイン ID</th>
+            <th class="px-3 py-2 text-left text-sm font-semibold">表示名</th>
+            <th class="px-3 py-2 text-left text-sm font-semibold">状態</th>
           </tr>
         </thead>
         <tbody>
@@ -62,10 +62,10 @@ onMounted(async () => {
             :key="u.id"
             class="border-b border-gray-100 last:border-0"
           >
-            <td class="px-4 py-3 text-sm font-mono">{{ u.employeeNo }}</td>
-            <td class="px-4 py-3 text-sm">{{ u.loginId }}</td>
-            <td class="px-4 py-3 text-sm">{{ u.displayName }}</td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-3 py-2 text-sm font-mono">{{ u.employeeNo }}</td>
+            <td class="px-3 py-2 text-sm">{{ u.loginId }}</td>
+            <td class="px-3 py-2 text-sm">{{ u.displayName }}</td>
+            <td class="px-3 py-2 text-sm">
               <span
                 :class="u.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'"
                 class="inline-block rounded-full px-2 py-0.5 text-xs"

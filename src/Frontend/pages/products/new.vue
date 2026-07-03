@@ -606,7 +606,7 @@ const onSubmit = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-5">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
     <div v-if="!canEditMaster" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
       品番台帳管理権限がないため、商品の新規登録はできません。
       <div class="mt-2">
@@ -631,7 +631,7 @@ const onSubmit = async () => {
         マスタ情報を読み込み中…
       </div>
 
-      <form v-else class="space-y-4" @submit.prevent="onSubmit">
+      <form v-else class="space-y-3" @submit.prevent="onSubmit">
         <!-- 参照コピー登録 (PR4、旧 spec No.3 参照コード/コピー、任意操作・折りたたみ可)。
              既存商品を品番/商品名/legacy_id で検索選択 → 「この商品をコピー」で詳細を取得し、
              下記フォームの編集可能項目をプリフィルする。明示ボタン操作時のみ上書き。
@@ -646,7 +646,7 @@ const onSubmit = async () => {
             旧品番 / 画像 / 状態は引き継がれず、登録時に新しい品番が採番されます。
             コピー後は自由に編集できます。
           </p>
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-[1fr_auto] sm:items-end">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">コピー元の商品</span>
               <AutoComplete
@@ -673,9 +673,9 @@ const onSubmit = async () => {
         </details>
 
         <!-- Section 1: 企画コード構成 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">① 企画コード構成 (11 桁品番の上位 9 桁)</h2>
-          <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">年式 <span class="text-red-500">*</span></span>
               <AutoComplete :model-value="form.plannedYearCode" :options="yearCodes.map((y) => ({ value: y, label: y }))" :allow-empty="false" placeholder="年式を検索…" @update:model-value="(v) => form.plannedYearCode = v" />
@@ -699,7 +699,7 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 2: 商品画像 (§2a 企画/本番の 2 区分。「登録」と同時に採番 familyId へ区分付きでアップロード) -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <h2 class="mb-2 border-b border-gray-100 pb-2 font-semibold">
             ② 商品画像 <span class="ml-2 text-xs font-normal text-gray-500">(任意 — JPEG / PNG / WebP、各 5MB、区分ごと最大 5 枚)</span>
           </h2>
@@ -712,7 +712,7 @@ const onSubmit = async () => {
           </div>
 
           <!-- 区分ごとのサブセクション (企画 / 本番)。§2a、原則8 レスポンシブ -->
-          <div class="space-y-4">
+          <div class="space-y-3">
             <div v-for="cat in IMAGE_CATEGORIES" :key="cat.key" class="rounded-md border border-gray-200 bg-gray-50 p-3">
               <div class="mb-2 flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700">
@@ -762,9 +762,9 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 3: 商品属性 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">③ 商品属性</h2>
-          <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">ブランド <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? 0" />
@@ -778,7 +778,7 @@ const onSubmit = async () => {
               <MasterSelect :model-value="form.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => form.productGroupId = v ?? 0" />
             </label>
           </div>
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">甲皮素材 <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => form.upperMaterialId = v ?? 0" />
@@ -792,7 +792,7 @@ const onSubmit = async () => {
               <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? 0" />
             </label>
           </div>
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品名 <span class="text-red-500">*</span></span>
               <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
@@ -800,7 +800,7 @@ const onSubmit = async () => {
           </div>
 
           <!-- 旧 品番台帳 項目 (Phase A、全て任意) -->
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品年度</span>
               <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
@@ -832,7 +832,7 @@ const onSubmit = async () => {
           </div>
 
           <!-- 価格 (旧 品番台帳 項目、全て任意) -->
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">小売価格</span>
               <input v-model.number="form.retailPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
@@ -867,11 +867,11 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 4: 色×サイズ展開 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
             ④ 色 × サイズ展開 <span class="ml-2 text-xs text-gray-500">(SKU {{ skuCount }} 件が生成されます)</span>
           </h2>
-          <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
             <div>
               <div class="mb-2 text-sm font-medium">色 (複数選択)</div>
               <div class="flex flex-wrap gap-2">
@@ -919,7 +919,7 @@ const onSubmit = async () => {
 
         <!-- Section 5: 仕入単価 (§2d/e 複数の仕入先×サイズ)。通貨は仕入先の適用通貨から自動決定し、
              為替マスタで円換算・仕入原価・仕入利益率・ドレー代を自動計算する (§2f/g/h/i)。 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="mb-3 flex flex-col gap-2 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">
               ⑤ 仕入単価 <span class="ml-2 text-xs font-normal text-gray-500">(仕入先 × サイズごとに登録。通貨・為替・仕入原価・仕入利益率・ドレー代は自動計算)</span>
@@ -934,7 +934,7 @@ const onSubmit = async () => {
               :key="idx"
               class="rounded-md border border-gray-200 bg-gray-50 p-3"
             >
-              <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
+              <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
                 <label class="flex flex-col gap-1">
                   <span class="text-sm font-medium">仕入先 <span class="text-red-500">*</span></span>
                   <MasterSelect :model-value="row.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => row.supplierId = v ?? 0" />
@@ -990,7 +990,7 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 6: アソート/セット明細 (PR3、旧 spec No.37/38、任意) -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
             <h2 class="font-semibold">
               ⑥ アソート/セット明細 <span class="ml-2 text-xs font-normal text-gray-500">(任意 — アソート/セット品のみ)</span>

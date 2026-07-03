@@ -329,7 +329,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-5">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
     <div v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
       読み込み中…
     </div>
@@ -378,7 +378,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       <!-- 次のアクション（操作導線）: この商品からの業務の次工程へ直接遷移する -->
       <section
         v-if="canEditMaster || canCreateOrder"
-        class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+        class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
       >
         <h2 class="mb-3 text-sm font-semibold text-gray-700">次のアクション</h2>
         <div class="flex flex-wrap gap-2">
@@ -410,7 +410,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- 企画情報 -->
-      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">企画情報</h2>
 
         <div v-if="!editing" class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
@@ -451,7 +451,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <div><span class="text-gray-500">最終更新者:</span> {{ detail.family.updatedByUserName ?? '—' }}</div>
         </div>
 
-        <form v-else class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3" @submit.prevent="onSaveEdit">
+        <form v-else class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3" @submit.prevent="onSaveEdit">
           <label class="flex flex-col gap-1">
             <span class="font-medium">ブランド</span>
             <MasterSelect :model-value="editForm.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => editForm.brandId = v ?? 0" />
@@ -552,7 +552,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- SKU 一覧 -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">SKU 一覧 ({{ detail.products.length }} 件)</h2>
         <table class="w-full text-sm">
           <thead class="border-b border-gray-200 bg-gray-50">
@@ -576,7 +576,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- アソート/セット明細 (PR3、旧 spec No.37/38) -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
           アソート/セット明細
           <span class="ml-2 text-xs font-normal text-gray-500">(子品番 + 数量、アソート/セット品のみ)</span>
@@ -659,7 +659,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- 仕入単価 -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
           <h2 class="font-semibold">現在有効な仕入単価 ({{ detail.currentSupplierPrices.length }} 件)</h2>
           <button
@@ -791,7 +791,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- 画像管理 (§2a: 企画画像 / 本番画像 の区分ごとに表示・追加) -->
-      <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <div class="mb-3 flex flex-col gap-2 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 class="font-semibold">画像 <span class="text-xs font-normal text-gray-500">(区分ごと最大 5 枚)</span></h2>
           <div v-if="canEditMaster" class="flex items-center gap-2">
@@ -833,7 +833,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
         </div>
 
         <!-- 区分ごとのグリッド -->
-        <div v-else class="space-y-4">
+        <div v-else class="space-y-3">
           <div v-for="cat in IMAGE_CATEGORIES" :key="cat.key">
             <div class="mb-1.5 text-sm font-medium text-gray-700">
               {{ cat.label }} <span class="text-xs font-normal text-gray-400">({{ imagesByCategory(cat.key).length }} 枚)</span>

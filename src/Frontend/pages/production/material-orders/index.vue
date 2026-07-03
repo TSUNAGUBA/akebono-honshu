@@ -28,8 +28,8 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-8">
-    <header class="mb-6">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+    <header class="mb-4">
       <h1 class="text-2xl font-bold">素材発注書</h1>
       <p class="mt-1 text-sm text-gray-500">
         MO-02 一覧 / MO-04 Excel 出力（生地材料発注）。新規作成は
@@ -57,25 +57,25 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
       <table class="w-full">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">発注番号</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">素材仕入先</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">明細</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">合計</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">納期</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">出力</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">発注番号</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">素材仕入先</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">明細</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">合計</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">納期</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">出力</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="filtered.length === 0"><td colspan="7" class="px-4 py-8 text-center text-sm text-gray-500">データがありません</td></tr>
           <tr v-for="i in filtered" :key="i.id" class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-blue-50" @click="navigateTo(`/production/material-orders/${i.id}`)">
-            <td class="px-4 py-3 font-mono text-sm">{{ i.orderNo }}</td>
-            <td class="px-4 py-3 text-sm"><div class="font-medium">{{ i.materialSupplierName }}</div><div class="font-mono text-xs text-gray-500">{{ i.materialSupplierCode }}</div></td>
-            <td class="px-4 py-3 text-right font-mono text-sm">{{ i.lineCount }}</td>
-            <td class="px-4 py-3 text-right font-mono text-sm">{{ i.currencyCode }} {{ i.totalAmount.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-sm">{{ i.dueDate }}</td>
-            <td class="px-4 py-3 text-sm"><span :class="exportBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ exportBadge(i).label }}</span></td>
-            <td class="px-4 py-3 text-sm"><span :class="statusBadge(i.status).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ moStatusLabel(i.status) }}</span></td>
+            <td class="px-3 py-2 font-mono text-sm">{{ i.orderNo }}</td>
+            <td class="px-3 py-2 text-sm"><div class="font-medium">{{ i.materialSupplierName }}</div><div class="font-mono text-xs text-gray-500">{{ i.materialSupplierCode }}</div></td>
+            <td class="px-3 py-2 text-right font-mono text-sm">{{ i.lineCount }}</td>
+            <td class="px-3 py-2 text-right font-mono text-sm">{{ i.currencyCode }} {{ i.totalAmount.toLocaleString() }}</td>
+            <td class="px-3 py-2 text-sm">{{ i.dueDate }}</td>
+            <td class="px-3 py-2 text-sm"><span :class="exportBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ exportBadge(i).label }}</span></td>
+            <td class="px-3 py-2 text-sm"><span :class="statusBadge(i.status).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">{{ moStatusLabel(i.status) }}</span></td>
           </tr>
         </tbody>
       </table>

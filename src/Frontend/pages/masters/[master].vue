@@ -125,7 +125,7 @@ const formatCell = (value: unknown): string => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-8">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
     <div v-if="!def" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
       マスタが見つかりません: <code>{{ slug }}</code>
       <div class="mt-2">
@@ -134,7 +134,7 @@ const formatCell = (value: unknown): string => {
     </div>
 
     <template v-else>
-      <header class="mb-6 flex items-start justify-between gap-4">
+      <header class="mb-4 flex items-start justify-between gap-4">
         <div>
           <div class="text-xs text-gray-500">
             <NuxtLink to="/masters" class="hover:underline">マスタ一覧</NuxtLink>
@@ -185,17 +185,17 @@ const formatCell = (value: unknown): string => {
         <table v-else class="w-full">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">コード</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">名称</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">コード</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">名称</th>
               <th
                 v-for="col in def.extensionColumns ?? []"
                 :key="col.key"
-                class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600"
+                class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600"
               >
                 {{ col.label }}
               </th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">操作</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
+              <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -210,16 +210,16 @@ const formatCell = (value: unknown): string => {
               :class="{ 'bg-gray-50 text-gray-400': i.deleteFlag }"
               class="border-b border-gray-100 last:border-0"
             >
-              <td class="px-4 py-3 font-mono text-sm">{{ i.code }}</td>
-              <td class="px-4 py-3 text-sm">{{ i.name }}</td>
+              <td class="px-3 py-2 font-mono text-sm">{{ i.code }}</td>
+              <td class="px-3 py-2 text-sm">{{ i.name }}</td>
               <td
                 v-for="col in def.extensionColumns ?? []"
                 :key="col.key"
-                class="px-4 py-3 text-sm"
+                class="px-3 py-2 text-sm"
               >
                 {{ formatCell(i[col.key]) }}
               </td>
-              <td class="px-4 py-3 text-sm">
+              <td class="px-3 py-2 text-sm">
                 <span
                   v-if="i.deleteFlag"
                   class="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-600"
@@ -233,7 +233,7 @@ const formatCell = (value: unknown): string => {
                   有効
                 </span>
               </td>
-              <td class="px-4 py-3 text-right">
+              <td class="px-3 py-2 text-right">
                 <template v-if="canEditMaster">
                   <button
                     v-if="!i.deleteFlag"

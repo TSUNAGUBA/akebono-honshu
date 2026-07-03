@@ -20,7 +20,7 @@ const badgeClass = (s: string): string => {
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-6xl px-4 py-8">
+  <main class="mx-auto w-full max-w-screen-2xl px-4 py-4">
     <div v-if="ds">
       <div class="mb-4">
         <h1 class="text-xl font-bold text-gray-800">{{ ds.title }}</h1>
