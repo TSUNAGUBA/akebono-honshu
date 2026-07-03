@@ -26,11 +26,14 @@ watchEffect(() => {
   if (!props.open) return
   if (props.initial) {
     const init: Record<string, unknown> = {}
-    for (const f of fields.value) init[f.key] = props.initial[f.key] ?? defaultFor(f.type)
+    // nullable な number/decimal は NULL (未設定) を保持する (?? で 0 に潰さない、review #5)。
+    for (const f of fields.value) {
+      init[f.key] = f.nullable ? (props.initial[f.key] ?? null) : (props.initial[f.key] ?? defaultFor(f.type))
+    }
     form.value = init
   } else {
     const init: Record<string, unknown> = {}
-    for (const f of fields.value) init[f.key] = defaultFor(f.type)
+    for (const f of fields.value) init[f.key] = f.nullable ? null : defaultFor(f.type)
     form.value = init
   }
   errorMessage.value = ''
@@ -62,8 +65,9 @@ const onSubmit = async () => {
     const payload: Record<string, unknown> = {}
     for (const f of fields.value) {
       const v = form.value[f.key]
-      if (f.type === 'number') payload[f.key] = Number(v)
-      else if (f.type === 'decimal') payload[f.key] = Number(v)
+      // nullable な number/decimal は空入力を 0 ではなく null として送る (未設定を保持、review #5)。
+      const isEmptyNum = v === '' || v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v))
+      if (f.type === 'number' || f.type === 'decimal') payload[f.key] = (f.nullable && isEmptyNum) ? null : Number(v)
       else if (f.type === 'checkbox') payload[f.key] = Boolean(v)
       else payload[f.key] = v === '' ? null : v
     }

@@ -23,6 +23,8 @@ export interface FieldDef {
   /** select-master 用 — 表示時に Entity のどのプロパティを参照するか (例: 'countryName') */
   displayKey?: string
   help?: string
+  /** number/decimal で NULL (未設定) を許容する場合 true。空入力を 0 ではなく null として送る。 */
+  nullable?: boolean
 }
 
 export interface MasterDef {
@@ -80,7 +82,7 @@ export const masterDefinitions: MasterDef[] = [
       { key: 'supplierType', label: '区分', type: 'number', required: true, help: '0=国内, 1=海外' },
       { key: 'alertTarget', label: 'アラート対象', type: 'number', help: '0=対象外, 1=対象' },
       { key: 'currencyCode', label: '適用通貨', type: 'text', maxLength: 3, placeholder: 'JPY', help: '仕入単価に適用する通貨 (JPY/USD/CNY 等)。商品⑤の為替・円換算に使用 (§2f)' },
-      { key: 'drayageCost', label: 'ドレー代', type: 'decimal', help: '仕入先ごとのドレー代。商品⑤仕入単価へ自動反映 (§2i)' },
+      { key: 'drayageCost', label: 'ドレー代', type: 'decimal', nullable: true, help: '仕入先ごとのドレー代 (空欄=未設定=自動反映なし)。商品⑤仕入単価へ自動反映 (§2i)' },
     ],
     extensionColumns: [
       { key: 'officialName', label: '法的正式名' },

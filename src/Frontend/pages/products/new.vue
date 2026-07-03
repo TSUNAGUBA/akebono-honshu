@@ -268,6 +268,12 @@ const purchaseMarginOfRow = (row: PriceRow): number | null => {
   if (cost == null || dp == null || dp === 0) return null
   return Math.round((cost / dp) * 10000) / 100
 }
+// DB 列の桁上限を超える自動計算値は保存できないため、保存時のみ null にフォールバックする
+// (review #3、numeric overflow 500 防止)。画面表示は実値のまま、payload の保存値だけ範囲内に収める。
+const NUMERIC_5_2_MAX = 999.99       // purchase_margin_rate NUMERIC(5,2)
+const NUMERIC_12_2_MAX = 9999999999.99 // purchase_cost NUMERIC(12,2)
+const fitOrNull = (v: number | null, maxAbs: number): number | null =>
+  v == null ? null : (Math.abs(v) <= maxAbs ? v : null)
 const yen = (n: number | null): string => (n == null ? '—' : `¥${n.toLocaleString()}`)
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -458,6 +464,26 @@ const toggleSize = (id: number) => {
 
 const skuCount = computed(() => expansion.value.colorIds.length * expansion.value.sizeIds.length)
 
+// ⑤ 仕入単価行の妥当性 (review 対応)。問題があればユーザ向けメッセージ、無ければ null。
+// (a) 同一 (仕入先, サイズ, 有効開始日) の重複行は DB 一意制約違反になるため事前に弾く (review #2)。
+// (b) 外貨仕入先の行は当該年月の為替レートが必要 (未登録だと円換算/原価/利益率が算出できない、review #4)。
+const priceRowIssue = computed<string | null>(() => {
+  const seen = new Set<string>()
+  for (const r of supplierPrices.value) {
+    if (r.supplierId <= 0 || Number(r.unitPrice) <= 0) continue
+    const key = `${r.supplierId}|${r.sizeId ?? 'all'}|${r.effectiveFrom}`
+    if (seen.has(key)) {
+      return '仕入単価に「仕入先 × サイズ × 有効開始日」が重複した行があります。サイズ・有効開始日・仕入先のいずれかを変えるか、重複行を削除してください。'
+    }
+    seen.add(key)
+    if (currencyOfRow(r) !== 'JPY' && rateOfRow(r) == null) {
+      const sup = supplierById(r.supplierId)
+      return `外貨 (${currencyOfRow(r)}) の仕入先「${sup?.name ?? ''}」の行に、${(r.effectiveFrom || today0).slice(0, 7)} 以前の為替レートが登録されていません。為替マスタに登録してください。`
+    }
+  }
+  return null
+})
+
 const canSubmit = computed(() =>
   form.value.productName1.trim() !== '' &&
   expansion.value.colorIds.length > 0 &&
@@ -465,6 +491,8 @@ const canSubmit = computed(() =>
   // 全ての仕入単価行が 仕入先選択済 かつ 単価 > 0 (§2d 複数行対応)
   supplierPrices.value.length > 0 &&
   supplierPrices.value.every((r) => r.supplierId > 0 && Number(r.unitPrice) > 0) &&
+  // 重複行・外貨レート未登録が無いこと (review #2/#4)
+  priceRowIssue.value == null &&
   // 登録成功後は再送不可 (二重採番防止、原則 2)
   registeredFamilyId.value == null &&
   !submitting.value)
@@ -475,7 +503,8 @@ const onSubmit = async () => {
   // createComplete 失敗で再送信する経路に備えた前回値クリア (成功後は canSubmit=false で再入しない)
   imageUploadedByCat.value = { 0: 0, 1: 0 }
   if (!canSubmit.value) {
-    errorMessage.value = '必須項目を入力してください (商品名 / 色 / サイズ / 単価)'
+    // 仕入単価行の具体的な問題があればそれを優先表示 (review #2/#4)。
+    errorMessage.value = priceRowIssue.value ?? '必須項目を入力してください (商品名 / 色 / サイズ / 単価)'
     return
   }
   submitting.value = true
@@ -532,9 +561,9 @@ const onSubmit = async () => {
           estimateReceivedDate: null,
           estimateCost: null,
           estimateMarginRate: null,
-          // 仕入原価 (§2g) / 仕入利益率 (§2h) は自動算出値を送る。
-          purchaseCost: purchaseCostOfRow(r),
-          purchaseMarginRate: purchaseMarginOfRow(r),
+          // 仕入原価 (§2g) / 仕入利益率 (§2h) は自動算出値を送る。DB 桁上限超は保存不可のため null 化 (review #3)。
+          purchaseCost: fitOrNull(purchaseCostOfRow(r), NUMERIC_12_2_MAX),
+          purchaseMarginRate: fitOrNull(purchaseMarginOfRow(r), NUMERIC_5_2_MAX),
           lossCost: null,
           // ドレー代 (§2i) は選択仕入先の設定値を自動反映。
           drayageCost: drayageOfRow(r),

@@ -37,9 +37,21 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
     public async Task<ExchangeRate?> GetAsync(long id, CancellationToken ct = default)
         => await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
 
+    // 有効行 (未削除) の (年月, 通貨) 重複を検出して InvalidOperationException を投げる (endpoint で 409)。
+    // 部分 UNIQUE 索引による DB 例外 (500) に頼らず、アプリ層で分かりやすいメッセージにする (review #1 対応)。
+    private async Task EnsureNoActiveDuplicateAsync(string yearMonth, string currency, long? excludeId, CancellationToken ct)
+    {
+        var dup = await db.ExchangeRates.AnyAsync(
+            e => !e.DeleteFlag && e.YearMonth == yearMonth && e.CurrencyCode == currency
+                 && (excludeId == null || e.Id != excludeId), ct);
+        if (dup)
+            throw new InvalidOperationException($"{yearMonth} {currency} の為替レートは既に登録されています (EXR-004)");
+    }
+
     public async Task<ExchangeRate> CreateAsync(ExchangeRateWriteRequest req, long actorUserId, CancellationToken ct = default)
     {
         var (yearMonth, currency) = Validate(req);
+        await EnsureNoActiveDuplicateAsync(yearMonth, currency, null, ct);
 
         var now = SystemTime.Now;
         var entity = new ExchangeRate
@@ -68,6 +80,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         if (entity is null) return null;
 
         var (yearMonth, currency) = Validate(req);
+        await EnsureNoActiveDuplicateAsync(yearMonth, currency, id, ct);
         entity.YearMonth = yearMonth;
         entity.CurrencyCode = currency;
         entity.Rate = req.Rate;
@@ -100,6 +113,8 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
     {
         var entity = await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return false;
+        if (entity.DeleteFlag) // 既に有効なら何もしない。復元時は同一 (年月,通貨) の有効行が無いことを保証する。
+            await EnsureNoActiveDuplicateAsync(entity.YearMonth, entity.CurrencyCode, id, ct);
         entity.DeleteFlag = false;
         entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
