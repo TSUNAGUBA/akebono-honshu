@@ -81,6 +81,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_products_search ON products (sku) WHERE is
 CREATE TABLE IF NOT EXISTS product_images (
     id                    BIGSERIAL PRIMARY KEY,
     product_family_id     BIGINT       NOT NULL REFERENCES product_families(id),
+    image_category        SMALLINT     NOT NULL DEFAULT 0,   -- §2a: 0=企画画像 / 1=本番画像
     s3_key                VARCHAR(512) NOT NULL,
     thumb_s3_key          VARCHAR(512) NULL,
     order_no              SMALLINT     NOT NULL,
@@ -95,10 +96,12 @@ CREATE TABLE IF NOT EXISTS product_images (
     updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     CONSTRAINT chk_pi_order_no CHECK (order_no BETWEEN 1 AND 5),
+    CONSTRAINT chk_pi_image_category CHECK (image_category IN (0, 1)),
     CONSTRAINT chk_pi_file_size CHECK (file_size_bytes <= 5242880)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_family_order
-    ON product_images (product_family_id, order_no) WHERE is_deleted = FALSE;
+-- order_no の一意は区分ごとに独立 (企画/本番でそれぞれ 1〜5)。§2a で category を複合キーに追加。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_family_category_order
+    ON product_images (product_family_id, image_category, order_no) WHERE is_deleted = FALSE;
 
 -- ─────────────────────────────────────────────────
 -- §4.4 product_supplier_prices — マルチ仕入先単価 (アイテム単位、履歴管理)

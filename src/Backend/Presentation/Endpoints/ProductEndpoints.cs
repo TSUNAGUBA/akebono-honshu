@@ -141,7 +141,7 @@ public static class ProductEndpoints
         // 保存先は Local (wwwroot) / S3 を appsettings.ImageStorage:Provider で切替 (Iter 4 段階 C)。
         families.MapPost("/{id:long}/images", async (HttpContext http, IAkebonoDbContext db,
                                                        IImageStorageService imageStorage,
-                                                       long id, IFormFile file, CancellationToken ct) =>
+                                                       long id, IFormFile file, short? category, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -153,12 +153,20 @@ public static class ProductEndpoints
             if (!AllowedMimeTypes.Contains(file.ContentType))
                 return Results.Problem(statusCode: 422, title: "Validation error", detail: "対応形式は JPEG / PNG / WebP のみ");
 
+            // 画像区分 (§2a)。0=企画 / 1=本番。未指定は企画 (0、下位互換)。
+            var imageCategory = category ?? 0;
+            if (imageCategory is not (0 or 1))
+                return Results.Problem(statusCode: 422, title: "Validation error", detail: "画像区分は 0(企画) / 1(本番) を指定してください");
+
             var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == id && !pf.IsDeleted, ct);
             if (family is null) return Results.NotFound();
 
-            var currentCount = await db.ProductImages.CountAsync(i => i.ProductFamilyId == id && !i.IsDeleted, ct);
+            // 上限・order_no は区分ごとに独立 (企画最大5 + 本番最大5、§2a)。
+            var currentCount = await db.ProductImages.CountAsync(
+                i => i.ProductFamilyId == id && i.ImageCategory == imageCategory && !i.IsDeleted, ct);
             if (currentCount >= 5)
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: "画像は最大 5 枚までです (BR-10)");
+                return Results.Problem(statusCode: 409, title: "Conflict",
+                    detail: $"{(imageCategory == 1 ? "本番" : "企画")}画像は最大 5 枚までです (BR-10)");
 
             var ext = Path.GetExtension(file.FileName);
             if (string.IsNullOrEmpty(ext))
@@ -184,6 +192,7 @@ public static class ProductEndpoints
             var image = new ProductImage
             {
                 ProductFamilyId = id,
+                ImageCategory = imageCategory,
                 S3Key = s3Key,
                 OrderNo = (short)(currentCount + 1),
                 MimeType = file.ContentType,
@@ -215,19 +224,21 @@ public static class ProductEndpoints
 
             var url = await imageStorage.GetUrlAsync(s3Key, ct);
             return Results.Created($"/api/v1/products/families/{id}/images/{image.Id}",
-                new ImageSummary(image.Id, image.OrderNo, image.S3Key, image.ThumbS3Key,
+                new ImageSummary(image.Id, image.OrderNo, image.ImageCategory, image.S3Key, image.ThumbS3Key,
                     image.MimeType, image.FileSizeBytes, image.OriginalFilename, url));
         }).DisableAntiforgery();
 
-        // 並び順変更
+        // 並び順変更 (§2a: 区分ごとに独立。category=0(企画)/1(本番) 内で order_no を振り直す)。
         families.MapPatch("/{id:long}/images/reorder", async (HttpContext http, IAkebonoDbContext db,
-                                                                long id, List<long> orderedIds, CancellationToken ct) =>
+                                                                long id, List<long> orderedIds, short? category, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
+            var imageCategory = category ?? 0;
+            // 対象区分内の画像のみを振り直す (他区分の order_no には触れない = 区分別 UNIQUE を壊さない)。
             var images = await db.ProductImages
-                .Where(i => i.ProductFamilyId == id && !i.IsDeleted)
+                .Where(i => i.ProductFamilyId == id && i.ImageCategory == imageCategory && !i.IsDeleted)
                 .ToListAsync(ct);
 
             // 一度全ての order_no を 100 + index に逃がしてから再設定 (UNIQUE 衝突回避)

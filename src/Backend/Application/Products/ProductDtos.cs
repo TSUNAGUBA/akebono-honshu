@@ -219,6 +219,8 @@ public record SkuSummary(
 public record ImageSummary(
     long Id,
     short OrderNo,
+    /// <summary>画像区分 (§2a)。0=企画画像 / 1=本番画像。末尾ではなく OrderNo 直後に追加。</summary>
+    short ImageCategory,
     string S3Key,
     string? ThumbS3Key,
     string MimeType,

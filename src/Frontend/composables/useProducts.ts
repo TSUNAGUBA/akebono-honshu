@@ -71,6 +71,8 @@ export interface SkuSummary {
 export interface ImageSummary {
   id: number
   orderNo: number
+  /** 画像区分 (§2a)。0=企画画像 / 1=本番画像。 */
+  imageCategory: number
   s3Key: string
   thumbS3Key: string | null
   mimeType: string
@@ -383,13 +385,14 @@ export const useProducts = () => {
     )
   }
 
-  const uploadImage = async (familyId: number, file: File): Promise<ImageSummary> => {
+  // 画像アップロード (§2a)。category=0(企画)/1(本番) を query で指定 (multipart body は file のみ)。
+  const uploadImage = async (familyId: number, file: File, category = 0): Promise<ImageSummary> => {
     const form = new FormData()
     form.append('file', file)
     const { getIdToken } = useAuth()
     const token = await getIdToken()
     const res = await $fetch<ImageSummary>(
-      `${config.public.apiBase}/products/families/${familyId}/images`,
+      `${config.public.apiBase}/products/families/${familyId}/images?category=${category}`,
       {
         method: 'POST',
         body: form,
@@ -405,8 +408,9 @@ export const useProducts = () => {
     })
   }
 
-  const reorderImages = async (familyId: number, orderedIds: number[]): Promise<void> => {
-    await apiFetch<void>(`/products/families/${familyId}/images/reorder`, {
+  // 並び順変更 (§2a)。区分ごとに独立して振り直すため category を query で指定。
+  const reorderImages = async (familyId: number, orderedIds: number[], category = 0): Promise<void> => {
+    await apiFetch<void>(`/products/families/${familyId}/images/reorder?category=${category}`, {
       method: 'PATCH',
       body: orderedIds,
     })

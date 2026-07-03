@@ -90,38 +90,43 @@ const brandCostComputed = computed<number | null>(() => {
 // 実アップロードは登録 (createComplete) 成功後、採番された familyId に対して既存 P-06 endpoint
 // (uploadImage) で 1 枚ずつ行う 2 段階方式。バックエンド変更なしで詳細画面と同じ制約を満たす
 // (原則 3 既存パターン再利用)。制約は詳細画面 (P-05/06) と同一: JPEG/PNG/WebP・各 5MB・最大 5 枚 (BR-10)。
+// §2a: 企画画像(0)/本番画像(1) の 2 区分で登録。上限は区分ごとに最大 5 枚 (BR-10)。
 const IMAGE_MAX_COUNT = 5
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 const IMAGE_ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp']
-interface PendingImage { file: File; previewUrl: string }
+const IMAGE_CATEGORIES = [
+  { key: 0, label: '企画画像' },
+  { key: 1, label: '本番画像' },
+] as const
+interface PendingImage { file: File; previewUrl: string; category: number }
 const pendingImages = ref<PendingImage[]>([])
-const imageInput = ref<HTMLInputElement | null>(null)
+const imageInputs = ref<Record<number, HTMLInputElement | null>>({ 0: null, 1: null })
+const setImageInput = (cat: number, el: HTMLInputElement | null) => { imageInputs.value[cat] = el }
 const imageError = ref('')
 const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 
 // 登録成功後に採番された family.id を保持する。二重採番防止 (canSubmit=false) と、
 // 画像が一部失敗したときの再アップロード/詳細画面導線に使う (原則 2 状態保護)。
 const registeredFamilyId = ref<number | null>(null)
-const imageUploadedCount = ref(0) // アップロード成功済みの画像枚数 (再試行で累積 = サーバ保存済み枚数)
+// アップロード成功済み枚数を区分別に保持 (サーバ保存済み枚数)。合計は imageUploadedCount。
+const imageUploadedByCat = ref<Record<number, number>>({ 0: 0, 1: 0 })
+const imageUploadedCount = computed(() => imageUploadedByCat.value[0] + imageUploadedByCat.value[1])
 const retryingImages = ref(false)
-// 画像枚数の SoT はサーバ (product_images)。クライアントの上限判定は「保存済み + 保留」で行い、
-// 登録後の追加・再試行でも BR-10 (最大 5 枚) と整合させる (原則 6)。登録前は uploaded=0 で従来と等価。
-// 「残り未送信枚数」は専用カウントを持たず pendingImages.length を唯一の真実とする
-// (別カウントだと「② 商品画像」での削除と乖離するため)。
-const imageSlotsUsed = computed(() => imageUploadedCount.value + pendingImages.value.length)
+// 区分ごとの保留・スロット判定。上限は「保存済み + 保留」で BR-10 (区分ごと最大 5 枚) と整合 (原則 6)。
+const pendingByCat = (cat: number): PendingImage[] => pendingImages.value.filter((p) => p.category === cat)
+const slotsUsed = (cat: number): number => imageUploadedByCat.value[cat] + pendingByCat(cat).length
 
-const onImageSelect = (event: Event) => {
+const onImageSelect = (event: Event, category: number) => {
   const target = event.target as HTMLInputElement
   if (!target.files?.length) return
   // アップロード実行中 (登録/再送) は pendingImages を変更させない (反復中の競合防止)。
   if (submitting.value || retryingImages.value) { target.value = ''; return }
   imageError.value = ''
-  // 複数ファイル一括選択時、弾いた分の理由をまとめて伝える (1 件だけ表示されないように)
+  const label = category === 1 ? '本番' : '企画'
   const skipped: string[] = []
   for (const file of Array.from(target.files)) {
-    // 上限は「保存済み (imageUploadedCount) + 保留 (pendingImages)」で判定し BR-10 と整合 (原則 6)
-    if (imageSlotsUsed.value >= IMAGE_MAX_COUNT) {
-      skipped.push(`最大 ${IMAGE_MAX_COUNT} 枚を超える分`)
+    if (slotsUsed(category) >= IMAGE_MAX_COUNT) {
+      skipped.push(`${label}画像は最大 ${IMAGE_MAX_COUNT} 枚まで`)
       break
     }
     if (!IMAGE_ALLOWED_MIME.includes(file.type)) {
@@ -132,7 +137,7 @@ const onImageSelect = (event: Event) => {
       skipped.push(`${file.name} (5MB 超過)`)
       continue
     }
-    pendingImages.value.push({ file, previewUrl: URL.createObjectURL(file) })
+    pendingImages.value.push({ file, previewUrl: URL.createObjectURL(file), category })
   }
   if (skipped.length > 0) {
     imageError.value = `次の画像は登録できませんでした — ${skipped.join(' / ')}`
@@ -141,29 +146,27 @@ const onImageSelect = (event: Event) => {
   target.value = ''
 }
 
-const removePendingImage = (idx: number) => {
-  // アップロード実行中は配列を触らせない (反復中の競合防止)。UI 側でもボタンを無効化済み。
+// 保留画像を参照 (identity) で削除。区分別グリッドで表示するため index ではなくオブジェクトで指定する。
+const removePendingImage = (img: PendingImage) => {
   if (submitting.value || retryingImages.value) return
+  const idx = pendingImages.value.indexOf(img)
+  if (idx < 0) return
   const [removed] = pendingImages.value.splice(idx, 1)
   if (removed) URL.revokeObjectURL(removed.previewUrl)
 }
 
 // 採番済 familyId へ pendingImages を 1 枚ずつアップロードする共通処理 (登録時・再試行で共用)。
-// 成功分は pendingImages から除去 (object URL も解放)、失敗分は残して再試行可能にする。
-// 原則 4 (非ブロッキング): 失敗は握って件数を返し、例外を主要フローに伝播させない。失敗理由は
-// imageError に集約表示する (詳細画面 onFileSelect と同じく err.data.detail を拾う、原則 3/5)。
-// 失敗画像はブラウザメモリ (pendingImages) のみで SoT 外。タブを閉じると失われるため、
-// その場合は商品詳細画面から添付し直す (原則 6: 復元不能データの扱いを明示)。
+// 各画像は自身の区分 (§2a) を付けて送る。成功分は pendingImages から除去 (object URL 解放) し
+// imageUploadedByCat を区分別に加算、失敗分は残して再試行可能にする (原則 4 非ブロッキング)。
 const uploadPendingImages = async (familyId: number): Promise<{ uploaded: number; failed: number }> => {
   let uploaded = 0
   let lastErrorDetail = ''
   const remaining: PendingImage[] = []
-  // ループ中の await 中断点で pendingImages が変化しても安全なよう、スナップショットを反復する
-  // (UI でも実行中は追加/削除を抑止するが、データ整合の最終保証として固定化する)。
   for (const img of [...pendingImages.value]) {
     try {
-      await uploadImage(familyId, img.file)
+      await uploadImage(familyId, img.file, img.category)
       uploaded++
+      imageUploadedByCat.value[img.category]++
       URL.revokeObjectURL(img.previewUrl)
     } catch (uploadErr) {
       remaining.push(img)
@@ -173,22 +176,18 @@ const uploadPendingImages = async (familyId: number): Promise<{ uploaded: number
     }
   }
   pendingImages.value = remaining
-  // 失敗理由をユーザに可視化 (枚数だけで原因不明の再試行ループを避ける)。全成功なら従来エラーを消す。
   imageError.value = remaining.length === 0
     ? ''
     : `画像 ${remaining.length} 枚のアップロードに失敗しました${lastErrorDetail ? `: ${lastErrorDetail}` : ''}。再アップロードできます。`
   return { uploaded, failed: remaining.length }
 }
 
-// 部分失敗後の再アップロード。family は採番済のため uploadImage のみ呼ぶ (createComplete は呼ばない
-// = 二重採番なし)。失敗画像はプレビューに残っているので選び直し不要。全て成功したら詳細画面へ遷移。
+// 部分失敗後の再アップロード。family は採番済のため uploadImage のみ呼ぶ (二重採番なし)。
 const retryImageUpload = async () => {
   if (registeredFamilyId.value == null || retryingImages.value || pendingImages.value.length === 0) return
   retryingImages.value = true
   try {
-    const { uploaded } = await uploadPendingImages(registeredFamilyId.value)
-    imageUploadedCount.value += uploaded
-    // 残り (pendingImages) が捌けたら詳細画面へ。残れば留まり再試行導線を出し続ける。
+    await uploadPendingImages(registeredFamilyId.value)
     if (pendingImages.value.length === 0) await navigateTo(`/products/${registeredFamilyId.value}`)
   } finally {
     retryingImages.value = false
@@ -474,7 +473,7 @@ const onSubmit = async () => {
   errorMessage.value = ''
   successMessage.value = ''
   // createComplete 失敗で再送信する経路に備えた前回値クリア (成功後は canSubmit=false で再入しない)
-  imageUploadedCount.value = 0
+  imageUploadedByCat.value = { 0: 0, 1: 0 }
   if (!canSubmit.value) {
     errorMessage.value = '必須項目を入力してください (商品名 / 色 / サイズ / 単価)'
     return
@@ -558,8 +557,8 @@ const onSubmit = async () => {
     // 画像アップロード (2 段階目): 採番済 familyId へ既存 P-06 endpoint で 1 枚ずつ送る。
     // 失敗分は pendingImages に残り、下の導線パネルから選び直しなしで再アップロードできる
     // (原則 4 非ブロッキング)。family は採番済のため例外を投げて再送させると二重採番になる。
+    // uploadPendingImages が区分別に imageUploadedByCat を加算する (imageUploadedCount はその合算)。
     const { uploaded, failed } = await uploadPendingImages(res.family.id)
-    imageUploadedCount.value = uploaded
     // 登録本体は成功。緑バナーで明示し、画像が残れば下の導線パネルで再送を促す。
     successMessage.value = `登録成功 (連番 ${res.family.sequenceNo}, SKU ${res.products.length} 件`
       + (uploaded > 0 ? `, 画像 ${uploaded} 枚` : '')
@@ -670,56 +669,63 @@ const onSubmit = async () => {
           <p class="mt-3 text-xs text-gray-500">連番 (4-6 桁目) はサーバ側で自動採番</p>
         </section>
 
-        <!-- Section 2: 商品画像 (P-06 を新規登録に前倒し。「登録」と同時に採番 familyId へアップロード) -->
+        <!-- Section 2: 商品画像 (§2a 企画/本番の 2 区分。「登録」と同時に採番 familyId へ区分付きでアップロード) -->
         <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
-            <h2 class="font-semibold">
-              ② 商品画像 <span class="ml-2 text-xs font-normal text-gray-500">(任意 — JPEG / PNG / WebP、各 5MB、最大 5 枚)</span>
-            </h2>
-            <div v-if="imageSlotsUsed < IMAGE_MAX_COUNT">
-              <input
-                ref="imageInput"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                multiple
-                class="hidden"
-                @change="onImageSelect"
-              />
-              <button
-                type="button"
-                :disabled="submitting || retryingImages"
-                class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
-                @click="imageInput?.click()"
-              >+ 画像を選択</button>
-            </div>
-          </div>
+          <h2 class="mb-2 border-b border-gray-100 pb-2 font-semibold">
+            ② 商品画像 <span class="ml-2 text-xs font-normal text-gray-500">(任意 — JPEG / PNG / WebP、各 5MB、区分ごと最大 5 枚)</span>
+          </h2>
           <p class="mb-3 text-xs text-gray-500">
-            ここで選択した画像は「登録」と同時に、上から順番にアップロードされます (1 枚目が代表画像)。画像なしでも登録できます。
+            企画画像・本番画像を区分ごとに登録できます。「登録」と同時に上から順にアップロードされます。
+            画像利用シーンの代表画像は、本番画像があれば本番の 1 枚目、無ければ企画の 1 枚目を表示します。
           </p>
           <div v-if="imageError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
             {{ imageError }}
           </div>
 
-          <div v-if="pendingImages.length === 0" class="py-6 text-center text-sm text-gray-400">
-            画像が選択されていません。「+ 画像を選択」から追加してください (任意)。
-          </div>
-
-          <!-- 選択済みプレビュー (詳細画面 P-06 と同じグリッド構成、レスポンシブ 2→3→5 列、原則 8) -->
-          <div v-else class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
-            <div
-              v-for="(img, idx) in pendingImages"
-              :key="img.previewUrl"
-              class="group relative overflow-hidden rounded-md border border-gray-200"
-            >
-              <img :src="img.previewUrl" :alt="img.file.name" class="aspect-square w-full object-cover" />
-              <div class="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white">
-                #{{ idx + 1 }}
+          <!-- 区分ごとのサブセクション (企画 / 本番)。§2a、原則8 レスポンシブ -->
+          <div class="space-y-4">
+            <div v-for="cat in IMAGE_CATEGORIES" :key="cat.key" class="rounded-md border border-gray-200 bg-gray-50 p-3">
+              <div class="mb-2 flex items-center justify-between">
+                <span class="text-sm font-medium text-gray-700">
+                  {{ cat.label }} <span class="ml-1 text-xs font-normal text-gray-400">({{ slotsUsed(cat.key) }} / {{ IMAGE_MAX_COUNT }})</span>
+                </span>
+                <div v-if="slotsUsed(cat.key) < IMAGE_MAX_COUNT">
+                  <input
+                    :ref="(el) => setImageInput(cat.key, el as HTMLInputElement | null)"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    multiple
+                    class="hidden"
+                    @change="(e) => onImageSelect(e, cat.key)"
+                  />
+                  <button
+                    type="button"
+                    :disabled="submitting || retryingImages"
+                    class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
+                    @click="imageInputs[cat.key]?.click()"
+                  >+ {{ cat.label }}を選択</button>
+                </div>
               </div>
-              <div class="border-t border-gray-100 bg-gray-50 px-2 py-1 text-xs">
-                <div class="truncate" :title="img.file.name">{{ img.file.name }}</div>
-                <div class="flex justify-between text-gray-500">
-                  <span>{{ formatBytes(img.file.size) }}</span>
-                  <button type="button" :disabled="submitting || retryingImages" class="text-red-600 hover:underline disabled:opacity-50" @click="removePendingImage(idx)">削除</button>
+
+              <div v-if="pendingByCat(cat.key).length === 0" class="py-4 text-center text-xs text-gray-400">
+                {{ cat.label }}が選択されていません (任意)。
+              </div>
+              <!-- 選択済みプレビュー (レスポンシブ 2→3→5 列、原則 8)。#番号は区分内の並び。 -->
+              <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+                <div
+                  v-for="(img, idx) in pendingByCat(cat.key)"
+                  :key="img.previewUrl"
+                  class="group relative overflow-hidden rounded-md border border-gray-200 bg-white"
+                >
+                  <img :src="img.previewUrl" :alt="img.file.name" class="aspect-square w-full object-cover" />
+                  <div class="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white">#{{ idx + 1 }}</div>
+                  <div class="border-t border-gray-100 bg-gray-50 px-2 py-1 text-xs">
+                    <div class="truncate" :title="img.file.name">{{ img.file.name }}</div>
+                    <div class="flex justify-between text-gray-500">
+                      <span>{{ formatBytes(img.file.size) }}</span>
+                      <button type="button" :disabled="submitting || retryingImages" class="text-red-600 hover:underline disabled:opacity-50" @click="removePendingImage(img)">削除</button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

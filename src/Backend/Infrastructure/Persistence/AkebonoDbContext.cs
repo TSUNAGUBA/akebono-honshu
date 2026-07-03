@@ -278,6 +278,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasKey(x => x.Id);
             b.Property(x => x.Id).HasColumnName("id");
             b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
+            b.Property(x => x.ImageCategory).HasColumnName("image_category");
             b.Property(x => x.S3Key).HasColumnName("s3_key").IsRequired().HasMaxLength(512);
             b.Property(x => x.ThumbS3Key).HasColumnName("thumb_s3_key").HasMaxLength(512);
             b.Property(x => x.OrderNo).HasColumnName("order_no");
