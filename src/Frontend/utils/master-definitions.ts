@@ -10,6 +10,9 @@ export type FieldType =
   | 'textarea'
   | 'checkbox'
   | 'select-master'
+  // 参照先マスタの code (文字列) を選ぶドロップダウン。select-master が id を保存するのに対し、
+  // こちらは code 文字列を保存する (通貨コードのように code 自体が業務キーの参照に使う)。
+  | 'select-master-code'
 
 export interface FieldDef {
   key: string
@@ -18,7 +21,7 @@ export interface FieldDef {
   required?: boolean
   maxLength?: number
   placeholder?: string
-  /** select-master 用 — 参照先マスタの slug (例: 'countries') */
+  /** select-master / select-master-code 用 — 参照先マスタの slug (例: 'countries' / 'currencies') */
   master?: string
   /** select-master 用 — 表示時に Entity のどのプロパティを参照するか (例: 'countryName') */
   displayKey?: string
@@ -38,6 +41,8 @@ export interface MasterDef {
   extensionFields: FieldDef[]
   /** 一覧テーブルに表示する追加列 (code/name は固定で表示) */
   extensionColumns?: { key: string; label: string }[]
+  /** code フィールドの表示 (label/placeholder/help/maxLength) を上書き (通貨コード等、3桁数字でないマスタ用) */
+  codeField?: Partial<FieldDef>
 }
 
 const codeField: FieldDef = { key: 'code', label: 'コード', type: 'text', required: true, maxLength: 3, placeholder: '001', help: '3 桁固定 (000-999)' }
@@ -81,7 +86,7 @@ export const masterDefinitions: MasterDef[] = [
       { key: 'countryId', label: '国', type: 'select-master', required: true, master: 'countries', displayKey: 'countryName' },
       { key: 'supplierType', label: '区分', type: 'number', required: true, help: '0=国内, 1=海外' },
       { key: 'alertTarget', label: 'アラート対象', type: 'number', help: '0=対象外, 1=対象' },
-      { key: 'currencyCode', label: '適用通貨', type: 'text', maxLength: 3, placeholder: 'JPY', help: '仕入単価に適用する通貨 (JPY/USD/CNY 等)。商品⑤の為替・円換算に使用 (§2f)' },
+      { key: 'currencyCode', label: '適用通貨', type: 'select-master-code', master: 'currencies', help: '通貨マスタから選択。仕入単価に適用する通貨。商品⑤の為替・円換算に使用 (§2f)' },
       { key: 'drayageCost', label: 'ドレー代', type: 'decimal', nullable: true, help: '仕入先ごとのドレー代 (空欄=未設定=自動反映なし)。商品⑤仕入単価へ自動反映 (§2i)' },
     ],
     extensionColumns: [
@@ -196,9 +201,22 @@ export const masterDefinitions: MasterDef[] = [
     ],
     extensionColumns: [{ key: 'standardPrintFlag', label: '標準印字' }],
   },
+  {
+    slug: 'currencies',
+    label: '通貨',
+    description: '通貨マスタ。code = ISO 4217 の 3 文字コード。為替マスタ・仕入先の適用通貨がこの通貨を参照する。',
+    extensionFields: [],
+    // code は通貨コード (JPY/USD/CNY 等)。3 桁数字ではないため code フィールドの表示を上書きする。
+    codeField: { label: '通貨コード', placeholder: 'USD', maxLength: 3, help: 'ISO 4217 の 3 文字コード (JPY/USD/CNY 等、大文字)' },
+  },
 ]
 
-export const allFields = (def: MasterDef): FieldDef[] => [codeField, nameField, ...def.extensionFields]
+// code フィールドは def.codeField で label/placeholder/help/maxLength を上書き可能 (通貨マスタ等)。
+export const allFields = (def: MasterDef): FieldDef[] => [
+  { ...codeField, ...def.codeField },
+  nameField,
+  ...def.extensionFields,
+]
 
 export const findMasterBySlug = (slug: string): MasterDef | undefined =>
   masterDefinitions.find((m) => m.slug === slug)

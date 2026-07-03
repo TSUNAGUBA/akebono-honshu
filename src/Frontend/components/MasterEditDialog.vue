@@ -84,13 +84,15 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6"
       role="dialog"
       aria-modal="true"
       @click.self="emit('close')"
     >
-      <div class="w-full max-w-2xl rounded-lg bg-white shadow-xl">
-        <header class="border-b border-gray-200 px-6 py-4">
+      <!-- 画面高を超えないよう max-h + 縦フレックス。ヘッダ/フッタは固定、本文のみスクロールさせる
+           (フィールド数の多いマスタ (仕入先等) でモーダルが画面外に溢れ操作不能になる問題の修正)。 -->
+      <div class="flex max-h-[calc(100vh-3rem)] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl">
+        <header class="shrink-0 border-b border-gray-200 px-6 py-4">
           <h2 class="text-lg font-semibold">
             {{ initial ? `${def.label} を編集` : `${def.label} を新規追加` }}
           </h2>
@@ -99,7 +101,7 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
           </p>
         </header>
 
-        <form class="space-y-4 px-6 py-4" @submit.prevent="onSubmit">
+        <form class="flex-1 space-y-4 overflow-y-auto px-6 py-4" @submit.prevent="onSubmit">
           <div v-for="f in fields" :key="f.key" class="flex flex-col gap-1">
             <label class="text-sm font-medium">
               {{ f.label }}
@@ -153,6 +155,18 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
               @update:model-value="(v) => form[f.key] = v ?? 0"
             />
 
+            <!-- 参照先マスタの code (文字列) を選ぶドロップダウン (通貨等)。id ではなく code を保存する。 -->
+            <select
+              v-else-if="f.type === 'select-master-code'"
+              v-model="form[f.key] as string"
+              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">（選択）</option>
+              <option v-for="it in referenceItemsFor(f.master ?? '')" :key="it.id" :value="it.code">
+                {{ it.code }} — {{ it.name }}
+              </option>
+            </select>
+
             <p v-if="f.help" class="text-xs text-gray-500">{{ f.help }}</p>
           </div>
 
@@ -161,7 +175,7 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
           </div>
         </form>
 
-        <footer class="flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-6 py-3">
+        <footer class="flex shrink-0 justify-end gap-2 border-t border-gray-200 bg-gray-50 px-6 py-3">
           <button
             type="button"
             class="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm hover:bg-gray-100"

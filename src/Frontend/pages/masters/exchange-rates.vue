@@ -13,8 +13,13 @@ interface ExchangeRateItem {
   createdAt: string
   updatedAt: string
 }
+interface CurrencyItem { id: number; code: string; name: string }
 
 const items = ref<ExchangeRateItem[]>([])
+// 通貨マスタ (対象通貨のドロップダウン用。JPY を除いた外貨のみ選択肢に出す)。
+const currencies = ref<CurrencyItem[]>([])
+const foreignCurrencies = computed(() => currencies.value.filter((c) => c.code !== 'JPY'))
+const currencyName = (code: string) => currencies.value.find((c) => c.code === code)?.name ?? ''
 const loading = ref(true)
 const includeDeleted = ref(false)
 const errorMessage = ref('')
@@ -24,11 +29,24 @@ const submitting = ref(false)
 // 追加/編集フォーム。editingId=null は新規、非 null は該当 id の編集。
 const nowMonth = new Date().toISOString().slice(0, 7) // 'YYYY-MM'
 const editingId = ref<number | null>(null)
-const form = ref({ yearMonth: nowMonth, currencyCode: 'USD', rate: null as number | null })
+const form = ref({ yearMonth: nowMonth, currencyCode: '', rate: null as number | null })
 
 const resetForm = () => {
   editingId.value = null
-  form.value = { yearMonth: nowMonth, currencyCode: 'USD', rate: null }
+  form.value = { yearMonth: nowMonth, currencyCode: foreignCurrencies.value[0]?.code ?? '', rate: null }
+}
+
+// 通貨マスタは対象通貨ドロップダウン用の補助データ。失敗しても本体は使える (原則4 非ブロッキング)。
+const loadCurrencies = async () => {
+  try {
+    const res = await apiFetch<{ data: CurrencyItem[] }>('/masters/currencies?includeDeleted=false')
+    currencies.value = res.data
+    if (form.value.currencyCode === '' && foreignCurrencies.value.length) {
+      form.value.currencyCode = foreignCurrencies.value[0].code
+    }
+  } catch {
+    currencies.value = []
+  }
 }
 
 const reload = async () => {
@@ -50,7 +68,7 @@ const reload = async () => {
 }
 
 watch(includeDeleted, reload)
-onMounted(reload)
+onMounted(() => { reload(); loadCurrencies() })
 
 const startEdit = (item: ExchangeRateItem) => {
   editingId.value = item.id
@@ -67,7 +85,7 @@ const onSubmit = async () => {
     return
   }
   if (form.value.currencyCode.trim().length !== 3) {
-    errorMessage.value = '通貨コードは 3 桁で入力してください'
+    errorMessage.value = '通貨を選択してください'
     return
   }
   if (form.value.rate == null || form.value.rate <= 0) {
@@ -147,8 +165,15 @@ const onRestore = async (item: ExchangeRateItem) => {
           <input v-model="form.yearMonth" type="month" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
         </label>
         <label class="flex flex-col gap-1">
-          <span class="text-sm font-medium">通貨コード <span class="text-red-500">*</span></span>
-          <input v-model="form.currencyCode" type="text" maxlength="3" placeholder="USD" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm uppercase" />
+          <span class="text-sm font-medium">通貨 <span class="text-red-500">*</span></span>
+          <!-- 通貨マスタから選択 (自由入力を廃止し文字列一致の整合性を担保)。JPY は円のため対象外。 -->
+          <select v-model="form.currencyCode" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm">
+            <option value="">（選択）</option>
+            <option v-for="c in foreignCurrencies" :key="c.id" :value="c.code">{{ c.code }} — {{ c.name }}</option>
+          </select>
+          <span v-if="foreignCurrencies.length === 0" class="text-xs text-amber-600">
+            通貨マスタに外貨が未登録です。<NuxtLink to="/masters/currencies" class="text-blue-600 hover:underline">通貨マスタ</NuxtLink>で登録してください。
+          </span>
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium">対円レート <span class="text-red-500">*</span></span>
@@ -197,7 +222,7 @@ const onRestore = async (item: ExchangeRateItem) => {
           </tr>
           <tr v-for="i in items" :key="i.id" class="border-b border-gray-100 last:border-0" :class="i.deleteFlag ? 'opacity-50' : ''">
             <td class="px-4 py-3 font-mono">{{ i.yearMonth }}</td>
-            <td class="px-4 py-3 font-mono">{{ i.currencyCode }}</td>
+            <td class="px-4 py-3"><span class="font-mono">{{ i.currencyCode }}</span> <span class="text-xs text-gray-500">{{ currencyName(i.currencyCode) }}</span></td>
             <td class="px-4 py-3 text-right font-mono">{{ i.rate.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</td>
             <td class="px-4 py-3">
               <span v-if="i.deleteFlag" class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">削除済</span>

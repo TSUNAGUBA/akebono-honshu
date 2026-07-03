@@ -32,7 +32,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<DocumentTemplatePurchase> DocumentTemplatePurchases => Set<DocumentTemplatePurchase>();
     public DbSet<DocumentTemplateConfirmation> DocumentTemplateConfirmations => Set<DocumentTemplateConfirmation>();
     public DbSet<DocumentTextPurchase> DocumentTextPurchases => Set<DocumentTextPurchase>();
-    // 為替マスタ (§2f、bespoke master)
+    // 通貨マスタ (標準マスタ) + 為替マスタ (bespoke master)
+    public DbSet<Currency> Currencies => Set<Currency>();
     public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
 
     // 商品関連 (Iteration 2)
@@ -110,6 +111,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
         ConfigureMaster<Brand>(modelBuilder, "brands");
         ConfigureMaster<Function>(modelBuilder, "functions");
         ConfigureMaster<Country>(modelBuilder, "countries");
+        // 通貨マスタ (標準マスタ)。code = ISO 4217 3 文字コード。
+        ConfigureMaster<Currency>(modelBuilder, "currencies");
         ConfigureMaster<Supplier>(modelBuilder, "suppliers", b =>
         {
             b.Property(x => x.OfficialName).HasColumnName("official_name").HasMaxLength(255);

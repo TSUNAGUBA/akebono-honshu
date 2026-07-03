@@ -36,11 +36,11 @@ const reload = async () => {
   }
 }
 
-// FK select-master 用に参照先マスタを取得
+// FK select-master / code 選択 select-master-code 用に参照先マスタを取得
 const loadReferences = async () => {
   if (!def.value) return
   const fkSlugs = def.value.extensionFields
-    .filter((f) => f.type === 'select-master' && f.master)
+    .filter((f) => (f.type === 'select-master' || f.type === 'select-master-code') && f.master)
     .map((f) => f.master!)
   const unique = [...new Set(fkSlugs)]
   for (const fkSlug of unique) {

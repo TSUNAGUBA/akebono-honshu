@@ -19,6 +19,7 @@ public static class MasterEndpoints
         MapSimple<Brand>(app, "brands");
         MapSimple<Function>(app, "functions");
         MapSimple<Country>(app, "countries");
+        MapSimple<Currency>(app, "currencies");
         MapSimple<Department>(app, "departments");
         MapSimple<MaterialClassification>(app, "material-classifications");
         MapSimple<Warehouse>(app, "warehouses");
