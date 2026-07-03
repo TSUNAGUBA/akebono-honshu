@@ -40,6 +40,7 @@ public static class DependencyInjection
         services.AddScoped<MasterService<Brand>>();
         services.AddScoped<MasterService<Function>>();
         services.AddScoped<MasterService<Country>>();
+        services.AddScoped<MasterService<Currency>>();
         services.AddScoped<MasterService<Department>>();
         services.AddScoped<MasterService<MaterialClassification>>();
         services.AddScoped<MasterService<Warehouse>>();

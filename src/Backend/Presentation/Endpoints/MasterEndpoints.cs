@@ -19,6 +19,7 @@ public static class MasterEndpoints
         MapSimple<Brand>(app, "brands");
         MapSimple<Function>(app, "functions");
         MapSimple<Country>(app, "countries");
+        MapSimple<Currency>(app, "currencies");
         MapSimple<Department>(app, "departments");
         MapSimple<MaterialClassification>(app, "material-classifications");
         MapSimple<Warehouse>(app, "warehouses");
@@ -241,6 +242,11 @@ public static class MasterEndpoints
             {
                 return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
             }
+            catch (InvalidOperationException ex)
+            {
+                // 同一 (年月, 通貨) の重複は 409 (EXR-004)。
+                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
+            }
         });
 
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
@@ -256,6 +262,10 @@ public static class MasterEndpoints
             catch (ArgumentException ex)
             {
                 return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
             }
         });
 
@@ -273,8 +283,16 @@ public static class MasterEndpoints
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            try
+            {
+                var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
+                return ok ? Results.NoContent() : Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                // 復元先に同一 (年月, 通貨) の有効行がある場合は 409 (EXR-004)。
+                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
+            }
         });
     }
 

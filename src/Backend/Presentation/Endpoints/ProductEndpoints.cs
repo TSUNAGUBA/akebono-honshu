@@ -63,6 +63,12 @@ public static class ProductEndpoints
             {
                 return Results.Problem(statusCode: 409, title: "Conflict", detail: "同一企画キーの product_families が既に存在します (PROD-003)");
             }
+            catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains("uq_psp_family_supplier_size_from") == true)
+            {
+                // 仕入単価行の (仕入先, サイズ, 有効開始日) 重複 (review #2 の防御。500 を避け 409 で返す)。
+                return Results.Problem(statusCode: 409, title: "Conflict",
+                    detail: "仕入単価に「仕入先 × サイズ × 有効開始日」が重複した行があります (PROD-004)");
+            }
         });
 
         // 更新 (P-05)

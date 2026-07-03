@@ -107,6 +107,20 @@ CREATE TABLE IF NOT EXISTS countries (
     legacy_id           VARCHAR(64)  NULL
 );
 
+-- 通貨マスタ (標準マスタ)。code = ISO 4217 3 文字コード (JPY/USD/CNY 等)。
+-- 為替マスタの対象通貨・仕入先の適用通貨が本 code を参照する (文字列一致の整合性を集中管理)。
+CREATE TABLE IF NOT EXISTS currencies (
+    id                  BIGSERIAL PRIMARY KEY,
+    code                VARCHAR(3)   NOT NULL UNIQUE,
+    name                VARCHAR(255) NOT NULL,
+    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL
+);
+
 -- ─────────────────────────────────────────────────
 -- §3.5 suppliers — 仕入先マスタ (工場兼用、F-22 official_name 帳票印字)
 -- ─────────────────────────────────────────────────
@@ -371,6 +385,13 @@ BEGIN
         ('001', '日本',     owner_id, owner_id),
         ('002', '中国',     owner_id, owner_id),
         ('003', 'ベトナム', owner_id, owner_id)
+    ON CONFLICT (code) DO NOTHING;
+
+    -- currencies (為替マスタ / 仕入先 適用通貨 の参照先)。code = ISO 4217 3 文字。
+    INSERT INTO currencies (code, name, created_by_user_id, updated_by_user_id) VALUES
+        ('JPY', '日本円',   owner_id, owner_id),
+        ('USD', '米ドル',   owner_id, owner_id),
+        ('CNY', '人民元',   owner_id, owner_id)
     ON CONFLICT (code) DO NOTHING;
 
     SELECT id INTO jp_id FROM countries WHERE code = '001';
