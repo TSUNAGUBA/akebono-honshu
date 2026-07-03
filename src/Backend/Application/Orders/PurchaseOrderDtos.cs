@@ -37,7 +37,9 @@ public record CreateOrderRequest(
     string? CommunicationLine3 = null,
     string? CommunicationLine4 = null,
     string? CommunicationLine5 = null,
-    string? CommunicationLine6 = null);
+    string? CommunicationLine6 = null,
+    // 発注書番号 (§5、末尾・nullable = 下位互換)。作成時に手入力可能。null なら初回 Excel 出力時に自動採番。
+    string? OrderNo = null);
 
 public record OrderLineInput(
     long ProductId,

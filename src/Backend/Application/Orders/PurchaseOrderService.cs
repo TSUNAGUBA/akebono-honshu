@@ -40,6 +40,8 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit)
             var order = new PurchaseOrder
             {
                 MgmtNo = nextMgmtNo,
+                // 発注書番号 (§5)。作成時に手入力された値を保存 (空欄は null → 初回 Excel 出力時に自動採番)。
+                OrderNo = string.IsNullOrWhiteSpace(req.OrderNo) ? null : req.OrderNo.Trim(),
                 Status = OrderStatus.Active,
                 SupplierId = req.SupplierId,
                 DeliveryDestinationId = req.DeliveryDestinationId,

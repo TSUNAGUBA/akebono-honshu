@@ -141,6 +141,9 @@ export interface OrderDetail {
 }
 
 export interface CreateOrderPayload {
+  // 発注書番号 (§5)。作成時に手入力可能 (任意)。空欄 (null) は初回 Excel 出力時に自動採番される。
+  // 編集 (UpdateOrderPayload) では送らないため optional。
+  orderNo?: string | null
   supplierId: number
   deliveryDestinationId: number
   departmentId: number
