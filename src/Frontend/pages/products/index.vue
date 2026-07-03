@@ -24,9 +24,10 @@ const users = ref<UserOption[]>([])
 // 企画者ドロップダウン用 (orders/new.vue・products/new.vue と同じ整形)
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
 
-// --- 8 つの SPLIT フィルタ (AND 合成、未指定 = 全件) ---
+// --- 9 つの SPLIT フィルタ (AND 合成、未指定 = 全件) ---
 // dropdown は数値 ID (0/null = 未指定)、text は手入力 (部分一致)。
 const filters = ref({
+  itemNumber: '',           // text 部分一致 (品番=itemNumber / 他品番=itemFamilyNumber / 旧品番=legacyId)
   productYear: '',          // text 前方/部分一致 (product_year)
   productTypeId: null as number | null,   // dropdown
   productSeasonId: null as number | null, // dropdown
@@ -39,6 +40,7 @@ const filters = ref({
 
 const clearFilters = () => {
   filters.value = {
+    itemNumber: '',
     productYear: '',
     productTypeId: null,
     productSeasonId: null,
@@ -51,6 +53,7 @@ const clearFilters = () => {
 }
 
 const hasActiveFilter = computed(() =>
+  filters.value.itemNumber.trim() !== '' ||
   filters.value.productYear.trim() !== '' ||
   filters.value.productTypeId != null ||
   filters.value.productSeasonId != null ||
@@ -65,6 +68,7 @@ const hasActiveFilter = computed(() =>
 const activeFilterCount = computed(() => {
   const f = filters.value
   let n = 0
+  if (f.itemNumber.trim() !== '') n++
   if (f.productYear.trim() !== '') n++
   if (f.productTypeId != null) n++
   if (f.productSeasonId != null) n++
@@ -123,13 +127,16 @@ onMounted(() => {
 const inc = (haystack: string | null | undefined, needle: string): boolean =>
   (haystack ?? '').toLowerCase().includes(needle.trim().toLowerCase())
 
-// 8 フィルタを AND 合成。各フィルタは未指定なら true (= 絞り込まない)。
+// 9 フィルタを AND 合成。各フィルタは未指定なら true (= 絞り込まない)。
 const filtered = computed(() => {
   const f = filters.value
+  const itemQ = f.itemNumber.trim()
   const yearQ = f.productYear.trim()
   const nameQ = f.productName.trim()
   const provQ = f.provisionalNumber.trim()
   return items.value.filter((i) => {
+    // 品番 (企画コード) は品番 / 他品番 / 旧品番 のいずれかに部分一致 (商品名と同じ複数フィールド OR)。
+    if (itemQ !== '' && !(inc(i.itemNumber, itemQ) || inc(i.itemFamilyNumber, itemQ) || inc(i.legacyId, itemQ))) return false
     if (yearQ !== '' && !inc(i.productYear != null ? String(i.productYear) : '', yearQ)) return false
     if (f.productTypeId != null && i.productTypeId !== f.productTypeId) return false
     if (f.productSeasonId != null && i.productSeasonId !== f.productSeasonId) return false
@@ -175,7 +182,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       <span v-else class="text-xs text-gray-400">参照のみ (品番台帳管理権限なし)</span>
     </header>
 
-    <!-- 絞込フィルタパネル (8 つの SPLIT フィルタ、AND 合成、未指定 = 全件)。
+    <!-- 絞込フィルタパネル (9 つの SPLIT フィルタ、AND 合成、未指定 = 全件)。
          開閉可能 (FilterPanel)。dropdown は MasterSelect (数値 ID・allow-empty)、text は手入力で部分一致。
          レスポンシブグリッド: モバイル 1 列 → sm 2 列 → lg 4 列。 -->
     <FilterPanel
@@ -194,6 +201,15 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
         </button>
       </template>
       <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <label class="flex flex-col gap-1">
+          <span class="font-medium">品番</span>
+          <input
+            v-model="filters.itemNumber"
+            type="text"
+            placeholder="品番 / 他品番で部分一致"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
         <label class="flex flex-col gap-1">
           <span class="font-medium">商品年度</span>
           <input
