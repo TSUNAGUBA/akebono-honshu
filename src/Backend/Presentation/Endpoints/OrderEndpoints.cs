@@ -82,7 +82,7 @@ public static class OrderEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             try
             {
-                // 削除済/納品完了 (終端状態) の中止は 409 (#3a)
+                // 削除済 (終端状態) の中止は 409 (§3b)
                 var ok = await svc.CancelAsync(id, req, auth.ActorId!.Value, ct);
                 return ok ? Results.NoContent() : Results.NotFound();
             }
@@ -92,15 +92,16 @@ public static class OrderEndpoints
             }
         });
 
-        // 納品完了 (#3a)。正式発注済のときのみ実行可 (不正状態は 409)。
-        orders.MapPost("/{id:long}/deliver", async (HttpContext http, IAkebonoDbContext db,
-                                                     PurchaseOrderService svc, long id, CancellationToken ct) =>
+        // 発注済にする (§3b)。未発注 → 発注済 (ordered_at を SET)。ダウンロードとは独立したユーザー操作。
+        // 削除済/中止済 (終端状態) は 409。
+        orders.MapPost("/{id:long}/mark-ordered", async (HttpContext http, IAkebonoDbContext db,
+                                                         PurchaseOrderService svc, long id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             try
             {
-                var ok = await svc.MarkDeliveredAsync(id, auth.ActorId!.Value, ct);
+                var ok = await svc.MarkOrderedAsync(id, auth.ActorId!.Value, ct);
                 return ok ? Results.NoContent() : Results.NotFound();
             }
             catch (InvalidOperationException ex)
@@ -109,7 +110,24 @@ public static class OrderEndpoints
             }
         });
 
-        // 発注削除 (#3a)。論理削除 (is_deleted=true)。物理削除はしない。
+        // 未発注に戻す (§3b)。発注済 → 未発注 (ordered_at を NULL)。削除済/中止済 (終端状態) は 409。
+        orders.MapPost("/{id:long}/unmark-ordered", async (HttpContext http, IAkebonoDbContext db,
+                                                           PurchaseOrderService svc, long id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            try
+            {
+                var ok = await svc.UnmarkOrderedAsync(id, auth.ActorId!.Value, ct);
+                return ok ? Results.NoContent() : Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
+            }
+        });
+
+        // 発注削除 (§3b)。論理削除 (is_deleted=true)。物理削除はしない。
         orders.MapPost("/{id:long}/delete", async (HttpContext http, IAkebonoDbContext db,
                                                     PurchaseOrderService svc, long id, CancellationToken ct) =>
         {
@@ -117,6 +135,25 @@ public static class OrderEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
             return ok ? Results.NoContent() : Results.NotFound();
+        });
+
+        // 発注状態の一括変更 (§3c)。チェックした発注を指定状態へ一括変更する。
+        // 認可は編集と同じ (purchase_order:write)。終端状態で変更できない発注はスキップし {updated, skipped} を返す。
+        orders.MapPost("/bulk-status", async (HttpContext http, IAkebonoDbContext db,
+                                              PurchaseOrderService svc, BulkStatusRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            try
+            {
+                var result = await svc.BulkSetStatusAsync(req, auth.ActorId!.Value, ct);
+                return Results.Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                // target 不正 / orderIds 空は 400 (リクエスト不正)。
+                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
+            }
         });
 
         // Excel 出力 (O-06)。旧システムの「発注書出力」画面と同様に、出力前に「発注日」「出荷指示番号」

@@ -71,7 +71,7 @@ public class OrderBulkExportService(
 
     /// <summary>
     /// 発注書 (+任意で管理表) を ZIP にまとめて返す。
-    /// 発注書は 1 件でも一律 ZIP で返す (UI/ファイル名の一貫性のため)。
+    /// 出力が 1 ファイルのとき (発注書のみ・対象 1 件) は ZIP にせず単一 .xlsx で返す (§3d)。
     /// 各発注の Excel 生成は既存サービス経由 = 初回出力の副作用 (凍結/採番/ログ) を発注ごとに保持する。
     /// 1 発注の生成に失敗しても他発注は続行する (原則4 非ブロッキング)。失敗は ILogger + 監査ログに記録し
     /// 握りつぶさない。発注書が 1 件も成功しなかった場合のみ全体を失敗 (BULK-004) とする。
@@ -79,6 +79,14 @@ public class OrderBulkExportService(
     private async Task<BulkExportResult> BuildOrderZipAsync(
         IReadOnlyList<long> targetIds, long actorUserId, string stamp, bool includeManagement, CancellationToken ct)
     {
+        // 出力が 1 ファイル (発注書のみ・対象 1 件) のときは ZIP にせず単一 .xlsx で返す (§3d)。
+        // both (管理表を含む = 2 ファイル) は 1 件でも従来どおり ZIP。orderExcel 経由のため初回出力の副作用は保持。
+        if (!includeManagement && targetIds.Count == 1)
+        {
+            var (singleName, singleContent) = await orderExcel.ExportAsync(targetIds[0], actorUserId, ct);
+            return new BulkExportResult(singleName, XlsxContentType, singleContent);
+        }
+
         using var zipStream = new MemoryStream();
         var succeeded = 0;
         var failedIds = new List<long>();

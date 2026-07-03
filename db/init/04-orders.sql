@@ -20,8 +20,12 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     cancelled_by_user_id            BIGINT       NULL REFERENCES users(id),
     cancel_reason                   VARCHAR(255) NULL,
 
-    -- 発注状態 5 値モデル (#3a)。納品完了 (delivered_at IS NOT NULL) / 発注削除 (is_deleted) を新設。
-    -- cancelled_at/cancelled_by_user_id と同じ配置・様式でミラー。is_deleted は論理削除フラグ。
+    -- 発注状態 4 値モデル (§3b): 未発注 / 発注済 / 発注中止 / 発注削除。
+    -- 「発注済」はユーザー操作で明示設定 (ordered_at)。ダウンロード (Excel 出力) では状態を変えない。
+    -- 導出優先順位: 発注削除(is_deleted) > 発注中止(status=1) > 発注済(ordered_at IS NOT NULL) > 未発注。
+    ordered_at                      TIMESTAMP    NULL,
+    ordered_by_user_id              BIGINT       NULL REFERENCES users(id),
+    -- 納品完了 (delivered_at) は §3b で状態導出から除外 (列は後方互換のため保持、is_deleted は論理削除フラグ)。
     delivered_at                    TIMESTAMP    NULL,
     delivered_by_user_id            BIGINT       NULL REFERENCES users(id),
     is_deleted                      BOOLEAN      NOT NULL DEFAULT FALSE,

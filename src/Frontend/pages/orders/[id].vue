@@ -7,7 +7,7 @@ const id = computed(() => Number(route.params.id))
 const { user } = useAuth()
 const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 
-const { get, update, cancel, markDelivered, softDelete, exportOrder, communicationSuggestions } = useOrders()
+const { get, update, cancel, markOrdered, unmarkOrdered, softDelete, exportOrder, communicationSuggestions } = useOrders()
 
 const detail = ref<OrderDetail | null>(null)
 const loading = ref(true)
@@ -260,15 +260,16 @@ const onSaveEdit = async () => {
             }))
           : null,
       })),
-      // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
+      // 発注書 国内/海外 項目 (§5 統一)。区分に関わらず常に送る (国内でも値を保持するため区分での null 化はしない)。
+      // is_overseas は帳票の言語切替・区分バッジのみに使う。
       isOverseas: editHeader.value.isOverseas,
-      landingPlace: editHeader.value.isOverseas ? (editHeader.value.landingPlace.trim() || null) : null,
-      customerRef: editHeader.value.isOverseas ? (editHeader.value.customerRef.trim() || null) : null,
-      factoryShippingDate: editHeader.value.isOverseas ? (editHeader.value.factoryShippingDate || null) : null,
-      deliveryPlaceShippingDate: editHeader.value.isOverseas ? (editHeader.value.deliveryPlaceShippingDate || null) : null,
-      overseasDepartureDate: editHeader.value.isOverseas ? (editHeader.value.overseasDepartureDate || null) : null,
-      warehouse2Id: editHeader.value.isOverseas ? editHeader.value.warehouse2Id : null,
-      warehouse3Id: editHeader.value.isOverseas ? editHeader.value.warehouse3Id : null,
+      landingPlace: editHeader.value.landingPlace.trim() || null,
+      customerRef: editHeader.value.customerRef.trim() || null,
+      factoryShippingDate: editHeader.value.factoryShippingDate || null,
+      deliveryPlaceShippingDate: editHeader.value.deliveryPlaceShippingDate || null,
+      overseasDepartureDate: editHeader.value.overseasDepartureDate || null,
+      warehouse2Id: editHeader.value.warehouse2Id,
+      warehouse3Id: editHeader.value.warehouse3Id,
     })
     successMessage.value = '更新しました'
     editing.value = false
@@ -297,13 +298,12 @@ const onCancelOrder = async () => {
   }
 }
 
-// 発注状態 5 値 (#3a) を共通ヘルパーで導出 (一覧 index.vue と同一ロジック)。
+// 発注状態 4 値 (§3b) を共通ヘルパーで導出 (一覧 index.vue と同一ロジック)。
 const orderState = computed(() =>
   detail.value
     ? deriveOrderState({
         status: detail.value.status,
-        firstExportedAt: detail.value.firstExportedAt,
-        deliveredAt: detail.value.deliveredAt,
+        orderedAt: detail.value.orderedAt,
         isDeleted: detail.value.isDeleted,
       })
     : null,
@@ -312,18 +312,33 @@ const orderState = computed(() =>
 // 削除確認モーダル
 const showDeleteForm = ref(false)
 
-// 納品完了にする (#3a)。正式発注済 (ordered) のときのみボタン表示。
-const onMarkDelivered = async () => {
+// 発注済にする (§3b)。未発注 (notOrdered) のときのみボタン表示。ダウンロードとは独立したユーザー操作。
+const onMarkOrdered = async () => {
   errorMessage.value = ''
   try {
-    await markDelivered(id.value)
-    successMessage.value = '納品完了にしました'
+    await markOrdered(id.value)
+    successMessage.value = '発注済にしました'
     await reload()
   } catch (e) {
     const err = e as { statusCode?: number; data?: { detail?: string } }
     errorMessage.value = err.statusCode === 409
-      ? (err.data?.detail ?? '現在の状態では納品完了にできません')
-      : '納品完了操作に失敗しました'
+      ? (err.data?.detail ?? '現在の状態では発注済にできません')
+      : '発注済操作に失敗しました'
+  }
+}
+
+// 未発注に戻す (§3b)。発注済 (ordered) のときのみボタン表示。
+const onUnmarkOrdered = async () => {
+  errorMessage.value = ''
+  try {
+    await unmarkOrdered(id.value)
+    successMessage.value = '未発注に戻しました'
+    await reload()
+  } catch (e) {
+    const err = e as { statusCode?: number; data?: { detail?: string } }
+    errorMessage.value = err.statusCode === 409
+      ? (err.data?.detail ?? '現在の状態では未発注に戻せません')
+      : '未発注に戻す操作に失敗しました'
   }
 }
 
@@ -428,7 +443,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <span v-if="detail.orderNo" class="ml-2 text-base font-mono text-gray-500">/ 発注番号 {{ detail.orderNo }}</span>
           </h1>
           <div class="mt-1 flex items-center gap-2 text-sm">
-            <!-- 発注状態 5 値バッジ (#3a)。発注依頼中/正式発注済/発注中止/納品完了/発注削除 -->
+            <!-- 発注状態 4 値バッジ (§3b)。未発注/発注済/発注中止/発注削除 -->
             <span v-if="orderState" :class="orderStateBadgeClass(orderState)"
                   class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
               {{ orderStateLabel(orderState) }}
@@ -448,28 +463,35 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           >
             {{ downloading ? '出力中…' : '📥 帳票出力' }}
           </button>
-          <!-- 編集/中止 は終端状態 (発注中止/納品完了/発注削除) では不可。発注依頼中/正式発注済 のみ (#3a)。
+          <!-- 編集/中止 は終端状態 (発注中止/発注削除) では不可。未発注/発注済 のみ (§3b)。
                バックエンド UpdateAsync/CancelAsync も同じガードを持つ (UI は操作可否の早期表示)。 -->
           <button
-            v-if="canEditOrder && (orderState === 'requested' || orderState === 'ordered') && !editing"
+            v-if="canEditOrder && (orderState === 'notOrdered' || orderState === 'ordered') && !editing"
             type="button"
             class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
             @click="onStartEdit"
           >編集</button>
-          <!-- 納品完了にする (#3a)。正式発注済 (ordered) のときのみ表示。 -->
+          <!-- 発注済にする (§3b)。未発注 (notOrdered) のときのみ表示。ダウンロードとは独立したユーザー操作。 -->
+          <button
+            v-if="canEditOrder && orderState === 'notOrdered' && !editing"
+            type="button"
+            class="rounded-md bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700"
+            @click="onMarkOrdered"
+          >発注済にする</button>
+          <!-- 未発注に戻す (§3b)。発注済 (ordered) のときのみ表示。 -->
           <button
             v-if="canEditOrder && orderState === 'ordered' && !editing"
             type="button"
-            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
-            @click="onMarkDelivered"
-          >納品完了にする</button>
+            class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
+            @click="onUnmarkOrdered"
+          >未発注に戻す</button>
           <button
-            v-if="canEditOrder && (orderState === 'requested' || orderState === 'ordered') && !editing"
+            v-if="canEditOrder && (orderState === 'notOrdered' || orderState === 'ordered') && !editing"
             type="button"
             class="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
             @click="showCancelForm = true"
           >中止</button>
-          <!-- 発注削除 (#3a)。未削除のときのみ表示。論理削除なので確認モーダル経由。 -->
+          <!-- 発注削除 (§3b)。未削除のときのみ表示。論理削除なので確認モーダル経由。 -->
           <button
             v-if="canEditOrder && !detail.isDeleted && !editing"
             type="button"
@@ -564,12 +586,12 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           >{{ detail.isOverseas ? '海外' : '国内' }}</span>
         </div>
         <div class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div><span class="text-gray-500">仕入先:</span> {{ detail.supplierCode }} {{ detail.supplierName }}</div>
+          <div><span class="text-gray-500">発注先:</span> {{ detail.supplierCode }} {{ detail.supplierName }}</div>
           <div><span class="text-gray-500">納品先:</span> {{ detail.deliveryDestinationName }}</div>
-          <div><span class="text-gray-500">事業部:</span> {{ detail.departmentName }}</div>
-          <div><span class="text-gray-500">納入倉庫:</span> {{ detail.warehouseName }}</div>
-          <div><span class="text-gray-500">納入日:</span> {{ detail.dueDate }}</div>
-          <div><span class="text-gray-500">発注担当:</span> {{ detail.ordererName }}</div>
+          <div><span class="text-gray-500">発注事業部:</span> {{ detail.departmentName }}</div>
+          <div><span class="text-gray-500">納入倉庫1:</span> {{ detail.warehouseName }}</div>
+          <div><span class="text-gray-500">取引先納入日:</span> {{ detail.dueDate }}</div>
+          <div><span class="text-gray-500">発注担当者:</span> {{ detail.ordererName }}</div>
           <div><span class="text-gray-500">発注管理者:</span> {{ detail.managerName }}</div>
           <div><span class="text-gray-500">作成日:</span> {{ new Date(detail.createdAt).toLocaleString('ja-JP') }}</div>
           <!-- 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力時に保存された値を表示。 -->
@@ -577,14 +599,14 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <div><span class="text-gray-500">出荷指示番号:</span> {{ detail.shippingInstructionNo || '—' }}</div>
         </div>
 
-        <!-- 海外発注情報 (is_overseas=true のときのみ、Phase B) -->
-        <div v-if="detail.isOverseas" class="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2">
-          <div class="mb-1 text-xs font-semibold text-indigo-800">海外発注情報</div>
+        <!-- 発注情報 (国内/海外共通、§5)。荷揚地・得意先・各出荷日・納入倉庫2/3 は区分に関わらず表示する。 -->
+        <div class="mt-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+          <div class="mb-1 text-xs font-semibold text-gray-700">発注情報</div>
           <div class="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <div><span class="text-gray-500">荷揚地:</span> {{ detail.landingPlace || '—' }}</div>
             <div><span class="text-gray-500">得意先:</span> {{ detail.customerRef || '—' }}</div>
             <div><span class="text-gray-500">工場出荷日:</span> {{ detail.factoryShippingDate || '—' }}</div>
-            <div><span class="text-gray-500">納品所出荷日:</span> {{ detail.deliveryPlaceShippingDate || '—' }}</div>
+            <div><span class="text-gray-500">検品場出荷日:</span> {{ detail.deliveryPlaceShippingDate || '—' }}</div>
             <div><span class="text-gray-500">海外出港日:</span> {{ detail.overseasDepartureDate || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫2:</span> {{ detail.warehouse2Name || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫3:</span> {{ detail.warehouse3Name || '—' }}</div>
@@ -605,11 +627,11 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <div><strong>中止日時:</strong> {{ detail.cancelledAt ? new Date(detail.cancelledAt).toLocaleString('ja-JP') : '—' }}</div>
           <div><strong>中止理由:</strong> {{ detail.cancelReason ?? '—' }}</div>
         </div>
-        <!-- 納品完了情報 (#3a) -->
-        <div v-if="detail.deliveredAt" class="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
-          <div><strong>納品完了日時:</strong> {{ new Date(detail.deliveredAt).toLocaleString('ja-JP') }}</div>
+        <!-- 発注済情報 (§3b)。ユーザー操作で発注済にした日時。ダウンロードとは独立。 -->
+        <div v-if="detail.orderedAt" class="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs">
+          <div><strong>発注済日時:</strong> {{ new Date(detail.orderedAt).toLocaleString('ja-JP') }}</div>
         </div>
-        <!-- 発注削除情報 (#3a、論理削除) -->
+        <!-- 発注削除情報 (§3b、論理削除) -->
         <div v-if="detail.isDeleted" class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs">
           <div><strong>削除日時:</strong> {{ detail.deletedAt ? new Date(detail.deletedAt).toLocaleString('ja-JP') : '—' }}</div>
           <div class="text-gray-600">この発注書は削除済み (論理削除) です。一覧では既定で非表示になります。</div>
@@ -630,9 +652,9 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
               <th class="px-2 py-1.5 text-left">SKU</th>
               <th class="px-2 py-1.5 text-left">商品名 / 色 / サイズ</th>
               <th class="px-2 py-1.5 text-left">仮番号</th>
-              <th class="px-2 py-1.5 text-right">数量</th>
+              <th class="px-2 py-1.5 text-right">発注数</th>
               <th class="px-2 py-1.5 text-right">入数</th>
-              <th class="px-2 py-1.5 text-right">単価</th>
+              <th class="px-2 py-1.5 text-right">仕入単価</th>
               <th class="px-2 py-1.5 text-right">見積単価</th>
               <th class="px-2 py-1.5 text-left">備考</th>
               <th class="px-2 py-1.5 text-right">小計</th>
@@ -674,9 +696,9 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <th class="px-2 py-1.5 text-left">品番</th>
                 <th class="px-2 py-1.5 text-left">SKU</th>
                 <th class="px-2 py-1.5 text-left">仮番号</th>
-                <th class="px-2 py-1.5 text-right">数量</th>
+                <th class="px-2 py-1.5 text-right">発注数</th>
                 <th class="px-2 py-1.5 text-right">入数</th>
-                <th class="px-2 py-1.5 text-right">単価</th>
+                <th class="px-2 py-1.5 text-right">仕入単価</th>
                 <th class="px-2 py-1.5 text-right">見積単価</th>
                 <th class="px-2 py-1.5 text-left">備考</th>
                 <th class="px-2 py-1.5 text-right">小計</th>
@@ -751,7 +773,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             </tbody>
           </table>
 
-          <!-- 発注区分 + 海外発注情報 編集 (Phase B) -->
+          <!-- 発注区分 + 発注情報 編集 (§5 国内/海外共通)。区分トグルは帳票の言語切替のみに使い、
+               入力欄の出し分けはしない (国内でも荷揚地・各出荷日・納入倉庫2/3 を編集可能)。 -->
           <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
             <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <span class="font-semibold text-gray-700">発注区分</span>
@@ -770,7 +793,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 >海外</button>
               </div>
             </div>
-            <div v-if="editHeader.isOverseas" class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
               <label class="flex flex-col gap-1">
                 <span class="font-medium">荷揚地</span>
                 <input v-model="editHeader.landingPlace" type="text" maxlength="128" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
@@ -784,7 +807,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <input v-model="editHeader.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
-                <span class="font-medium">納品所出荷日</span>
+                <span class="font-medium">検品場出荷日</span>
                 <input v-model="editHeader.deliveryPlaceShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">

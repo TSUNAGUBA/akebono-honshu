@@ -33,7 +33,9 @@ export interface OrderListItem {
   updatedAt: string
   // 発注区分 国内/海外 (Phase B、is_overseas)。一覧でのタブ絞込・区分バッジ表示用。
   isOverseas: boolean
-  // 発注状態 5 値モデル (#3a)。納品完了/発注削除 導出 + 一覧 SPLIT フィルタ用フィールド。
+  // 発注状態 4 値モデル (§3b)。orderedAt(発注済)/status(発注中止)/isDeleted(発注削除) から導出。
+  // deliveredAt は §3b で状態導出から除外 (後方互換のため残すが未使用)。
+  orderedAt: string | null
   deliveredAt: string | null
   isDeleted: boolean
   supplierId: number
@@ -134,7 +136,9 @@ export interface OrderDetail {
   warehouse2Name: string | null
   warehouse3Id: number | null
   warehouse3Name: string | null
-  // 発注状態 5 値モデル (#3a)。納品完了/発注削除 の状態表示・操作可否判定に使う。
+  // 発注状態 4 値モデル (§3b)。orderedAt(発注済)/status(発注中止)/isDeleted(発注削除) の状態表示・操作可否判定に使う。
+  // deliveredAt は §3b で状態導出から除外 (後方互換のため残すが未使用)。
+  orderedAt: string | null
   deliveredAt: string | null
   isDeleted: boolean
   deletedAt: string | null
@@ -256,15 +260,34 @@ export const useOrders = () => {
     await apiFetch<void>(`/orders/${id}/cancel`, { method: 'POST', body: { cancelReason } })
   }
 
-  /** 納品完了 (#3a)。正式発注済の発注を納品完了にする。 */
-  const markDelivered = async (id: number): Promise<void> => {
-    await apiFetch<void>(`/orders/${id}/deliver`, { method: 'POST' })
+  /** 発注済にする (§3b)。未発注 → 発注済 (ordered_at を SET)。ダウンロードとは独立したユーザー操作。 */
+  const markOrdered = async (id: number): Promise<void> => {
+    await apiFetch<void>(`/orders/${id}/mark-ordered`, { method: 'POST' })
   }
 
-  /** 発注削除 (#3a)。論理削除 (is_deleted=true)。 */
+  /** 未発注に戻す (§3b)。発注済 → 未発注 (ordered_at を NULL)。 */
+  const unmarkOrdered = async (id: number): Promise<void> => {
+    await apiFetch<void>(`/orders/${id}/unmark-ordered`, { method: 'POST' })
+  }
+
+  /** 発注削除 (§3b)。論理削除 (is_deleted=true)。 */
   const softDelete = async (id: number): Promise<void> => {
     await apiFetch<void>(`/orders/${id}/delete`, { method: 'POST' })
   }
+
+  /**
+   * 発注状態の一括変更 (§3c)。チェックした発注を指定状態へ一括変更する。
+   * 終端状態で変更できない発注はスキップされ、{ updated, skipped } を返す。
+   */
+  const bulkStatus = async (
+    orderIds: number[],
+    targetState: OrderState,
+    cancelReason?: string,
+  ): Promise<{ updated: number; skipped: number }> =>
+    await apiFetch<{ updated: number; skipped: number }>('/orders/bulk-status', {
+      method: 'POST',
+      body: { orderIds, targetState, cancelReason: cancelReason ?? null },
+    })
 
   // Blob レスポンス (Excel/ZIP) を Content-Disposition の filename で download する共有ヘルパー。
   // exportOrder / bulkExport で共通利用 (原則3 既存パターン再利用)。
@@ -345,53 +368,49 @@ export const useOrders = () => {
   const priceSuggestion = async (productId: number, supplierId: number): Promise<PriceSuggestion> =>
     await apiFetch<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
 
-  return { list, get, create, update, cancel, markDelivered, softDelete, exportOrder, bulkExport, communicationSuggestions, priceSuggestion }
+  return { list, get, create, update, cancel, markOrdered, unmarkOrdered, softDelete, bulkStatus, exportOrder, bulkExport, communicationSuggestions, priceSuggestion }
 }
 
 // ─────────────────────────────────────────────────
-// 発注状態 5 値モデル (#3a)。導出は単一ヘルパーに集約 (一覧 index.vue / 詳細 [id].vue 共通)。
-// 優先順位: 発注削除 > 納品完了 > 発注中止 > 正式発注済 > 発注依頼中。
-//   発注依頼中: status=0(Active) かつ firstExportedAt 未設定
-//   正式発注済: status=0 かつ firstExportedAt 設定済
-//   発注中止:   status=1(Cancelled)
-//   納品完了:   deliveredAt 設定済
-//   発注削除:   isDeleted=true (論理削除)
-// 削除/納品は status と独立した列のため、表示上の優先順位を明示する。
+// 発注状態 4 値モデル (§3b)。導出は単一ヘルパーに集約 (一覧 index.vue / 詳細 [id].vue 共通)。
+// 優先順位: 発注削除 > 発注中止 > 発注済 > 未発注。
+//   未発注:   status=0(Active) かつ orderedAt 未設定
+//   発注済:   status=0 かつ orderedAt 設定済 (ユーザー操作でのみ設定。ダウンロードでは変わらない)
+//   発注中止: status=1(Cancelled)
+//   発注削除: isDeleted=true (論理削除)
+// 発注済/削除は status と独立した列のため、表示上の優先順位を明示する。
+// 「発注済」は Excel 出力 (firstExportedAt) とは独立した ordered_at 列で持つ (§3b)。
 // ─────────────────────────────────────────────────
-export type OrderState = 'requested' | 'ordered' | 'cancelled' | 'delivered' | 'deleted'
+export type OrderState = 'notOrdered' | 'ordered' | 'cancelled' | 'deleted'
 
 export interface OrderStateInput {
   status: number
-  firstExportedAt: string | null
-  deliveredAt: string | null
+  orderedAt: string | null
   isDeleted: boolean
 }
 
 export const deriveOrderState = (o: OrderStateInput): OrderState => {
   if (o.isDeleted) return 'deleted'
-  if (o.deliveredAt) return 'delivered'
   if (o.status === 1) return 'cancelled'
-  if (o.firstExportedAt) return 'ordered'
-  return 'requested'
+  if (o.orderedAt) return 'ordered'
+  return 'notOrdered'
 }
 
 export const orderStateLabel = (s: OrderState): string => {
   switch (s) {
-    case 'requested': return '発注依頼中'
-    case 'ordered': return '正式発注済'
+    case 'notOrdered': return '未発注'
+    case 'ordered': return '発注済'
     case 'cancelled': return '発注中止'
-    case 'delivered': return '納品完了'
     case 'deleted': return '発注削除'
   }
 }
 
-/** 5 状態バッジの配色 (それぞれ識別しやすい別色)。 */
+/** 4 状態バッジの配色 (それぞれ識別しやすい別色)。 */
 export const orderStateBadgeClass = (s: OrderState): string => {
   switch (s) {
-    case 'requested': return 'bg-gray-100 text-gray-600'
+    case 'notOrdered': return 'bg-gray-100 text-gray-600'
     case 'ordered': return 'bg-green-100 text-green-700'
     case 'cancelled': return 'bg-orange-100 text-orange-700'
-    case 'delivered': return 'bg-blue-100 text-blue-700'
     case 'deleted': return 'bg-red-100 text-red-700'
   }
 }
