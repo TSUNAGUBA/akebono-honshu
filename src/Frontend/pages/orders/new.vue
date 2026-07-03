@@ -518,7 +518,10 @@ const onSubmit = async () => {
         <!-- ④ 明細。分納は「分納入力」で納期 (日付) 列を追加し、SKU 明細行ごとに納期別の発注数を
              入力する (2 枚目キャプチャの日付マトリクス)。納期列が無ければ単一の発注数を使う。
              合計は通貨ごとに集計して表示する (選択通貨と表示を一致させる)。 -->
-        <section class="overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+        <!-- overflow-x-auto は「テーブルのみ」を包む内側 div に付ける。セクション自体には付けない
+             ことで、見出し・ボタン (分納入力/明細追加)・説明文は横スクロールしても固定される
+             (以前はセクション全体がスクロール領域となりボタン等も一緒に動いてしまっていた)。 -->
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
             <h2 class="font-semibold">④ 明細 ({{ lines.length }} 件、合計 {{ totalSummary }})</h2>
             <div class="flex items-center gap-2">
@@ -528,6 +531,7 @@ const onSubmit = async () => {
               <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="addLine">+ 明細追加</button>
             </div>
           </div>
+          <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="border-b border-gray-200 bg-gray-50">
               <!-- stickyMode (納期列4つ以上) では左6列を固定表示 (frozenColStyle + bg で背景を塗り、
@@ -585,6 +589,7 @@ const onSubmit = async () => {
               </tr>
             </tbody>
           </table>
+          </div>
           <p v-if="deliveryMode" class="mt-2 text-xs text-gray-500">
             分納モード: 各 SKU の発注数は納期列の合計です。納期列を全て × で削除すると単一発注数の入力に戻ります (入力済みの合計は発注数に引き継がれます)。
           </p>
