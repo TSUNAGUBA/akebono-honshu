@@ -57,7 +57,7 @@ const toggle = () => {
 <template>
   <section class="mb-4 rounded-lg border border-gray-200 bg-white shadow-sm">
     <!-- ヘッダー行（小画面で折り返す）。左: ラベル + 絞込中チップ、右: actions スロット + トグル。 -->
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-2 p-4" :class="open ? 'border-b border-gray-100' : ''">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5" :class="open ? 'border-b border-gray-100' : ''">
       <h2 class="text-sm font-semibold text-gray-700">{{ title }}</h2>
       <span
         v-if="activeCount != null && activeCount > 0"
@@ -88,7 +88,7 @@ const toggle = () => {
     </div>
 
     <!-- 本体（v-show で保持しつつ出し入れ）。 -->
-    <div v-show="open" class="p-4">
+    <div v-show="open" class="px-4 py-3">
       <slot />
     </div>
   </section>

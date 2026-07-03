@@ -139,8 +139,8 @@ const onRestore = async (item: ExchangeRateItem) => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-5xl px-4 py-8">
-    <header class="mb-6">
+  <main class="mx-auto max-w-7xl px-4 py-4">
+    <header class="mb-4">
       <div class="text-xs text-gray-500">
         <NuxtLink to="/masters" class="hover:underline">マスタ一覧</NuxtLink>
         <span class="mx-1">/</span>
@@ -157,9 +157,9 @@ const onRestore = async (item: ExchangeRateItem) => {
     <div v-if="successMessage" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{{ successMessage }}</div>
 
     <!-- 追加/編集フォーム (編集権限がある場合のみ) -->
-    <section v-if="canEditMaster" class="mb-5 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+    <section v-if="canEditMaster" class="mb-5 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
       <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">{{ editingId == null ? '為替レートを追加' : '為替レートを編集' }}</h2>
-      <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
+      <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium">年月 <span class="text-red-500">*</span></span>
           <input v-model="form.yearMonth" type="month" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
@@ -209,11 +209,11 @@ const onRestore = async (item: ExchangeRateItem) => {
       <table class="w-full text-sm">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">年月</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">通貨</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">対円レート</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
-            <th v-if="canEditMaster" class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">操作</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">年月</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">通貨</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">対円レート</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
+            <th v-if="canEditMaster" class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -221,14 +221,14 @@ const onRestore = async (item: ExchangeRateItem) => {
             <td :colspan="canEditMaster ? 5 : 4" class="px-4 py-8 text-center text-sm text-gray-500">データがありません</td>
           </tr>
           <tr v-for="i in items" :key="i.id" class="border-b border-gray-100 last:border-0" :class="i.deleteFlag ? 'opacity-50' : ''">
-            <td class="px-4 py-3 font-mono">{{ i.yearMonth }}</td>
-            <td class="px-4 py-3"><span class="font-mono">{{ i.currencyCode }}</span> <span class="text-xs text-gray-500">{{ currencyName(i.currencyCode) }}</span></td>
-            <td class="px-4 py-3 text-right font-mono">{{ i.rate.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</td>
-            <td class="px-4 py-3">
+            <td class="px-3 py-2 font-mono">{{ i.yearMonth }}</td>
+            <td class="px-3 py-2"><span class="font-mono">{{ i.currencyCode }}</span> <span class="text-xs text-gray-500">{{ currencyName(i.currencyCode) }}</span></td>
+            <td class="px-3 py-2 text-right font-mono">{{ i.rate.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</td>
+            <td class="px-3 py-2">
               <span v-if="i.deleteFlag" class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">削除済</span>
               <span v-else class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">有効</span>
             </td>
-            <td v-if="canEditMaster" class="px-4 py-3 text-right">
+            <td v-if="canEditMaster" class="px-3 py-2 text-right">
               <div class="flex justify-end gap-2">
                 <button v-if="!i.deleteFlag" type="button" class="text-xs text-blue-600 hover:underline" @click="startEdit(i)">編集</button>
                 <button v-if="!i.deleteFlag" type="button" class="text-xs text-red-600 hover:underline" @click="onDelete(i)">削除</button>

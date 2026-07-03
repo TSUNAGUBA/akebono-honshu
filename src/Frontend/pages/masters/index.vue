@@ -3,8 +3,8 @@ import { masterDefinitions } from '~/utils/master-definitions'
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-8">
-    <header class="mb-6">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+    <header class="mb-4">
       <h1 class="text-2xl font-bold">マスタ一覧</h1>
       <p class="mt-1 text-sm text-gray-500">
         18 マスタの CRUD 操作 (M-01 / M-02 共通テンプレート + M-04 仕入先 / M-05 連絡文書 個別対応 + 通貨) + 為替マスタ (§2f)
@@ -16,7 +16,7 @@ import { masterDefinitions } from '~/utils/master-definitions'
         v-for="m in masterDefinitions"
         :key="m.slug"
         :to="`/masters/${m.slug}`"
-        class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:border-blue-500 hover:shadow-md"
+        class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition hover:border-blue-500 hover:shadow-md"
       >
         <div class="font-semibold text-gray-900">{{ m.label }}</div>
         <div class="mt-1 text-xs text-gray-500">{{ m.slug }}</div>
@@ -26,7 +26,7 @@ import { masterDefinitions } from '~/utils/master-definitions'
       <!-- 為替マスタ (§2f、bespoke master。年月×通貨の複合キーのため専用ページ) -->
       <NuxtLink
         to="/masters/exchange-rates"
-        class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:border-blue-500 hover:shadow-md"
+        class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition hover:border-blue-500 hover:shadow-md"
       >
         <div class="font-semibold text-gray-900">為替マスタ</div>
         <div class="mt-1 text-xs text-gray-500">exchange-rates</div>

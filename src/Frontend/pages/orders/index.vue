@@ -315,8 +315,8 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-8">
-    <header class="mb-6 flex items-start justify-between gap-4">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+    <header class="mb-4 flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold">発注書</h1>
         <p class="mt-1 text-sm text-gray-500">
@@ -372,7 +372,7 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
           クリア
         </button>
       </template>
-      <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+      <div class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <label class="flex flex-col gap-1">
           <span class="font-medium">作成日 From</span>
           <input
@@ -559,17 +559,17 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
                 @change="toggleSelectAll"
               />
             </th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">管理番号</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">区分</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">発注番号</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">仕入先</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">納品先</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">納入日</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">管理番号</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">区分</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">発注番号</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">仕入先</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">納品先</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">納入日</th>
             <!-- 明細列: 明細非表示フィルタ ON で列ごと隠す (後述) -->
-            <th v-if="!filters.hideLines" class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">明細</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">合計</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">出力</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
+            <th v-if="!filters.hideLines" class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">明細</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">合計</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">出力</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
           </tr>
         </thead>
         <tbody>
@@ -595,29 +595,29 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
                 @change="toggleRow(i.id)"
               />
             </td>
-            <td class="px-4 py-3 font-mono text-sm">{{ i.mgmtNo }}</td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-3 py-2 font-mono text-sm">{{ i.mgmtNo }}</td>
+            <td class="px-3 py-2 text-sm">
               <span :class="regionBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
                 {{ regionBadge(i).label }}
               </span>
             </td>
-            <td class="px-4 py-3 font-mono text-sm">{{ i.orderNo ?? '—' }}</td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-3 py-2 font-mono text-sm">{{ i.orderNo ?? '—' }}</td>
+            <td class="px-3 py-2 text-sm">
               <div class="font-medium">{{ i.supplierName }}</div>
               <div class="font-mono text-xs text-gray-500">{{ i.supplierCode }}</div>
             </td>
-            <td class="px-4 py-3 text-sm">{{ i.deliveryDestinationName }}</td>
-            <td class="px-4 py-3 text-sm">{{ i.dueDate }}</td>
-            <td v-if="!filters.hideLines" class="px-4 py-3 text-right font-mono text-sm">{{ i.lineCount }}</td>
-            <td class="px-4 py-3 text-right font-mono text-sm">
+            <td class="px-3 py-2 text-sm">{{ i.deliveryDestinationName }}</td>
+            <td class="px-3 py-2 text-sm">{{ i.dueDate }}</td>
+            <td v-if="!filters.hideLines" class="px-3 py-2 text-right font-mono text-sm">{{ i.lineCount }}</td>
+            <td class="px-3 py-2 text-right font-mono text-sm">
               {{ i.currencyCode }} {{ i.totalAmount.toLocaleString() }}
             </td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-3 py-2 text-sm">
               <span :class="exportBadge(i).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">
                 {{ exportBadge(i).label }}
               </span>
             </td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-3 py-2 text-sm">
               <span :class="orderStateBadgeClass(stateOf(i))" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
                 {{ stateLabel(stateOf(i)) }}
               </span>

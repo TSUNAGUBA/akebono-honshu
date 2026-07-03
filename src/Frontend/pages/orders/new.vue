@@ -111,6 +111,24 @@ const removeDeliveryColumn = (colId: number) => {
 const lineMatrixTotal = (l: LineRow): number =>
   deliveryColumns.value.reduce((s, c) => s + (Number(l.deliveryQtys[c.id]) || 0), 0)
 
+// 納期列が4つ以上になると左側の商品情報 (SKU〜備考) が横スクロールで隠れて操作不能になるため、
+// その場合は左6列 (SKU/発注数/入数/仕入単価/通貨/備考) を固定 (position: sticky) して横スクロールさせる。
+// 3列までは列固定せず従来どおり (テーブル幅が画面内に収まるため)。
+const stickyMode = computed(() => deliveryColumns.value.length >= 4)
+// 固定する左6列の幅 (px)。sticky の left は先行列の累積幅で計算する (auto 幅では left を確定できないため固定幅)。
+const FROZEN_WIDTHS = [208, 96, 96, 112, 96, 152]
+const frozenLeft = (i: number): number => FROZEN_WIDTHS.slice(0, i).reduce((s, w) => s + w, 0)
+// 固定列 (th/td 共通) のインラインスタイル。stickyMode でないときは空 = 従来の auto 幅。
+// i は左からの列インデックス (0=SKU 〜 5=備考)。z-index はスクロールする納期列より前面に出す。
+const frozenColStyle = (i: number): Record<string, string> => {
+  if (!stickyMode.value) return {}
+  const w = `${FROZEN_WIDTHS[i]}px`
+  const style: Record<string, string> = { position: 'sticky', left: `${frozenLeft(i)}px`, width: w, minWidth: w, maxWidth: w, zIndex: '2' }
+  // 最右の固定列 (備考) に右影を付け、固定領域とスクロール領域の境界を視覚化する。
+  if (i === FROZEN_WIDTHS.length - 1) style.boxShadow = '4px 0 6px -2px rgba(0,0,0,0.12)'
+  return style
+}
+
 // --- オートコンプリート選択肢（マスタ参照を部分一致検索可能に） ---
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
 const skuOptions = computed(() => skus.value.map((s) => ({ id: s.id, label: `${s.sku} - ${s.productName} (${s.colorName}/${s.sizeName})`, code: s.sku })))
@@ -360,7 +378,7 @@ const onSubmit = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-5">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
     <div v-if="!canCreateOrder" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
       発注書作成権限がありません。
       <div class="mt-2">
@@ -385,10 +403,10 @@ const onSubmit = async () => {
         マスタ情報を読み込み中…
       </div>
 
-      <form v-else class="space-y-4" @submit.prevent="onSubmit">
+      <form v-else class="space-y-3" @submit.prevent="onSubmit">
         <!-- ① 発注区分 (国内/海外)。§5 で入力項目は国内/海外共通に統一。区分は帳票の言語切替
              (国内=日本語/海外=英語) と一覧の区分バッジのみに使い、入力欄の出し分けはしない。 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="font-semibold">① 発注区分 <span class="text-red-500">*</span></h2>
@@ -415,13 +433,13 @@ const onSubmit = async () => {
         </section>
 
         <!-- ② 発注書ヘッダ (国内/海外共通、§5)。発注先/得意先/納品先・荷揚地・納入倉庫1〜3・各出荷日を統一入力。 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="mb-3 flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">② 発注書ヘッダ</h2>
           </div>
 
           <!-- 取引先系: 発注書番号 / 発注先 / 得意先 / 納品先 -->
-          <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注書番号</span>
               <input v-model="form.orderNo" type="text" maxlength="16" placeholder="例: S3858 (未入力なら初回出力時に自動採番)" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
@@ -441,7 +459,7 @@ const onSubmit = async () => {
           </div>
 
           <!-- 事業部 / 荷揚地 / 納入倉庫1〜3 -->
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注事業部 <span class="text-red-500">*</span></span>
               <MasterSelect v-model="form.departmentId" :items="departments" />
@@ -465,7 +483,7 @@ const onSubmit = async () => {
           </div>
 
           <!-- 日付: 取引先納入日 / 工場出荷日 / 検品場出荷日 / 海外出港日 -->
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="font-medium">取引先納入日 <span class="text-red-500">*</span></span>
               <input v-model="form.dueDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
@@ -485,7 +503,7 @@ const onSubmit = async () => {
           </div>
 
           <!-- 担当: 発注担当者 / 発注管理者 (副担当者1〜6 は §5 で除外) -->
-          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注担当者 <span class="text-red-500">*</span></span>
               <MasterSelect v-model="form.ordererUserId" :items="userOptions" />
@@ -500,7 +518,7 @@ const onSubmit = async () => {
         <!-- ④ 明細。分納は「分納入力」で納期 (日付) 列を追加し、SKU 明細行ごとに納期別の発注数を
              入力する (2 枚目キャプチャの日付マトリクス)。納期列が無ければ単一の発注数を使う。
              合計は通貨ごとに集計して表示する (選択通貨と表示を一致させる)。 -->
-        <section class="overflow-x-auto rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
             <h2 class="font-semibold">④ 明細 ({{ lines.length }} 件、合計 {{ totalSummary }})</h2>
             <div class="flex items-center gap-2">
@@ -512,13 +530,15 @@ const onSubmit = async () => {
           </div>
           <table class="w-full text-sm">
             <thead class="border-b border-gray-200 bg-gray-50">
+              <!-- stickyMode (納期列4つ以上) では左6列を固定表示 (frozenColStyle + bg で背景を塗り、
+                   スクロールする納期列がすり抜けて見えないようにする)。 -->
               <tr>
-                <th class="px-2 py-1.5 text-left">SKU</th>
-                <th class="px-2 py-1.5 text-right">発注数</th>
-                <th class="px-2 py-1.5 text-right">入数</th>
-                <th class="px-2 py-1.5 text-right">仕入単価</th>
-                <th class="px-2 py-1.5 text-left">通貨</th>
-                <th class="px-2 py-1.5 text-left">備考</th>
+                <th class="px-2 py-1.5 text-left" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(0)">SKU</th>
+                <th class="px-2 py-1.5 text-right" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(1)">発注数</th>
+                <th class="px-2 py-1.5 text-right" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(2)">入数</th>
+                <th class="px-2 py-1.5 text-right" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(3)">仕入単価</th>
+                <th class="px-2 py-1.5 text-left" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(4)">通貨</th>
+                <th class="px-2 py-1.5 text-left" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(5)">備考</th>
                 <!-- 分納 納期列 (全明細共通)。各列ヘッダで納期の日付を編集、× でその列を削除する。 -->
                 <th v-for="col in deliveryColumns" :key="col.id" class="px-2 py-1.5 text-center">
                   <div class="flex items-center justify-center gap-1">
@@ -532,36 +552,34 @@ const onSubmit = async () => {
             </thead>
             <tbody>
               <tr v-for="(l, idx) in lines" :key="idx" class="border-b border-gray-100 last:border-0">
-                <td class="px-2 py-1.5">
+                <td class="px-2 py-1" :class="stickyMode && 'bg-white'" :style="frozenColStyle(0)">
                   <!-- サイズ別仕入単価 (PR2): SKU 選択時に単価をサジェスト補完 (onLineProductChange)。 -->
                   <MasterSelect :model-value="l.productId" :items="skuOptions" placeholder="SKU・品名で検索…" @update:model-value="(v) => onLineProductChange(idx, v)" />
                 </td>
-                <td class="px-2 py-1.5 text-right">
+                <td class="px-2 py-1 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(1)">
                   <!-- 分納モード (納期列あり) は発注数 = 各納期列の合計を読取表示。分納なしは単一入力。 -->
-                  <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
-                  <span v-else class="inline-block w-16 px-2 py-1 text-right font-mono text-gray-700" title="納期列の合計">{{ lineQuantity(l).toLocaleString() }}</span>
+                  <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="h-8 w-full rounded-md border border-gray-300 px-2 text-right" />
+                  <span v-else class="inline-block w-full px-2 text-right font-mono leading-8 text-gray-700" title="納期列の合計">{{ lineQuantity(l).toLocaleString() }}</span>
                 </td>
-                <td class="px-2 py-1.5 text-right">
-                  <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="w-20 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                <td class="px-2 py-1 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(2)">
+                  <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="h-8 w-full rounded-md border border-gray-300 px-2 text-right" />
                 </td>
-                <td class="px-2 py-1.5 text-right">
-                  <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                <td class="px-2 py-1 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(3)">
+                  <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="h-8 w-full rounded-md border border-gray-300 px-2 text-right" />
                 </td>
-                <td class="px-2 py-1.5">
-                  <div class="w-20">
-                    <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => l.currencyCodeSnapshot = v" />
-                  </div>
+                <td class="px-2 py-1" :class="stickyMode && 'bg-white'" :style="frozenColStyle(4)">
+                  <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => l.currencyCodeSnapshot = v" />
                 </td>
-                <td class="px-2 py-1.5">
-                  <input v-model="l.remark" type="text" maxlength="255" placeholder="—" class="w-32 rounded-md border border-gray-300 px-2 py-1" />
+                <td class="px-2 py-1" :class="stickyMode && 'bg-white'" :style="frozenColStyle(5)">
+                  <input v-model="l.remark" type="text" maxlength="255" placeholder="—" class="h-8 w-full rounded-md border border-gray-300 px-2" />
                 </td>
                 <!-- 納期列ごとの発注数セル (SKU × 納期のマトリクス)。空欄は 0 扱い。 -->
-                <td v-for="col in deliveryColumns" :key="col.id" class="px-2 py-1.5 text-right">
-                  <input v-model.number="l.deliveryQtys[col.id]" type="number" min="0" placeholder="0" class="w-16 rounded-md border border-gray-300 px-2 py-1 text-right" />
+                <td v-for="col in deliveryColumns" :key="col.id" class="px-2 py-1 text-right">
+                  <input v-model.number="l.deliveryQtys[col.id]" type="number" min="0" placeholder="0" class="h-8 w-16 rounded-md border border-gray-300 px-2 text-right" />
                 </td>
                 <!-- 小計は行の通貨を前置して表示 (選択通貨とサマリ表示を一致させる)。 -->
-                <td class="px-2 py-1.5 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ lineSubtotal(l).toLocaleString() }}</td>
-                <td class="px-2 py-1.5 text-right">
+                <td class="whitespace-nowrap px-2 py-1 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ lineSubtotal(l).toLocaleString() }}</td>
+                <td class="px-2 py-1 text-right">
                   <button type="button" :disabled="lines.length <= 1" class="text-xs text-red-600 hover:underline disabled:opacity-30" @click="removeLine(idx)">削除</button>
                 </td>
               </tr>
@@ -573,7 +591,7 @@ const onSubmit = async () => {
         </section>
 
         <!-- 連絡文書 6 行 (構造化、PR6。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」) -->
-        <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="mb-3 flex flex-col gap-1 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">⑤ 連絡文書 (O-07、6 行)</h2>
             <p class="text-xs text-gray-500">各行はテンプレ選択 + 自由編集できます (空行は出力されません)。</p>

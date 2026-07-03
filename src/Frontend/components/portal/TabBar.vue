@@ -13,7 +13,7 @@ const route = useRoute()
 
 <template>
   <div class="border-b border-gray-200 bg-white">
-    <div class="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-3">
+    <div class="mx-auto flex max-w-screen-2xl items-center gap-1 overflow-x-auto px-4">
       <NuxtLink
         v-for="link in section.links"
         :key="link.path"

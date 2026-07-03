@@ -166,8 +166,8 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-8">
-    <header class="mb-6 flex items-start justify-between gap-4">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+    <header class="mb-4 flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold">商品一覧</h1>
         <p class="mt-1 text-sm text-gray-500">P-04 商品企画一覧 / P-01〜P-03 新規ウィザード起動</p>
@@ -200,7 +200,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
           クリア
         </button>
       </template>
-      <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+      <div class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <label class="flex flex-col gap-1">
           <span class="font-medium">品番</span>
           <input
@@ -326,17 +326,17 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       <table class="w-full">
         <thead class="border-b border-gray-200 bg-gray-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">品番 / 他品番</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">商品名</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">年度</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">ブランド</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">タイプ / 季節</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">工場</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">企画者</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">SKU</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">単価レンジ</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">更新日</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">品番 / 他品番</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">商品名</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">年度</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">ブランド</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">タイプ / 季節</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">工場</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">企画者</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">SKU</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">単価レンジ</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">更新日</th>
           </tr>
         </thead>
         <tbody>
@@ -351,31 +351,31 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
             class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-blue-50"
             @click="navigateTo(`/products/${i.id}`)"
           >
-            <td class="px-4 py-3 font-mono text-sm leading-tight">
+            <td class="px-3 py-2 font-mono text-sm leading-tight">
               <div>{{ i.itemNumber }}</div>
               <div class="text-xs text-gray-500">{{ i.itemFamilyNumber }}</div>
             </td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-3 py-2 text-sm">
               <div class="font-medium">{{ i.productName1 }}</div>
               <div v-if="i.productName2" class="text-xs text-gray-500">{{ i.productName2 }}</div>
             </td>
-            <td class="px-4 py-3 text-sm font-mono text-gray-600">{{ i.productYear ?? '—' }}</td>
-            <td class="px-4 py-3 text-sm">{{ i.brandName }}</td>
-            <td class="px-4 py-3 text-sm text-gray-600">
+            <td class="px-3 py-2 text-sm font-mono text-gray-600">{{ i.productYear ?? '—' }}</td>
+            <td class="px-3 py-2 text-sm">{{ i.brandName }}</td>
+            <td class="px-3 py-2 text-sm text-gray-600">
               {{ i.productTypeName }} / {{ i.productSeasonName }}
             </td>
-            <td class="px-4 py-3 text-sm">{{ i.factorySupplierName }}</td>
-            <td class="px-4 py-3 text-sm text-gray-600">{{ i.plannerName ?? '—' }}</td>
-            <td class="px-4 py-3 text-right text-sm font-mono">{{ i.skuVariationCount }}</td>
-            <td class="px-4 py-3 text-sm font-mono">
+            <td class="px-3 py-2 text-sm">{{ i.factorySupplierName }}</td>
+            <td class="px-3 py-2 text-sm text-gray-600">{{ i.plannerName ?? '—' }}</td>
+            <td class="px-3 py-2 text-right text-sm font-mono">{{ i.skuVariationCount }}</td>
+            <td class="px-3 py-2 text-sm font-mono">
               {{ formatPriceRange(i.currentMinPrice, i.currentMaxPrice, i.currencyCode) }}
             </td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-3 py-2 text-sm">
               <span :class="statusBadge(i.status).cls" class="inline-block rounded-full px-2 py-0.5 text-xs">
                 {{ statusBadge(i.status).label }}
               </span>
             </td>
-            <td class="px-4 py-3 text-xs text-gray-500">
+            <td class="px-3 py-2 text-xs text-gray-500">
               {{ new Date(i.updatedAt).toLocaleDateString('ja-JP') }}
             </td>
           </tr>

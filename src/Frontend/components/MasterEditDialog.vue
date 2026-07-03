@@ -92,16 +92,16 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
       <!-- 画面高を超えないよう max-h + 縦フレックス。ヘッダ/フッタは固定、本文のみスクロールさせる
            (フィールド数の多いマスタ (仕入先等) でモーダルが画面外に溢れ操作不能になる問題の修正)。 -->
       <div class="flex max-h-[calc(100vh-3rem)] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl">
-        <header class="shrink-0 border-b border-gray-200 px-6 py-4">
-          <h2 class="text-lg font-semibold">
+        <header class="shrink-0 border-b border-gray-200 px-5 py-3">
+          <h2 class="text-base font-semibold">
             {{ initial ? `${def.label} を編集` : `${def.label} を新規追加` }}
           </h2>
-          <p v-if="initial" class="mt-1 text-xs text-gray-500">
+          <p v-if="initial" class="mt-0.5 text-xs text-gray-500">
             ID: {{ initial.id }} / 更新: {{ new Date(initial.updatedAt).toLocaleString('ja-JP') }}
           </p>
         </header>
 
-        <form class="flex-1 space-y-4 overflow-y-auto px-6 py-4" @submit.prevent="onSubmit">
+        <form class="flex-1 space-y-2.5 overflow-y-auto px-5 py-3" @submit.prevent="onSubmit">
           <div v-for="f in fields" :key="f.key" class="flex flex-col gap-1">
             <label class="text-sm font-medium">
               {{ f.label }}
@@ -175,7 +175,7 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
           </div>
         </form>
 
-        <footer class="flex shrink-0 justify-end gap-2 border-t border-gray-200 bg-gray-50 px-6 py-3">
+        <footer class="flex shrink-0 justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-2.5">
           <button
             type="button"
             class="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm hover:bg-gray-100"

@@ -46,8 +46,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-6xl px-4 py-8">
-    <div class="mb-6">
+  <main class="mx-auto w-full max-w-screen-2xl px-4 py-4">
+    <div class="mb-4">
       <h1 class="text-xl font-bold text-gray-800">分析ダッシュボード</h1>
       <p class="mt-1 text-sm text-gray-500">商品・発注・生産の状況（DB 実データの集計）</p>
     </div>

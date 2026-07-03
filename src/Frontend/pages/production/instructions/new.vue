@@ -63,7 +63,7 @@ const submit = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-5">
+  <main class="mx-auto max-w-screen-2xl px-4 py-4">
     <header class="mb-4">
       <h1 class="text-2xl font-bold">生産指示書 新規作成</h1>
       <p class="mt-1 text-sm text-gray-500">PI-01 商品マスタ＋生産数量を起点に、加工先へ生産を指示します。</p>
@@ -73,9 +73,9 @@ const submit = async () => {
     <section v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500 shadow-sm">読み込み中…</section>
 
     <template v-else-if="family">
-      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
         <div class="mb-3 text-sm"><span class="text-gray-500">品番:</span> <strong>{{ family.family.productName1 }}</strong></div>
-        <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
+        <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-3">
           <label class="block text-sm">
             <span class="text-gray-600">加工先 (工場)</span>
             <div class="mt-1">

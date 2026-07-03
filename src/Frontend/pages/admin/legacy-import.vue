@@ -85,8 +85,8 @@ const execute = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-4xl px-4 py-8">
-    <header class="mb-6">
+  <main class="mx-auto max-w-4xl px-4 py-4">
+    <header class="mb-4">
       <h1 class="text-2xl font-bold">MIG-3 既存データ移行</h1>
       <p class="mt-1 text-sm text-gray-500">
         旧生産管理システムの商品マスタ CSV (1,288 行 × 138 列) を新システム DB に取込みます。
@@ -155,7 +155,7 @@ const execute = async () => {
         </div>
 
         <!-- 結果 -->
-        <div v-if="result" class="mt-6 space-y-4">
+        <div v-if="result" class="mt-6 space-y-3">
           <div class="rounded-md border border-green-300 bg-green-50 p-4">
             <p class="font-semibold text-green-900">取込完了 (経過時間: {{ result.elapsed }})</p>
           </div>

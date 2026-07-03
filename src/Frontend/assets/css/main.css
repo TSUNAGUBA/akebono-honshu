@@ -1,3 +1,16 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 業務アプリ向け高密度 UI の共通基盤。
+   1 画面あたりの情報量を最大化するため、フォームコントロールの高さを 2rem (32px) に統一する。
+   これにより <input> と <select> / オートコンプリート (内部は <input>) の高さ不一致を全ページで解消し、
+   同時にコンパクトな既定高さで密度を上げる。
+   - h-* ユーティリティを付けた要素 (checkbox/radio 等) はユーティリティが優先されるため対象外。
+   - textarea は複数行入力のため高さ固定しない (行数はページ側で指定)。 */
+@layer base {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select {
+    height: 2rem;
+  }
+}

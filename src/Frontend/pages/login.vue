@@ -53,7 +53,7 @@ const onSubmit = async () => {
       <h1 class="mb-1 text-2xl font-bold">
         Akebono Honshu
       </h1>
-      <p class="mb-6 text-sm text-gray-500">
+      <p class="mb-4 text-sm text-gray-500">
         アパレル生産管理システム
       </p>
 
@@ -68,7 +68,7 @@ const onSubmit = async () => {
         >
       </label>
 
-      <label class="mb-6 block">
+      <label class="mb-4 block">
         <span class="mb-1 block text-sm font-medium">パスワード</span>
         <input
           v-model="password"
