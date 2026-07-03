@@ -37,33 +37,30 @@ const errorMessage = ref('')
 
 // フォーム
 const today = new Date().toISOString().split('T')[0]
+// 発注区分 (国内/海外) は入力項目の出し分けには使わない (§5 統一)。国内/海外で共通の入力項目とし、
+// is_overseas は帳票の言語切替 (国内=日本語/海外=英語) と一覧の区分バッジのみに使う。
 const form = ref({
-  supplierId: 0,
-  deliveryDestinationId: 0,
-  departmentId: 0,
-  warehouseId: 0,
-  dueDate: today,
-  ordererUserId: 0,
-  managerUserId: 0,
-  subOrderer1UserId: null as number | null,
-  subOrderer2UserId: null as number | null,
-  subOrderer3UserId: null as number | null,
-  subOrderer4UserId: null as number | null,
-  subOrderer5UserId: null as number | null,
-  subOrderer6UserId: null as number | null,
+  orderNo: '',            // 発注書番号 (§5)。従来は初回 Excel 出力時に採番だが、作成時に手入力も可能 (任意)。
+  supplierId: 0,          // 発注先 (旧「仕入先」、§5 名称変更)
+  customerRef: '',        // 得意先 / 受注先 (国内/海外共通)
+  deliveryDestinationId: 0, // 納品先
+  departmentId: 0,        // 発注事業部
+  landingPlace: '',       // 荷揚地 (国内/海外共通)
+  warehouseId: 0,         // 納入倉庫1
+  warehouse2Id: null as number | null, // 納入倉庫2 (国内/海外共通)
+  warehouse3Id: null as number | null, // 納入倉庫3 (国内/海外共通)
+  dueDate: today,         // 取引先納入日 (旧「納入日」、§5 名称変更)
+  factoryShippingDate: '',        // 工場出荷日 (国内/海外共通)
+  deliveryPlaceShippingDate: '',  // 検品場出荷日 (列 delivery_place_shipping_date、国内/海外共通)
+  overseasDepartureDate: '',      // 海外出港日 (国内/海外共通)
+  ordererUserId: 0,       // 発注担当者
+  managerUserId: 0,       // 発注管理者
   // 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」。各行はテンプレ
   // 選択式 (連絡文書サジェスト再利用) + 自由編集可。新フローは本 6 列を SoT として送る (communicationText
   // は新フロントから書かない)。固定長 6 の配列で各スロットを保持する。
   communicationLines: ['', '', '', '', '', ''] as string[],
-  // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
+  // 発注区分 (国内=false/海外=true)。帳票の言語切替・区分バッジのみに使用 (入力欄の出し分けはしない §5)。
   isOverseas: false,
-  landingPlace: '',
-  customerRef: '',
-  factoryShippingDate: '',
-  deliveryPlaceShippingDate: '',
-  overseasDepartureDate: '',
-  warehouse2Id: null as number | null,
-  warehouse3Id: null as number | null,
 })
 
 // 分納×倉庫の多次元明細 (PR5b)。1 明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
@@ -79,9 +76,8 @@ interface LineRow {
   quantity: number
   unitPriceSnapshot: number
   currencyCodeSnapshot: string
-  // 旧 発注明細 項目 (Phase B、任意)
+  // 旧 発注明細 項目 (Phase B、任意)。見積単価は §5 で発注書作成フォームから除外。
   packQuantity: number | null
-  estimateUnitPrice: number | null
   // 発注明細 備考 (spec 明細 No.26、任意)
   remark: string | null
   // 分納×倉庫の多次元明細 (PR5b、任意)。空 = 分納なし (単一明細、従来挙動)。
@@ -90,16 +86,13 @@ interface LineRow {
   showDeliveries: boolean
 }
 const lines = ref<LineRow[]>([
-  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, estimateUnitPrice: null, remark: null, deliveries: [], showDeliveries: false },
+  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, remark: null, deliveries: [], showDeliveries: false },
 ])
 
 // --- オートコンプリート選択肢（マスタ参照を部分一致検索可能に） ---
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
 const skuOptions = computed(() => skus.value.map((s) => ({ id: s.id, label: `${s.sku} - ${s.productName} (${s.colorName}/${s.sizeName})`, code: s.sku })))
-// 副担当者 1〜6（DTO に存在するが従来 UI が無く未入力だった項目を補完）
-const subKeys = ['subOrderer1UserId', 'subOrderer2UserId', 'subOrderer3UserId', 'subOrderer4UserId', 'subOrderer5UserId', 'subOrderer6UserId'] as const
-const subOrdererValue = (n: number): number | null => form.value[subKeys[n - 1]]
-const setSubOrderer = (n: number, v: number | null) => { form.value[subKeys[n - 1]] = v }
+// 副担当者 1〜6 は発注書作成フォームから除外 (§5)。DTO 列は後方互換のため残すが、作成時は常に null を送る。
 
 onMounted(async () => {
   try {
@@ -161,7 +154,6 @@ const addLine = () => {
     unitPriceSnapshot: 0,
     currencyCodeSnapshot: 'JPY',
     packQuantity: null,
-    estimateUnitPrice: null,
     remark: null,
     deliveries: [],
     showDeliveries: false,
@@ -264,12 +256,14 @@ const canSubmit = computed(() =>
 const onSubmit = async () => {
   errorMessage.value = ''
   if (!canSubmit.value) {
-    errorMessage.value = '必須項目を入力してください (仕入先 / 納品先 / 担当者 / 明細)'
+    errorMessage.value = '必須項目を入力してください (発注先 / 納品先 / 担当者 / 明細)'
     return
   }
   submitting.value = true
   try {
     const payload: CreateOrderPayload = {
+      // 発注書番号 (§5)。空欄は null (初回 Excel 出力時に自動採番される従来挙動にフォールバック)。
+      orderNo: form.value.orderNo.trim() || null,
       supplierId: form.value.supplierId,
       deliveryDestinationId: form.value.deliveryDestinationId,
       departmentId: form.value.departmentId,
@@ -277,12 +271,13 @@ const onSubmit = async () => {
       dueDate: form.value.dueDate,
       ordererUserId: form.value.ordererUserId,
       managerUserId: form.value.managerUserId,
-      subOrderer1UserId: form.value.subOrderer1UserId,
-      subOrderer2UserId: form.value.subOrderer2UserId,
-      subOrderer3UserId: form.value.subOrderer3UserId,
-      subOrderer4UserId: form.value.subOrderer4UserId,
-      subOrderer5UserId: form.value.subOrderer5UserId,
-      subOrderer6UserId: form.value.subOrderer6UserId,
+      // 副担当者 1〜6 は作成フォームから除外 (§5)。後方互換のため列は残すが常に null を送る。
+      subOrderer1UserId: null,
+      subOrderer2UserId: null,
+      subOrderer3UserId: null,
+      subOrderer4UserId: null,
+      subOrderer5UserId: null,
+      subOrderer6UserId: null,
       // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列を SoT として送る (空欄は null)。
       // communicationText は新規作成では書かない (旧データ専用フォールバック列のため null)。
       communicationText: null,
@@ -300,7 +295,8 @@ const onSubmit = async () => {
         unitPriceSnapshot: Number(l.unitPriceSnapshot),
         currencyCodeSnapshot: l.currencyCodeSnapshot,
         packQuantity: l.packQuantity != null ? Number(l.packQuantity) : null,
-        estimateUnitPrice: l.estimateUnitPrice != null ? Number(l.estimateUnitPrice) : null,
+        // 見積単価は発注書作成フォームから除外 (§5)。後方互換のため列は残すが常に null を送る。
+        estimateUnitPrice: null,
         // 発注明細 備考 (spec 明細 No.26)。空欄は null で送る。
         remark: l.remark?.trim() || null,
         // 分納×倉庫の多次元明細 (PR5b)。空 = null (分納なし、従来挙動)。1 件以上あれば配列で送る。
@@ -313,15 +309,16 @@ const onSubmit = async () => {
             }))
           : null,
       })),
-      // 旧 発注書 国内/海外 項目 (Phase B)。海外区分が false のときは海外専用項目は送らない (null/空)。
+      // 発注区分 (国内/海外)。§5 で入力項目は国内/海外共通に統一したため、以下の項目は区分に関わらず常に送る。
+      // is_overseas は帳票の言語切替・区分バッジのみに使う。
       isOverseas: form.value.isOverseas,
-      landingPlace: form.value.isOverseas ? (form.value.landingPlace.trim() || null) : null,
-      customerRef: form.value.isOverseas ? (form.value.customerRef.trim() || null) : null,
-      factoryShippingDate: form.value.isOverseas ? (form.value.factoryShippingDate || null) : null,
-      deliveryPlaceShippingDate: form.value.isOverseas ? (form.value.deliveryPlaceShippingDate || null) : null,
-      overseasDepartureDate: form.value.isOverseas ? (form.value.overseasDepartureDate || null) : null,
-      warehouse2Id: form.value.isOverseas ? form.value.warehouse2Id : null,
-      warehouse3Id: form.value.isOverseas ? form.value.warehouse3Id : null,
+      landingPlace: form.value.landingPlace.trim() || null,
+      customerRef: form.value.customerRef.trim() || null,
+      factoryShippingDate: form.value.factoryShippingDate || null,
+      deliveryPlaceShippingDate: form.value.deliveryPlaceShippingDate || null,
+      overseasDepartureDate: form.value.overseasDepartureDate || null,
+      warehouse2Id: form.value.warehouse2Id,
+      warehouse3Id: form.value.warehouse3Id,
     }
     const res = await create(payload)
     await navigateTo(`/orders/${res.id}`)
@@ -361,13 +358,14 @@ const onSubmit = async () => {
       </div>
 
       <form v-else class="space-y-4" @submit.prevent="onSubmit">
-        <!-- ① 発注区分: 先頭の必須選択 (is_overseas、国内/海外 で以降のフォームが変化) -->
+        <!-- ① 発注区分 (国内/海外)。§5 で入力項目は国内/海外共通に統一。区分は帳票の言語切替
+             (国内=日本語/海外=英語) と一覧の区分バッジのみに使い、入力欄の出し分けはしない。 -->
         <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="font-semibold">① 発注区分 <span class="text-red-500">*</span></h2>
               <p class="mt-0.5 text-xs text-gray-500">
-                国内 / 海外 を選択してください。海外を選ぶと海外発注情報の入力欄が表示されます。
+                国内 / 海外 を選択してください。帳票の言語 (国内=日本語 / 海外=英語) と一覧の区分に使われます。入力項目は共通です。
               </p>
             </div>
             <!-- 発注区分 国内/海外 セグメントトグル (is_overseas、二択モードスイッチ) -->
@@ -388,97 +386,85 @@ const onSubmit = async () => {
           </div>
         </section>
 
-        <!-- ② 発注書ヘッダ -->
+        <!-- ② 発注書ヘッダ (国内/海外共通、§5)。発注先/得意先/納品先・荷揚地・納入倉庫1〜3・各出荷日を統一入力。 -->
         <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div class="mb-3 flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">② 発注書ヘッダ</h2>
           </div>
-          <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">仕入先 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.supplierId" :items="suppliers" />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">納品先 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.deliveryDestinationId" :items="destinations" />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">事業部 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.departmentId" :items="departments" />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">納入倉庫 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.warehouseId" :items="warehouses" />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">納入日 <span class="text-red-500">*</span></span>
-              <input v-model="form.dueDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">発注担当 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.ordererUserId" :items="userOptions" />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">発注管理者 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.managerUserId" :items="userOptions" />
-            </label>
-            <label v-for="n in 6" :key="n" class="flex flex-col gap-1">
-              <span class="font-medium">副担当者{{ n }}</span>
-              <MasterSelect
-                :model-value="subOrdererValue(n)"
-                :items="userOptions"
-                allow-empty
-                empty-label="（なし）"
-                placeholder="（任意）"
-                @update:model-value="(v) => setSubOrderer(n, v)"
-              />
-            </label>
-          </div>
-        </section>
 
-        <!-- ③ 海外発注情報 (is_overseas=true のときのみ表示、Phase B) -->
-        <section v-if="form.isOverseas" class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">③ 海外発注情報</h2>
+          <!-- 取引先系: 発注書番号 / 発注先 / 得意先 / 納品先 -->
           <div class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
-              <span class="font-medium">荷揚地</span>
-              <input v-model="form.landingPlace" type="text" maxlength="128" placeholder="Port of entry" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+              <span class="font-medium">発注書番号</span>
+              <input v-model="form.orderNo" type="text" maxlength="16" placeholder="例: S3858 (未入力なら初回出力時に自動採番)" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">発注先 <span class="text-red-500">*</span></span>
+              <MasterSelect v-model="form.supplierId" :items="suppliers" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">得意先</span>
               <input v-model="form.customerRef" type="text" maxlength="128" placeholder="得意先 / 受注先" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
+              <span class="font-medium">納品先 <span class="text-red-500">*</span></span>
+              <MasterSelect v-model="form.deliveryDestinationId" :items="destinations" />
+            </label>
+          </div>
+
+          <!-- 事業部 / 荷揚地 / 納入倉庫1〜3 -->
+          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">発注事業部 <span class="text-red-500">*</span></span>
+              <MasterSelect v-model="form.departmentId" :items="departments" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">荷揚地</span>
+              <input v-model="form.landingPlace" type="text" maxlength="128" placeholder="Port of entry" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">納入倉庫1 <span class="text-red-500">*</span></span>
+              <MasterSelect v-model="form.warehouseId" :items="warehouses" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">納入倉庫2</span>
+              <MasterSelect v-model="form.warehouse2Id" :items="warehouses" allow-empty empty-label="（なし）" placeholder="（任意）" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">納入倉庫3</span>
+              <MasterSelect v-model="form.warehouse3Id" :items="warehouses" allow-empty empty-label="（なし）" placeholder="（任意）" />
+            </label>
+          </div>
+
+          <!-- 日付: 取引先納入日 / 工場出荷日 / 検品場出荷日 / 海外出港日 -->
+          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <label class="flex flex-col gap-1">
+              <span class="font-medium">取引先納入日 <span class="text-red-500">*</span></span>
+              <input v-model="form.dueDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+            </label>
+            <label class="flex flex-col gap-1">
               <span class="font-medium">工場出荷日</span>
               <input v-model="form.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="font-medium">納品所出荷日</span>
+              <span class="font-medium">検品場出荷日</span>
               <input v-model="form.deliveryPlaceShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">海外出港日</span>
               <input v-model="form.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
+          </div>
+
+          <!-- 担当: 発注担当者 / 発注管理者 (副担当者1〜6 は §5 で除外) -->
+          <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
-              <span class="font-medium">納入倉庫2</span>
-              <MasterSelect
-                v-model="form.warehouse2Id"
-                :items="warehouses"
-                allow-empty
-                empty-label="（なし）"
-                placeholder="（任意）"
-              />
+              <span class="font-medium">発注担当者 <span class="text-red-500">*</span></span>
+              <MasterSelect v-model="form.ordererUserId" :items="userOptions" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="font-medium">納入倉庫3</span>
-              <MasterSelect
-                v-model="form.warehouse3Id"
-                :items="warehouses"
-                allow-empty
-                empty-label="（なし）"
-                placeholder="（任意）"
-              />
+              <span class="font-medium">発注管理者 <span class="text-red-500">*</span></span>
+              <MasterSelect v-model="form.managerUserId" :items="userOptions" />
             </label>
           </div>
         </section>
@@ -493,10 +479,9 @@ const onSubmit = async () => {
             <thead class="border-b border-gray-200 bg-gray-50">
               <tr>
                 <th class="px-2 py-1.5 text-left">SKU</th>
-                <th class="px-2 py-1.5 text-right">数量</th>
+                <th class="px-2 py-1.5 text-right">発注数</th>
                 <th class="px-2 py-1.5 text-right">入数</th>
-                <th class="px-2 py-1.5 text-right">単価</th>
-                <th class="px-2 py-1.5 text-right">見積単価</th>
+                <th class="px-2 py-1.5 text-right">仕入単価</th>
                 <th class="px-2 py-1.5 text-left">通貨</th>
                 <th class="px-2 py-1.5 text-left">備考</th>
                 <th class="px-2 py-1.5 text-right">小計</th>
@@ -521,9 +506,6 @@ const onSubmit = async () => {
                 <td class="px-2 py-1.5 text-right">
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
                 </td>
-                <td class="px-2 py-1.5 text-right">
-                  <input v-model.number="l.estimateUnitPrice" type="number" min="0" step="0.01" placeholder="—" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right" />
-                </td>
                 <td class="px-2 py-1.5">
                   <div class="w-20">
                     <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" @update:model-value="(v) => l.currencyCodeSnapshot = v" />
@@ -545,7 +527,7 @@ const onSubmit = async () => {
               </tr>
               <!-- 分納 / 倉庫別 サブセクション (PR5b、任意・折りたたみ可)。倉庫 + 納期 + 数量 + 入数 を行追加/削除。 -->
               <tr v-if="l.showDeliveries" class="border-b border-gray-100 last:border-0 bg-gray-50">
-                <td colspan="9" class="px-3 py-2">
+                <td colspan="8" class="px-3 py-2">
                   <div class="mb-2 flex items-center justify-between">
                     <span class="text-xs font-semibold text-gray-600">分納 / 倉庫別 (任意 — 倉庫×納期で多次元化。空なら単一明細)</span>
                     <button type="button" class="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs hover:bg-gray-100" @click="addDelivery(idx)">+ 分納行を追加</button>

@@ -24,7 +24,8 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
             s.Id, s.Code, s.Name, s.OfficialName, s.ItemConversionCode,
             s.CountryId, s.Country != null ? s.Country.Name : null,
             s.SupplierType, s.AlertTarget,
-            s.DeleteFlag, s.CreatedAt, s.UpdatedAt)).ToListAsync(ct);
+            s.DeleteFlag, s.CreatedAt, s.UpdatedAt,
+            s.CurrencyCode, s.DrayageCost)).ToListAsync(ct);
 
         await audit.LogAsync(actorUserId, "Supplier.List",
             entityType: "Supplier", note: $"Returned {items.Count}",
@@ -48,6 +49,8 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
             CountryId = req.CountryId,
             SupplierType = req.SupplierType,
             AlertTarget = req.AlertTarget,
+            CurrencyCode = string.IsNullOrWhiteSpace(req.CurrencyCode) ? "JPY" : req.CurrencyCode.Trim().ToUpperInvariant(),
+            DrayageCost = req.DrayageCost,
             CreatedAt = now,
             CreatedByUserId = actorUserId,
             UpdatedAt = now,
@@ -76,6 +79,8 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         entity.CountryId = req.CountryId;
         entity.SupplierType = req.SupplierType;
         entity.AlertTarget = req.AlertTarget;
+        entity.CurrencyCode = string.IsNullOrWhiteSpace(req.CurrencyCode) ? "JPY" : req.CurrencyCode.Trim().ToUpperInvariant();
+        entity.DrayageCost = req.DrayageCost;
         entity.UpdatedAt = SystemTime.Now;
         entity.UpdatedByUserId = actorUserId;
 

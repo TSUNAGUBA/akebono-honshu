@@ -79,12 +79,16 @@ export const masterDefinitions: MasterDef[] = [
       { key: 'countryId', label: '国', type: 'select-master', required: true, master: 'countries', displayKey: 'countryName' },
       { key: 'supplierType', label: '区分', type: 'number', required: true, help: '0=国内, 1=海外' },
       { key: 'alertTarget', label: 'アラート対象', type: 'number', help: '0=対象外, 1=対象' },
+      { key: 'currencyCode', label: '適用通貨', type: 'text', maxLength: 3, placeholder: 'JPY', help: '仕入単価に適用する通貨 (JPY/USD/CNY 等)。商品⑤の為替・円換算に使用 (§2f)' },
+      { key: 'drayageCost', label: 'ドレー代', type: 'decimal', help: '仕入先ごとのドレー代。商品⑤仕入単価へ自動反映 (§2i)' },
     ],
     extensionColumns: [
       { key: 'officialName', label: '法的正式名' },
       { key: 'itemConversionCode', label: '工場コード' },
       { key: 'countryName', label: '国' },
       { key: 'supplierType', label: '区分' },
+      { key: 'currencyCode', label: '通貨' },
+      { key: 'drayageCost', label: 'ドレー代' },
     ],
   },
   {

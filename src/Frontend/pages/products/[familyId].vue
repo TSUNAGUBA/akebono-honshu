@@ -99,9 +99,15 @@ const royaltyTargetOptions = [{ value: '1', label: '小売価格' }, { value: '2
 const royaltyTargetLabel = (t: number | null): string =>
   t === 1 ? '小売価格' : t === 2 ? '納品価格' : '—'
 
-// 画像アップロード
+// 画像アップロード (§2a: 企画0 / 本番1 の区分ごと)
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
+const uploadCategory = ref(0) // 追加時の区分 (0=企画 / 1=本番)
+const IMAGE_CATEGORIES = [
+  { key: 0, label: '企画画像' },
+  { key: 1, label: '本番画像' },
+] as const
+const imagesByCategory = (cat: number) => detail.value?.images.filter((i) => i.imageCategory === cat) ?? []
 
 const reload = async () => {
   loading.value = true
@@ -296,7 +302,7 @@ const onFileSelect = async (event: Event) => {
   errorMessage.value = ''
   try {
     for (const file of Array.from(target.files)) {
-      await uploadImage(familyId.value, file)
+      await uploadImage(familyId.value, file, uploadCategory.value)
     }
     successMessage.value = '画像をアップロードしました'
     await reload()
@@ -784,11 +790,25 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
         </table>
       </section>
 
-      <!-- 画像管理 -->
+      <!-- 画像管理 (§2a: 企画画像 / 本番画像 の区分ごとに表示・追加) -->
       <section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
-          <h2 class="font-semibold">画像 ({{ detail.images.length }} / 5 枚)</h2>
-          <div v-if="canEditMaster && detail.images.length < 5">
+        <div class="mb-3 flex flex-col gap-2 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 class="font-semibold">画像 <span class="text-xs font-normal text-gray-500">(区分ごと最大 5 枚)</span></h2>
+          <div v-if="canEditMaster" class="flex items-center gap-2">
+            <!-- 追加区分の選択 -->
+            <div class="inline-flex overflow-hidden rounded-md border border-gray-300 text-xs">
+              <button
+                v-for="cat in IMAGE_CATEGORIES"
+                :key="cat.key"
+                type="button"
+                class="px-3 py-1 font-medium transition-colors"
+                :class="[
+                  cat.key > 0 ? 'border-l border-gray-300' : '',
+                  uploadCategory === cat.key ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50',
+                ]"
+                @click="uploadCategory = cat.key"
+              >{{ cat.label }}</button>
+            </div>
             <input
               ref="fileInput"
               type="file"
@@ -799,46 +819,57 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             />
             <button
               type="button"
-              :disabled="uploading"
+              :disabled="uploading || imagesByCategory(uploadCategory).length >= 5"
               class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
               @click="fileInput?.click()"
             >
-              {{ uploading ? 'アップロード中…' : '+ 画像追加' }}
+              {{ uploading ? 'アップロード中…' : `+ ${uploadCategory === 1 ? '本番' : '企画'}画像を追加` }}
             </button>
           </div>
         </div>
 
         <div v-if="detail.images.length === 0" class="py-8 text-center text-sm text-gray-500">
-          画像が登録されていません (JPEG / PNG / WebP、最大 5MB、5 枚まで)
+          画像が登録されていません (JPEG / PNG / WebP、最大 5MB、区分ごと 5 枚まで)
         </div>
 
-        <div v-else class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
-          <div
-            v-for="img in detail.images"
-            :key="img.id"
-            class="group relative overflow-hidden rounded-md border border-gray-200"
-          >
-            <img v-if="img.url" :src="img.url" :alt="img.originalFilename ?? `image-${img.orderNo}`"
-                 class="aspect-square w-full object-cover" />
-            <div v-else
-                 class="flex aspect-square w-full items-center justify-center bg-gray-100 text-xs text-gray-400">
-              画像読込失敗
+        <!-- 区分ごとのグリッド -->
+        <div v-else class="space-y-4">
+          <div v-for="cat in IMAGE_CATEGORIES" :key="cat.key">
+            <div class="mb-1.5 text-sm font-medium text-gray-700">
+              {{ cat.label }} <span class="text-xs font-normal text-gray-400">({{ imagesByCategory(cat.key).length }} 枚)</span>
             </div>
-            <div class="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white">
-              #{{ img.orderNo }}
+            <div v-if="imagesByCategory(cat.key).length === 0" class="py-3 text-center text-xs text-gray-400">
+              {{ cat.label }}はありません
             </div>
-            <div class="border-t border-gray-100 bg-gray-50 px-2 py-1 text-xs">
-              <div class="truncate" :title="img.originalFilename ?? ''">
-                {{ img.originalFilename ?? '—' }}
-              </div>
-              <div class="flex justify-between text-gray-500">
-                <span>{{ formatBytes(img.fileSizeBytes) }}</span>
-                <button
-                  v-if="canEditMaster"
-                  type="button"
-                  class="text-red-600 hover:underline"
-                  @click="onDeleteImage(img)"
-                >削除</button>
+            <div v-else class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
+              <div
+                v-for="img in imagesByCategory(cat.key)"
+                :key="img.id"
+                class="group relative overflow-hidden rounded-md border border-gray-200"
+              >
+                <img v-if="img.url" :src="img.url" :alt="img.originalFilename ?? `image-${img.orderNo}`"
+                     class="aspect-square w-full object-cover" />
+                <div v-else
+                     class="flex aspect-square w-full items-center justify-center bg-gray-100 text-xs text-gray-400">
+                  画像読込失敗
+                </div>
+                <div class="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white">
+                  #{{ img.orderNo }}
+                </div>
+                <div class="border-t border-gray-100 bg-gray-50 px-2 py-1 text-xs">
+                  <div class="truncate" :title="img.originalFilename ?? ''">
+                    {{ img.originalFilename ?? '—' }}
+                  </div>
+                  <div class="flex justify-between text-gray-500">
+                    <span>{{ formatBytes(img.fileSizeBytes) }}</span>
+                    <button
+                      v-if="canEditMaster"
+                      type="button"
+                      class="text-red-600 hover:underline"
+                      @click="onDeleteImage(img)"
+                    >削除</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

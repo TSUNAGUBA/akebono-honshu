@@ -29,6 +29,8 @@ public interface IAkebonoDbContext
     DbSet<DocumentTemplatePurchase> DocumentTemplatePurchases { get; }
     DbSet<DocumentTemplateConfirmation> DocumentTemplateConfirmations { get; }
     DbSet<DocumentTextPurchase> DocumentTextPurchases { get; }
+    // 為替マスタ (§2f、bespoke master)
+    DbSet<ExchangeRate> ExchangeRates { get; }
 
     // 商品関連 (Iteration 2、Phase 5 §4)
     DbSet<ProductFamily> ProductFamilies { get; }

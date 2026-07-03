@@ -217,9 +217,12 @@ public class ProductFamilyService(
                 Family = pf,
                 SkuCount = pf.Products.Count(p => !p.IsDeleted),
                 ImageCount = pf.Images.Count(i => !i.IsDeleted),
+                // 画像利用シーンの代表画像 (§2a): 本番画像 (image_category=1) があればその order_no 最小、
+                // 無ければ企画画像 (image_category=0) の order_no 最小。区分降順→order_no 昇順の先頭で解決する。
                 PrimaryImageS3Key = pf.Images
                     .Where(i => !i.IsDeleted)
-                    .OrderBy(i => i.OrderNo)
+                    .OrderByDescending(i => i.ImageCategory)
+                    .ThenBy(i => i.OrderNo)
                     .Select(i => i.S3Key)
                     .FirstOrDefault(),
                 // PR2: 現在有効な単価行の最小/最大。size 専用行 (size_id 非NULL) と全サイズ既定行
@@ -394,9 +397,11 @@ public class ProductFamilyService(
             .OrderBy(p => p.Sku)
             .ToListAsync(ct);
 
+        // §2a: 区分 (企画→本番) ごとに order_no 昇順で返す。フロントは image_category でグルーピング表示する。
         var images = await db.ProductImages
             .Where(i => i.ProductFamilyId == familyId && !i.IsDeleted)
-            .OrderBy(i => i.OrderNo)
+            .OrderBy(i => i.ImageCategory)
+            .ThenBy(i => i.OrderNo)
             .ToListAsync(ct);
 
         var currentPrices = await db.ProductSupplierPrices
@@ -436,7 +441,7 @@ public class ProductFamilyService(
         for (var idx = 0; idx < images.Count; idx++)
         {
             var i = images[idx];
-            imageSummaries.Add(new ImageSummary(i.Id, i.OrderNo, i.S3Key, i.ThumbS3Key,
+            imageSummaries.Add(new ImageSummary(i.Id, i.OrderNo, i.ImageCategory, i.S3Key, i.ThumbS3Key,
                 i.MimeType, i.FileSizeBytes, i.OriginalFilename, imageUrls[idx]));
         }
 

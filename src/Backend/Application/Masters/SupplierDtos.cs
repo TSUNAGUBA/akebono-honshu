@@ -12,7 +12,10 @@ public record SupplierListItem(
     short AlertTarget,
     bool DeleteFlag,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    // 適用通貨 (§2f) / ドレー代 (§2i、仕入先ごと)。末尾追加 = 下位互換。
+    string CurrencyCode = "JPY",
+    decimal? DrayageCost = null);
 
 public record SupplierWriteRequest(
     string Code,
@@ -21,4 +24,7 @@ public record SupplierWriteRequest(
     string ItemConversionCode,
     long CountryId,
     short SupplierType,
-    short AlertTarget);
+    short AlertTarget,
+    // 適用通貨 (§2f) / ドレー代 (§2i)。末尾追加 = 下位互換 (旧クライアントは既定 JPY / null)。
+    string CurrencyCode = "JPY",
+    decimal? DrayageCost = null);

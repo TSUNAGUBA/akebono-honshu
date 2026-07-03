@@ -37,7 +37,9 @@ public record CreateOrderRequest(
     string? CommunicationLine3 = null,
     string? CommunicationLine4 = null,
     string? CommunicationLine5 = null,
-    string? CommunicationLine6 = null);
+    string? CommunicationLine6 = null,
+    // 発注書番号 (§5、末尾・nullable = 下位互換)。作成時に手入力可能。null なら初回 Excel 出力時に自動採番。
+    string? OrderNo = null);
 
 public record OrderLineInput(
     long ProductId,
@@ -84,7 +86,8 @@ public record OrderListItem(
     DateTime UpdatedAt,
     // 発注区分 国内/海外 (Phase B、is_overseas)。一覧でのタブ絞込・区分バッジ表示用。
     bool IsOverseas = false,
-    // 発注状態 5 値モデル (#3a)。DeliveredAt/IsDeleted から納品完了/発注削除 を導出 (フロント側)。
+    // 発注状態 4 値モデル (§3b)。OrderedAt(発注済)/Status(発注中止)/IsDeleted(発注削除) から導出 (フロント側)。
+    // DeliveredAt は §3b で状態導出から除外 (後方互換のため列は残すが未使用)。
     DateTime? DeliveredAt = null,
     bool IsDeleted = false,
     // 一覧 SPLIT フィルタ (#3a) 用フィールド。発注先/発注者/得意先/単価未決定で client-side 絞込。
@@ -92,7 +95,9 @@ public record OrderListItem(
     long OrdererUserId = 0,
     string? CustomerName = null,
     // 明細に単価未決定 (unit_price_snapshot <= 0) を含むか (クエリで EXISTS 集計)。
-    bool HasUndecidedPrice = false);
+    bool HasUndecidedPrice = false,
+    // 発注済日時 (§3b)。NULL=未発注。フロントの状態導出に使用。
+    DateTime? OrderedAt = null);
 
 // ─────────────────────────────────────────────────
 // 詳細 (GET /api/v1/orders/{id}、O-04 編集画面ベース)
@@ -147,7 +152,8 @@ public record OrderDetail(
     string? Warehouse2Name = null,
     long? Warehouse3Id = null,
     string? Warehouse3Name = null,
-    // 発注状態 5 値モデル (#3a)。納品完了/発注削除 の状態表示・操作可否判定に使う。
+    // 発注状態 4 値モデル (§3b)。発注済(OrderedAt、末尾)/発注中止(Status)/発注削除(IsDeleted) の状態表示・
+    // 操作可否判定に使う。DeliveredAt は §3b で状態導出から除外 (後方互換のため列は残すが未使用)。
     // 操作者名は cancelled_by と同じく詳細では非表示 (日時のみ表示)。
     DateTime? DeliveredAt = null,
     bool IsDeleted = false,
@@ -160,7 +166,9 @@ public record OrderDetail(
     string? CommunicationLine3 = null,
     string? CommunicationLine4 = null,
     string? CommunicationLine5 = null,
-    string? CommunicationLine6 = null);
+    string? CommunicationLine6 = null,
+    // 発注済日時 (§3b)。NULL=未発注。詳細の状態表示・操作可否判定に使う。
+    DateTime? OrderedAt = null);
 
 public record OrderLineDetail(
     long Id,
@@ -253,6 +261,18 @@ public record UpdateLineInput(
 // 中止 (POST /api/v1/orders/{id}/cancel、O-05)
 // ─────────────────────────────────────────────────
 public record CancelOrderRequest(string CancelReason);
+
+// ─────────────────────────────────────────────────
+// 発注状態の一括変更 (POST /api/v1/orders/bulk-status、§3c)
+//   TargetState = notOrdered(未発注) / ordered(発注済) / cancelled(発注中止) / deleted(発注削除)。
+//   終端状態ガードで変更できない発注はスキップし、Updated / Skipped を返す (非ブロッキング)。
+// ─────────────────────────────────────────────────
+public record BulkStatusRequest(
+    List<long> OrderIds,
+    string TargetState,
+    string? CancelReason = null);
+
+public record BulkStatusResult(int Updated, int Skipped);
 
 // ─────────────────────────────────────────────────
 // 帳票出力フォーム (POST /api/v1/orders/{id}/export、旧システム「発注書出力」画面相当)

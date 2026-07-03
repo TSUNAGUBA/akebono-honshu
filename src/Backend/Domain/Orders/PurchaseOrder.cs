@@ -32,11 +32,17 @@ public class PurchaseOrder
     public long? CancelledByUserId { get; set; }
     public string? CancelReason { get; set; }
 
-    // 発注状態 5 値モデル (#3a)。納品完了 (DeliveredAt) / 発注削除 (IsDeleted) を新設。
-    // CancelledAt/CancelledByUserId と同じく操作者列はナビ無し (id のみ保持)。
-    /// <summary>納品完了日時 (NULL=未納品)。正式発注済の発注を「納品完了にする」操作で SET</summary>
+    // 発注状態 4 値モデル (§3b)。未発注 / 発注済 / 発注中止 / 発注削除。
+    // 「発注済」はユーザー操作で明示設定する (OrderedAt)。ダウンロード (Excel 出力) では状態を変えない。
+    // 導出優先順位: 発注削除(IsDeleted) > 発注中止(Status=Cancelled) > 発注済(OrderedAt!=null) > 未発注。
+    /// <summary>発注済日時 (NULL=未発注)。発注を「発注済にする」操作で SET、「未発注に戻す」で NULL。出力とは独立 (§3b)。</summary>
+    public DateTime? OrderedAt { get; set; }
+    /// <summary>発注済にした操作者 (users.id)</summary>
+    public long? OrderedByUserId { get; set; }
+    // 納品完了 (旧 5 値モデル) は §3b で廃止。列は後方互換のため残すが、状態導出・UI では使用しない。
+    /// <summary>[廃止] 納品完了日時。§3b の 4 値化で状態導出から除外 (列は後方互換のため保持)。</summary>
     public DateTime? DeliveredAt { get; set; }
-    /// <summary>納品完了操作者 (users.id)</summary>
+    /// <summary>[廃止] 納品完了操作者 (users.id)</summary>
     public long? DeliveredByUserId { get; set; }
     /// <summary>論理削除フラグ (TRUE=発注削除)。NOT NULL DEFAULT FALSE。物理削除はしない</summary>
     public bool IsDeleted { get; set; }

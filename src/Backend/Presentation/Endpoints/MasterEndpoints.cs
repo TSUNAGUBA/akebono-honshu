@@ -25,6 +25,7 @@ public static class MasterEndpoints
 
         MapSizes(app);
         MapSuppliers(app);
+        MapExchangeRates(app);
         MapProductTypes(app);
         MapProductSeasons(app);
         MapProductGroups(app);
@@ -198,6 +199,77 @@ public static class MasterEndpoints
 
         group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
                                                      SupplierService svc, long id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : Results.NotFound();
+        });
+    }
+
+    // 為替マスタ (§2f、bespoke master)。年月 (YYYY-MM) × 通貨ごとの対円レートを CRUD する。
+    private static void MapExchangeRates(IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/api/v1/masters/exchange-rates");
+
+        group.MapGet("/", async (HttpContext http, ExchangeRateService svc,
+                                  bool? includeDeleted, CancellationToken ct) =>
+        {
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
+                return Results.Problem(statusCode: 401, title: "Unauthorized");
+            var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
+            return Results.Ok(new { data = items });
+        });
+
+        group.MapGet("/{id:long}", async (long id, ExchangeRateService svc, CancellationToken ct) =>
+        {
+            var entity = await svc.GetAsync(id, ct);
+            return entity is null ? Results.NotFound() : Results.Ok(entity);
+        });
+
+        group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
+                                    ExchangeRateService svc, ExchangeRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            try
+            {
+                var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
+                return Results.Created($"/api/v1/masters/exchange-rates/{created.Id}", created);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
+            }
+        });
+
+        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
+                                              ExchangeRateService svc, long id, ExchangeRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            try
+            {
+                var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+                return updated is null ? Results.NotFound() : Results.Ok(updated);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
+            }
+        });
+
+        group.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
+                                              ExchangeRateService svc, long id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : Results.NotFound();
+        });
+
+        group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
+                                                     ExchangeRateService svc, long id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

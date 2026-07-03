@@ -3,7 +3,7 @@ import type { OrderListItem, OrderState } from '~/composables/useOrders'
 import { deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
 import type { MasterItem } from '~/composables/useMasters'
 
-const { list, bulkExport } = useOrders()
+const { list, bulkExport, bulkStatus } = useOrders()
 const { list: listMaster } = useMasters()
 const { apiFetch } = useApi()
 const { user } = useAuth()
@@ -30,10 +30,10 @@ const users = ref<UserOption[]>([])
 // 発注者ドロップダウン用 (orders/new.vue と同じ整形)
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
 
-// --- 発注状態 5 値 (発注削除のみ既定 OFF、他 4 つ ON) ---
-const allStates: OrderState[] = ['requested', 'ordered', 'cancelled', 'delivered', 'deleted']
+// --- 発注状態 4 値 (§3b)。発注削除のみ既定 OFF、他 3 つ ON ---
+const allStates: OrderState[] = ['notOrdered', 'ordered', 'cancelled', 'deleted']
 const defaultStateFilter = (): Record<OrderState, boolean> => ({
-  requested: true, ordered: true, cancelled: true, delivered: true, deleted: false,
+  notOrdered: true, ordered: true, cancelled: true, deleted: false,
 })
 
 // --- SPLIT フィルタ (AND 合成、状態のみ OR)。products/index.vue のパターンをミラー。 ---
@@ -98,7 +98,7 @@ const reload = async () => {
   loading.value = true
   errorMessage.value = ''
   try {
-    // 発注状態 5 値フィルタ (#3a) のため全状態 (中止/納品完了/削除含む) を取得し client-side で絞り込む。
+    // 発注状態 4 値フィルタ (§3b) のため全状態 (中止/削除含む) を取得し client-side で絞り込む。
     items.value = await list(true)
   } catch (e) {
     const err = e as { statusCode?: number }
@@ -135,7 +135,7 @@ const inc = (haystack: string | null | undefined, needle: string): boolean =>
   (haystack ?? '').toLowerCase().includes(needle.trim().toLowerCase())
 
 const stateOf = (i: OrderListItem): OrderState =>
-  deriveOrderState({ status: i.status, firstExportedAt: i.firstExportedAt, deliveredAt: i.deliveredAt, isDeleted: i.isDeleted })
+  deriveOrderState({ status: i.status, orderedAt: i.orderedAt, isDeleted: i.isDeleted })
 
 // 作成日は ISO 文字列 (createdAt) の日付部分を YYYY-MM-DD で取り出して date 入力と比較。
 const createdDate = (i: OrderListItem): string => (i.createdAt ?? '').slice(0, 10)
@@ -273,6 +273,45 @@ const runBulkExport = async (format: BulkFormat): Promise<void> => {
     downloading.value = null
   }
 }
+
+// ─── 発注状態の一括変更 (§3c) ───────────────────────────
+// チェックした発注を 未発注/発注済/発注中止/発注削除 へ一括変更する。ダウンロードとは独立したユーザー操作。
+// 終端状態で変更できない発注はサーバ側でスキップされ、updated/skipped を通知する (原則4 非ブロッキング)。
+const changingStatus = ref<OrderState | null>(null)
+const statusNotice = ref('')
+
+const runBulkStatus = async (target: OrderState): Promise<void> => {
+  if (changingStatus.value || selectedCount.value === 0) return
+  let cancelReason: string | undefined
+  // 発注中止は理由を任意入力、発注削除は確認ダイアログを挟む (誤操作防止、原則2 状態保護)。
+  if (target === 'cancelled') {
+    const r = window.prompt(`${selectedCount.value} 件を発注中止にします。中止理由 (任意):`, '一括変更による中止')
+    if (r === null) return
+    cancelReason = r.trim() || undefined
+  } else if (target === 'deleted') {
+    if (!window.confirm(`${selectedCount.value} 件を発注削除 (論理削除) しますか？`)) return
+  }
+  statusNotice.value = ''
+  bulkError.value = ''
+  changingStatus.value = target
+  try {
+    // 表示順 (filtered) で id を渡す。
+    const ids = filtered.value.filter((i) => selectedIds.value.has(i.id)).map((i) => i.id)
+    const res = await bulkStatus(ids, target, cancelReason)
+    await reload()
+    clearSelection()
+    statusNotice.value = res.skipped > 0
+      ? `${res.updated} 件を「${orderStateLabel(target)}」に変更しました (${res.skipped} 件は終端状態のためスキップ)`
+      : `${res.updated} 件を「${orderStateLabel(target)}」に変更しました`
+  } catch (e) {
+    const err = e as { statusCode?: number }
+    bulkError.value = err.statusCode === 401
+      ? 'セッションが切れました。再ログインしてください。'
+      : '発注状態の一括変更に失敗しました'
+  } finally {
+    changingStatus.value = null
+  }
+}
 </script>
 
 <template>
@@ -408,50 +447,88 @@ const runBulkExport = async (format: BulkFormat): Promise<void> => {
       <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件</span>
     </div>
 
-    <!-- 一括ダウンロードバー (#3b)。1 件以上選択時のみ表示。モバイルでは縦積み。 -->
-    <div
-      v-if="selectedCount > 0"
-      class="mb-3 flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div class="flex items-center gap-3 text-sm">
-        <span class="font-semibold text-blue-800">{{ selectedCount }} 件選択中</span>
+    <!-- 一括操作バー (§3a)。常時表示し、選択の有無でボタンの活性/非活性を制御する。
+         左: 選択状態 + 発注状態の一括変更 (§3c) / 右: 一括ダウンロード (§3d 1ファイルは単一DL)。モバイルは縦積み。 -->
+    <div class="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 shadow-sm">
+      <div class="mb-2 flex items-center gap-3 text-sm">
+        <span class="font-semibold" :class="selectedCount > 0 ? 'text-blue-800' : 'text-gray-500'">
+          {{ selectedCount > 0 ? `${selectedCount} 件選択中` : 'チェックボックスで発注を選択してください' }}
+        </span>
         <button
           type="button"
-          class="rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-100"
+          class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+          :disabled="selectedCount === 0"
           @click="clearSelection"
         >
           選択解除
         </button>
       </div>
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <span class="text-xs font-medium text-blue-700 sm:mr-1">一括ダウンロード</span>
-        <div class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-            :disabled="downloading !== null"
-            @click="runBulkExport('order')"
-          >
-            {{ downloading === 'order' ? '生成中…' : '発注書' }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-            :disabled="downloading !== null"
-            @click="runBulkExport('management')"
-          >
-            {{ downloading === 'management' ? '生成中…' : '管理表' }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-            :disabled="downloading !== null"
-            @click="runBulkExport('both')"
-          >
-            {{ downloading === 'both' ? '生成中…' : '発注書+管理表' }}
-          </button>
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <!-- 発注状態の一括変更 (§3c) -->
+        <div class="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+          <span class="text-xs font-medium text-gray-600 sm:mr-1">状態を一括変更</span>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40"
+              :disabled="selectedCount === 0 || changingStatus !== null"
+              @click="runBulkStatus('notOrdered')"
+            >{{ changingStatus === 'notOrdered' ? '変更中…' : '未発注に戻す' }}</button>
+            <button
+              type="button"
+              class="rounded-md border border-green-300 bg-white px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50 disabled:opacity-40"
+              :disabled="selectedCount === 0 || changingStatus !== null"
+              @click="runBulkStatus('ordered')"
+            >{{ changingStatus === 'ordered' ? '変更中…' : '発注済にする' }}</button>
+            <button
+              type="button"
+              class="rounded-md border border-orange-300 bg-white px-3 py-1.5 text-sm font-medium text-orange-700 hover:bg-orange-50 disabled:opacity-40"
+              :disabled="selectedCount === 0 || changingStatus !== null"
+              @click="runBulkStatus('cancelled')"
+            >{{ changingStatus === 'cancelled' ? '変更中…' : '発注中止' }}</button>
+            <button
+              type="button"
+              class="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-40"
+              :disabled="selectedCount === 0 || changingStatus !== null"
+              @click="runBulkStatus('deleted')"
+            >{{ changingStatus === 'deleted' ? '変更中…' : '発注削除' }}</button>
+          </div>
+        </div>
+        <!-- 一括ダウンロード (§3d) -->
+        <div class="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+          <span class="text-xs font-medium text-gray-600 sm:mr-1">一括ダウンロード</span>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-40"
+              :disabled="selectedCount === 0 || downloading !== null"
+              @click="runBulkExport('order')"
+            >
+              {{ downloading === 'order' ? '生成中…' : '発注書' }}
+            </button>
+            <button
+              type="button"
+              class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-40"
+              :disabled="selectedCount === 0 || downloading !== null"
+              @click="runBulkExport('management')"
+            >
+              {{ downloading === 'management' ? '生成中…' : '管理表' }}
+            </button>
+            <button
+              type="button"
+              class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-40"
+              :disabled="selectedCount === 0 || downloading !== null"
+              @click="runBulkExport('both')"
+            >
+              {{ downloading === 'both' ? '生成中…' : '発注書+管理表' }}
+            </button>
+          </div>
         </div>
       </div>
+    </div>
+
+    <div v-if="statusNotice" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">
+      {{ statusNotice }}
     </div>
 
     <div v-if="bulkError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
