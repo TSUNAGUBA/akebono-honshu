@@ -47,7 +47,6 @@ const form = ref({
   insoleMaterialId: 0,
   outsoleMaterialId: 0,
   productName1: '',
-  productName2: '',
   // 旧 品番台帳 項目 (Phase A、全て任意)
   productYear: null as number | null,
   managementSeasonId: null as number | null,
@@ -57,7 +56,7 @@ const form = ref({
   retailPrice: null as number | null,
   deliveryPrice: null as number | null,
   planningCost: null as number | null,
-  brandCost: null as number | null,
+  // ブランド費 (brandCost) は §2c で自動計算 (版権対象価格 × 版権料率)。手入力欄は廃止し brandCostComputed を送る。
   royaltyTarget: null as number | null,
   royaltyRate: null as number | null,
   // 旧 品番台帳 項目 追補 (PR1、全て任意)
@@ -68,6 +67,21 @@ const form = ref({
 const expansion = ref({
   colorIds: [] as number[],
   sizeIds: [] as number[],
+})
+
+// ブランド費 自動計算 (§2c)。ブランド費 = 版権対象で選んだ価格 × 版権料率(%)。
+// 版権対象 1=小売価格(retailPrice), 2=納品価格(deliveryPrice)。対象/料率/基準価格が揃わなければ null。
+const brandCostBasePrice = computed<number | null>(() => {
+  if (form.value.royaltyTarget === 1) return form.value.retailPrice
+  if (form.value.royaltyTarget === 2) return form.value.deliveryPrice
+  return null
+})
+const brandCostComputed = computed<number | null>(() => {
+  const base = brandCostBasePrice.value
+  const rate = form.value.royaltyRate
+  if (base == null || rate == null) return null
+  // rate は % 表記なので /100。円は小数第2位まで許容 → 四捨五入で 2 桁に丸める。
+  return Math.round(base * rate) / 100
 })
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -291,7 +305,6 @@ const onCopyFromReference = async () => {
     form.value.insoleMaterialId = f.insoleMaterialId
     form.value.outsoleMaterialId = f.outsoleMaterialId
     form.value.productName1 = f.productName1
-    form.value.productName2 = f.productName2 ?? ''
     form.value.productYear = f.productYear
     form.value.managementSeasonId = f.managementSeasonId
     form.value.plannerUserId = f.plannerUserId
@@ -300,7 +313,7 @@ const onCopyFromReference = async () => {
     form.value.retailPrice = f.retailPrice
     form.value.deliveryPrice = f.deliveryPrice
     form.value.planningCost = f.planningCost
-    form.value.brandCost = f.brandCost
+    // ブランド費 (§2c) は版権対象/料率から自動計算するため個別コピーしない (royaltyTarget/Rate のコピーで再計算)。
     form.value.royaltyTarget = f.royaltyTarget
     form.value.royaltyRate = f.royaltyRate
     form.value.remark = f.remark ?? ''
@@ -475,7 +488,8 @@ const onSubmit = async () => {
         insoleMaterialId: form.value.insoleMaterialId,
         outsoleMaterialId: form.value.outsoleMaterialId,
         productName1: form.value.productName1.trim(),
-        productName2: form.value.productName2.trim() || null,
+        // 商品名 2 は新規登録フォームから除外 (§2b)。既存 I/F 互換のため null 固定で送る。
+        productName2: null,
         // 旧 品番台帳 項目 (Phase A、未入力は null)
         productYear: form.value.productYear,
         managementSeasonId: form.value.managementSeasonId,
@@ -485,7 +499,8 @@ const onSubmit = async () => {
         retailPrice: form.value.retailPrice,
         deliveryPrice: form.value.deliveryPrice,
         planningCost: form.value.planningCost,
-        brandCost: form.value.brandCost,
+        // ブランド費 自動計算 (§2c): 版権対象価格 × 版権料率。
+        brandCost: brandCostComputed.value,
         royaltyTarget: form.value.royaltyTarget,
         royaltyRate: form.value.royaltyRate,
         // 旧 品番台帳 項目 追補 (PR1、未入力は null)
@@ -766,12 +781,8 @@ const onSubmit = async () => {
           </div>
           <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">商品名 1 <span class="text-red-500">*</span></span>
+              <span class="text-sm font-medium">商品名 <span class="text-red-500">*</span></span>
               <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">商品名 2</span>
-              <input v-model="form.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
           </div>
 
@@ -821,9 +832,15 @@ const onSubmit = async () => {
               <span class="text-sm font-medium">企画費</span>
               <input v-model.number="form.planningCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
+            <!-- ブランド費 自動計算 (§2c)。版権対象で選んだ価格 × 版権料率。手入力不可 (読取専用)。 -->
             <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">ブランド費</span>
-              <input v-model.number="form.brandCost" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+              <span class="text-sm font-medium">ブランド費 <span class="text-xs font-normal text-gray-400">(自動計算)</span></span>
+              <div class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm text-gray-700">
+                {{ brandCostComputed != null ? `¥${brandCostComputed.toLocaleString()}` : '—' }}
+              </div>
+              <span class="text-xs text-gray-500">
+                {{ form.royaltyTarget == null ? '版権対象を選択すると算出' : (form.royaltyTarget === 1 ? '小売価格' : '納品価格') + ' × 版権料率' }}
+              </span>
             </label>
           </div>
 
