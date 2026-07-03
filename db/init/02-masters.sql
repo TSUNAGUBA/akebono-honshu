@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS suppliers (
     country_id            BIGINT       NOT NULL REFERENCES countries(id),
     supplier_type         SMALLINT     NOT NULL,
     alert_target          SMALLINT     NOT NULL DEFAULT 0,
+    currency_code         CHAR(3)      NOT NULL DEFAULT 'JPY',   -- 適用通貨 (§2f)
+    drayage_cost          NUMERIC(12,2) NULL,                    -- ドレー代 (§2i、仕入先ごと)
     delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
@@ -325,6 +327,28 @@ CREATE TABLE IF NOT EXISTS document_text_purchases (
     updated_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
     legacy_id            VARCHAR(64)  NULL
 );
+
+-- ─────────────────────────────────────────────────
+-- 為替マスタ (§2f、bespoke master)。年月 (YYYY-MM) × 通貨ごとの対円レート。
+-- code/name を持たず (year_month, currency_code) が業務キー。有効行の一意は部分 UNIQUE で保証。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    id                   BIGSERIAL PRIMARY KEY,
+    year_month           CHAR(7)      NOT NULL,                -- 'YYYY-MM'
+    currency_code        CHAR(3)      NOT NULL,                -- USD/CNY 等
+    rate                 NUMERIC(12,4) NOT NULL,               -- 1 通貨単位 = rate 円
+    delete_flag          BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
+    updated_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
+    legacy_id            VARCHAR(64)  NULL,
+    CONSTRAINT chk_exr_year_month CHECK (year_month ~ '^[0-9]{4}-[0-9]{2}$'),
+    CONSTRAINT chk_exr_rate CHECK (rate > 0)
+);
+-- 有効行 (未削除) の (年月, 通貨) 一意。削除済みは重複を許容 (再登録可)。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_exr_year_month_currency
+    ON exchange_rates (year_month, currency_code) WHERE delete_flag = FALSE;
 
 -- ─────────────────────────────────────────────────
 -- Seed: Iteration 1 動作確認用に最小データ投入

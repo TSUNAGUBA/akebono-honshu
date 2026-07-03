@@ -32,6 +32,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
     public DbSet<DocumentTemplatePurchase> DocumentTemplatePurchases => Set<DocumentTemplatePurchase>();
     public DbSet<DocumentTemplateConfirmation> DocumentTemplateConfirmations => Set<DocumentTemplateConfirmation>();
     public DbSet<DocumentTextPurchase> DocumentTextPurchases => Set<DocumentTextPurchase>();
+    // 為替マスタ (§2f、bespoke master)
+    public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
 
     // 商品関連 (Iteration 2)
     public DbSet<ProductFamily> ProductFamilies => Set<ProductFamily>();
@@ -115,6 +117,9 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.CountryId).HasColumnName("country_id");
             b.Property(x => x.SupplierType).HasColumnName("supplier_type");
             b.Property(x => x.AlertTarget).HasColumnName("alert_target");
+            // 適用通貨 (§2f) / ドレー代 (§2i、仕入先ごと)
+            b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
+            b.Property(x => x.DrayageCost).HasColumnName("drayage_cost").HasColumnType("numeric(12,2)");
             b.HasOne(x => x.Country).WithMany().HasForeignKey(x => x.CountryId);
         });
         ConfigureMaster<Department>(modelBuilder, "departments");
@@ -163,6 +168,24 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
         {
             b.Property(x => x.Body).HasColumnName("body").IsRequired();
             b.Property(x => x.StandardPrintFlag).HasColumnName("standard_print_flag");
+        });
+
+        // 為替マスタ (§2f、bespoke master)。code/name を持たず (year_month, currency_code) 複合キーのため
+        // ConfigureMaster は使わず個別マッピング。有効行の (年月, 通貨) 一意を部分 UNIQUE で保証 (SQL 側)。
+        modelBuilder.Entity<ExchangeRate>(b =>
+        {
+            b.ToTable("exchange_rates");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.YearMonth).HasColumnName("year_month").IsRequired().HasMaxLength(7).IsFixedLength();
+            b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
+            b.Property(x => x.Rate).HasColumnName("rate").HasColumnType("numeric(12,4)");
+            b.Property(x => x.DeleteFlag).HasColumnName("delete_flag");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
         });
 
         // 商品関連 (Iteration 2、Phase 5 §4)

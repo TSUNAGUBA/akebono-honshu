@@ -56,6 +56,8 @@ public static class DependencyInjection
 
         // M-04 仕入先 (F-22 official_name 帳票準備のため個別 Service)
         services.AddScoped<SupplierService>();
+        // 為替マスタ (§2f、bespoke master)
+        services.AddScoped<ExchangeRateService>();
 
         // 商品関連 (Iteration 2、Phase 5 §4)
         services.AddScoped<ProductFamilyService>();
