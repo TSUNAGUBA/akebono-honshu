@@ -27,9 +27,9 @@ DQ 評価エンジン・冪等キーの計算方法・リカバリ手順**を、
 > - **Canonical → dim/fact の変換（SCD Type2・サロゲートキー採番・ロード）** は
 >   [22 スタースキーマ変換](./22-star-schema-transformation.md)が所有。本書は**Canonical 手前まで**（Raw → Canonical への正準化入力の整備）を主担当とする。
 > - **名寄せ / ゴールデンレコード / クロスウォーク解決**は
->   [20 Canonical/MDM/名寄せ](./20-canonical-mdm-matching.md)、物理は [34 MDM/Canonical スキーマ](../database-design/34-mdm-canonical-schema.md)が所有。
+>   [20 Canonical/MDM/名寄せ](./20-canonical-mdm-and-entity-resolution.md)、物理は [34 MDM/Canonical スキーマ](../database-design/34-mdm-canonical-schema.md)が所有。
 > - **物理 dim/fact** は [35 スタースキーマ DWH](../database-design/35-star-schema-dwh.md)、
->   **コネクタ登録テーブル**（`connector`/`connector_config`）は [37 コントロールプレーン](../database-design/37-control-plane-backoffice.md)が所有。
+>   **コネクタ登録テーブル**（`connector`/`connector_config`）は [37 コントロールプレーン](../database-design/37-control-plane-backoffice-schema.md)が所有。
 > - **ETL/MAP エラーコードの権威的レジストリ**は基本設計 [10 §8](../basic-design/10-data-integration-and-mapping.md) が所有。本書は各コードの**送出箇所とリカバリ手順**を具体化する。
 
 ---
@@ -567,8 +567,8 @@ flowchart LR
 | # | 論点 | 選択肢 / トレードオフ | 一次議論先 |
 |---|---|---|---|
 | D-1 | CDC 実装方式 | DMS（マネージド）／ Debezium（柔軟・自前運用）／ 論理レプリケーション／ アプリイベント。ソース DB 種別と鮮度で判断 | [12 ADR](../basic-design/12-architecture-decision-records.md) / §2.4 |
-| D-2 | AI 支援の自動承認 | 「候補提示のみ（既定・安全）」か「高信頼度は自動承認 + 事後監査」か | [23 AI/RAG](./23-ai-rag-vectorization.md) / §4.3 |
-| D-3 | 未知マスタコードの自動補完 | MIG-3 型「自動 INSERT（legacy_id 保存）+ 後追い確定」を標準にするか、常に人的承認か | [20](./20-canonical-mdm-matching.md) / [34](../database-design/34-mdm-canonical-schema.md) |
+| D-2 | AI 支援の自動承認 | 「候補提示のみ（既定・安全）」か「高信頼度は自動承認 + 事後監査」か | [23 AI/RAG](./23-ai-rag-and-vectorization.md) / §4.3 |
+| D-3 | 未知マスタコードの自動補完 | MIG-3 型「自動 INSERT（legacy_id 保存）+ 後追い確定」を標準にするか、常に人的承認か | [20](./20-canonical-mdm-and-entity-resolution.md) / [34](../database-design/34-mdm-canonical-schema.md) |
 | D-4 | 隔離行の保持期間・再処理 SLA | 自動リトライ有無・保持期間・エスカレーション | [11 NFR](../basic-design/11-nonfunctional-security-tenancy.md) / §6.2 |
 | D-5 | 遅延ディメンションの推定次元方針 | inferred member を採るか、事実を保留するか（本登録・SCD は 22 所有） | [22](./22-star-schema-transformation.md) / §5.3 |
 | D-6 | 変換エンジンの実装形態 | Glue(Spark) 主体か、自社変換エンジン（.NET）併用か。式言語の実行基盤選定 | [12 ADR](../basic-design/12-architecture-decision-records.md) / §5.1 |
@@ -582,12 +582,12 @@ flowchart LR
 - [`../basic-design/02-overall-architecture.md`](../basic-design/02-overall-architecture.md) — 全体アーキテクチャ（プレーン構成・横断エラーコード）
 - [`../basic-design/11-nonfunctional-security-tenancy.md`](../basic-design/11-nonfunctional-security-tenancy.md) — 非機能 / セキュリティ / テナンシー（RLS・境界・SLA）
 - [`../basic-design/12-architecture-decision-records.md`](../basic-design/12-architecture-decision-records.md) — ADR（CDC/DWH/変換基盤選定の根拠）
-- [`./20-canonical-mdm-matching.md`](./20-canonical-mdm-matching.md) — Canonical/MDM/名寄せ（マッチング・ゴールデンレコード・survivorship）
+- [`./20-canonical-mdm-and-entity-resolution.md`](./20-canonical-mdm-and-entity-resolution.md) — Canonical/MDM/名寄せ（マッチング・ゴールデンレコード・survivorship）
 - [`./22-star-schema-transformation.md`](./22-star-schema-transformation.md) — スタースキーマ変換（SCD Type2・サロゲート採番・遅延ディメンション本登録）
-- [`./23-ai-rag-vectorization.md`](./23-ai-rag-vectorization.md) — AI/RAG/ベクター化（マッピング支援の RAG 基盤）
+- [`./23-ai-rag-and-vectorization.md`](./23-ai-rag-and-vectorization.md) — AI/RAG/ベクター化（マッピング支援の RAG 基盤）
 - [`../database-design/34-mdm-canonical-schema.md`](../database-design/34-mdm-canonical-schema.md) — MDM/Canonical スキーマ（正準エンティティ・クロスウォーク物理）
 - [`../database-design/35-star-schema-dwh.md`](../database-design/35-star-schema-dwh.md) — スタースキーマ DWH（dim/fact 物理定義）
 - [`../database-design/36-mapping-metadata-schema.md`](../database-design/36-mapping-metadata-schema.md) — マッピングメタデータスキーマ（source/rule/transform/dq/load_run/lineage/review 物理）
-- [`../database-design/37-control-plane-backoffice.md`](../database-design/37-control-plane-backoffice.md) — コントロールプレーン（connector/connector_config/audit_logs）
+- [`../database-design/37-control-plane-backoffice-schema.md`](../database-design/37-control-plane-backoffice-schema.md) — コントロールプレーン（connector/connector_config/audit_logs）
 - [`../../migration/mig-3-strategy.md`](../../migration/mig-3-strategy.md) — 既存生産管理システム CSV 取込戦略（レガシー人的マッピングの実例）
 - [`../README.md`](../README.md) — ドキュメント索引 / 全体マップ

@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: SCIP プラットフォームの論理5プレーン構成・主要コンポーネント・エンドツーエンドのデータフロー・AWS デプロイトポロジ・技術スタックを俯瞰する
-related: [concept-vision, canonical-domain-model, data-integration-mapping, schema-strategy-sot, nonfunctional-security-tenancy, adr]
+related: [concept-and-overview, canonical-domain-model, data-integration-mapping, schema-strategy-sot, nfr-security-tenancy, adr]
 ---
 
 # 基本設計: 全体アーキテクチャ
@@ -16,8 +16,8 @@ related: [concept-vision, canonical-domain-model, data-integration-mapping, sche
 
 - **本ドキュメントの所有範囲（owns）:** 全体アーキテクチャ・プレーン定義・コンポーネント接続関係・デプロイトポロジの**権威的記述**。
 - **他ドキュメントへの委譲:** 個別テーブルの DDL は各 DB 設計ドキュメント（30-38）が所有し本書は再定義しない。
-  マルチテナンシー詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md)、
-  AI/RAG・エージェント詳細は詳細設計 23/24、技術選定の根拠は [`12 ADR`](./12-adr.md) が所有する。
+  マルチテナンシー詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md)、
+  AI/RAG・エージェント詳細は詳細設計 23/24、技術選定の根拠は [`12 ADR`](./12-architecture-decision-records.md) が所有する。
 - **土台:** 既存の単一テナント実装 **akebono-honshu**（履物メーカー Honshu の .NET 8 + Nuxt 3 + RDS PostgreSQL）を
   リファレンス実装 / 最初のメーカーテナントと位置づけ、マルチテナント SaaS へ一般化する（ファウンデーション・ブリーフ §1・§15）。
 
@@ -87,13 +87,14 @@ graph TD
 
     OLTP -->|"CDC/バッチ"| RAW
     ING --> RAW
+    CTLDB -->|"バックオフィスデータも分析対象として取込<br/>（詳細は 09/10）"| RAW
     RAW -->|"名寄せ/マッピング適用"| CAN
     MAPREG -.->|"マッピング定義"| XFM
     CAN --> XFM
     XFM --> DWH
     DWH --> SEM
     SEM --> SVC
-    DWH -->|"事前集計"| SNAP
+    SEM -->|"事前集計"| SNAP
     CAN -->|"原文/KB"| VEC
     VEC --> RAG
     RAG --> AICL
@@ -117,7 +118,7 @@ graph TD
 | **Data（データ）** | 取込 → Raw/Staging → Canonical/MDM（名寄せ）→ 変換（項目マッピング適用）→ Star Schema DWH → セマンティック/メトリクス層 → スナップショット/DocDB → サービング。 | Ingestion、変換エンジン、DWH、メトリクス層、サービング API | S3+Glue / Aurora(Canonical) / Redshift(DWH) / S3+CDN(スナップショット) / DynamoDB | Canonical=名寄せ結果の SoT、他は**派生** |
 | **Intelligence（AI）** | 埋め込み/ベクター、ナレッジベース/RAG、集計/分類 AI、インサイト生成、AI エージェント/バーチャルカンパニー、意思決定支援ワークフロー。 | ベクターストア、RAG オーケストレータ、エージェントランタイム、Bedrock | pgvector on Aurora / DynamoDB / S3(原文) | 原文=SoT、ベクター/インサイトは**派生** |
 
-> **委譲:** マルチテナンシーの分離方式・RLS・非機能要件は [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md) が、
+> **委譲:** マルチテナンシーの分離方式・RLS・非機能要件は [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md) が、
 > Intelligence Plane のパイプライン詳細は詳細設計 23/24 が権威。本節はプレーン境界と責務の俯瞰に留める。
 
 ---
@@ -225,7 +226,7 @@ flowchart LR
 > **接続の原則:**
 > - 業務 UI → 業務 API → OLTP は同期リクエスト（低レイテンシ）。分析 UI → サービング/スナップショットは事前集計参照が基本。
 > - Data Plane / Intelligence Plane への書込は**非同期**（CDC・バッチ・イベント）で、OLTP のオンライン性能を侵さない。
-> - すべての API は Firebase ID Token（Bearer）を JWKS 検証し、テナントは JWT の `tenant_id` クレームで解決する（ブリーフ §11、[`11`](./11-nfr-security-tenancy.md)）。
+> - すべての API は Firebase ID Token（Bearer）を JWKS 検証し、テナントは JWT の `tenant_id` クレームで解決する（ブリーフ §11、[`11`](./11-nonfunctional-security-tenancy.md)）。
 
 ---
 
@@ -278,34 +279,36 @@ flowchart TB
 
 > **2 系統の非対称性:** 自社アプリは Canonical への写像コストが低い（スキーマ設計済み）。他社アプリは Raw に着地後、
 > **人的なマッピング（項目対応表）** を経て Canonical に写像される。マッピングメタデータは Control Plane に登録され
-> 変換エンジンが参照する（詳細は [`10 データ連携とマッピング`](./10-data-integration-mapping.md) と詳細設計 21/36）。
+> 変換エンジンが参照する（詳細は [`10 データ連携とマッピング`](./10-data-integration-and-mapping.md) と詳細設計 21/36）。
 
 ### 3.2 系統1: 自社アプリの書込〜分析反映（シーケンス）
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as "業務ユーザ"
-    participant UI as "業務 UI（Nuxt）"
-    participant API as "業務 API（.NET 8）"
-    participant DB as "OLTP（RDS）"
-    participant CDC as "CDC/バッチ"
-    participant CAN as "Canonical/MDM"
-    participant DWH as "DWH（Redshift）"
-    participant SN as "スナップショット/CDN"
+    participant U as 業務ユーザ
+    participant UI as 業務 UI（Nuxt）
+    participant API as 業務 API（.NET 8）
+    participant DB as OLTP（RDS）
+    participant CDC as CDC/バッチ
+    participant CAN as Canonical/MDM
+    participant SEM as セマンティック/メトリクス層
+    participant DWH as DWH（Redshift）
+    participant SN as スナップショット/CDN
 
-    U->>UI: "受注/発注/在庫更新を入力"
-    UI->>API: "POST /api/v1/... (Bearer + tenant_id)"
-    API->>API: "JWKS 検証 + 認可 + SET app.tenant_id"
-    API->>DB: "トランザクション書込（RLS 適用）"
-    DB-->>API: "コミット（業務データ=SoT 確定）"
-    API-->>UI: "201 Created {data, meta}"
-    Note over DB,CDC: "非同期（オンライン性能を侵さない）"
-    DB->>CDC: "変更イベント（CDC）"
-    CDC->>CAN: "名寄せ解決 → ゴールデンレコード更新"
-    CAN->>DWH: "dim/fact 変換（SCD Type2）"
-    DWH->>SN: "事前集計 → スナップショット再生成"
-    Note over SN: "分析 UI は SN を参照（低レイテンシ）"
+    U->>UI: 受注/発注/在庫更新を入力
+    UI->>API: POST /api/v1/... (Bearer + tenant_id)
+    API->>API: JWKS 検証 + 認可 + SET app.tenant_id
+    API->>DB: トランザクション書込（RLS 適用）
+    DB-->>API: コミット（業務データ=SoT 確定）
+    API-->>UI: 201 Created {data, meta}
+    Note over DB,CDC: 非同期（オンライン性能を侵さない）
+    DB->>CDC: 変更イベント（CDC）
+    CDC->>CAN: 名寄せ解決 → ゴールデンレコード更新
+    CAN->>DWH: dim/fact 変換（SCD Type2）
+    DWH->>SEM: 指標定義に基づく集計
+    SEM->>SN: 事前集計 → スナップショット再生成
+    Note over SN: 分析 UI は SN を参照（低レイテンシ）
 ```
 
 ### 3.3 系統2: 他社アプリ取込〜正規化（シーケンス）
@@ -313,25 +316,25 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant EXT as "他社アプリ/ファイル"
-    participant CN as "取込コネクタ"
-    participant RAW as "Raw/Staging（S3）"
-    participant OP as "オペレーター（人的マッピング）"
-    participant MAP as "マッピングメタデータ（Control）"
-    participant XF as "変換エンジン"
-    participant CAN as "Canonical/MDM"
-    participant DWH as "DWH（Redshift）"
+    participant EXT as 他社アプリ/ファイル
+    participant CN as 取込コネクタ
+    participant RAW as Raw/Staging（S3）
+    participant OP as オペレーター（人的マッピング）
+    participant MAP as マッピングメタデータ（Control）
+    participant XF as 変換エンジン
+    participant CAN as Canonical/MDM
+    participant DWH as DWH（Redshift）
 
-    EXT->>CN: "バッチ / ストリーム / S3 投函"
-    CN->>RAW: "生データ着地（source_system 付与, リプレイ可能）"
-    RAW-->>OP: "サンプル提示（項目プロファイリング）"
-    OP->>MAP: "項目マッピング登録（source_field ⇄ canonical_attribute）"
-    MAP-->>XF: "mapping_rule / transform_expression"
-    XF->>RAW: "Raw 読取 + DQ ルール検証"
-    XF->>CAN: "マッピング適用 + 名寄せ → ゴールデンレコード"
-    Note over CAN: "app-local id ⇄ canonical id を xref に記録"
-    CAN->>DWH: "dim/fact 変換"
-    Note over OP,MAP: "解決不能項目は mapping_review に記録し人的解決"
+    EXT->>CN: バッチ / ストリーム / S3 投函
+    CN->>RAW: 生データ着地（source_system 付与, リプレイ可能）
+    RAW-->>OP: サンプル提示（項目プロファイリング）
+    OP->>MAP: 項目マッピング登録（source_field ⇄ canonical_attribute）
+    MAP-->>XF: mapping_rule / transform_expression
+    XF->>RAW: Raw 読取 + DQ ルール検証
+    XF->>CAN: マッピング適用 + 名寄せ → ゴールデンレコード
+    Note over CAN: app-local id ⇄ canonical id を xref に記録
+    CAN->>DWH: dim/fact 変換
+    Note over OP,MAP: 解決不能項目は mapping_review に記録し人的解決
 ```
 
 > **SoT 順序（ブリーフ §5 原則）:** いずれの系統も **SoT 側書込を先行**（自社=OLTP、他社=ソースシステム/Raw）、
@@ -342,7 +345,7 @@ sequenceDiagram
 ## 4. データストアカタログと SoT マップ（俯瞰）
 
 以下はファウンデーション・ブリーフ §5 のデータストア SoT マップの**俯瞰**である。
-各ストアの DDL・詳細な SoT 宣言・同期パスは [`30 スキーマ戦略と SoT`](../database-design/30-schema-strategy-sot.md) 以下の
+各ストアの DDL・詳細な SoT 宣言・同期パスは [`30 スキーマ戦略と SoT`](../database-design/30-schema-strategy-and-sot.md) 以下の
 DB 設計ドキュメント（30-38）が権威的に所有する。**本書は再定義せず、全体像の把握のためだけに列挙する。**
 
 | データ | ストア | SoT | 派生/キャッシュ | 詳細委譲先 |
@@ -371,7 +374,7 @@ DB 設計ドキュメント（30-38）が権威的に所有する。**本書は�
 ## 5. 技術スタック（層別）
 
 ブリーフ §4 に従い、**継承（akebono-honshu Phase 4 確定 / 変更しない土台）** と **プラットフォーム拡張（本設計で追加）** を層別に示す。
-拡張分の技術選定の根拠は [`12 ADR`](./12-adr.md) が所有する。
+拡張分の技術選定の根拠は [`12 ADR`](./12-architecture-decision-records.md) が所有する。
 
 | 層 | 継承（土台） | プラットフォーム拡張 | 備考 |
 |---|---|---|---|
@@ -467,7 +470,10 @@ flowchart TB
 | prod | Firebase Hosting（本番） | App Runner prod | Multi-AZ / Serverless 本番 | 本番運用 |
 
 > **VPC 境界:** OLTP/Canonical/DWH/キャッシュは**プライベートサブネット**。App Runner は VPC コネクタで到達する。
-> S3/DynamoDB/Bedrock は VPC エンドポイント経由でインターネットに出さない。詳細な NW 3 層（SG/NACL/ルート）とデータ境界は [`11`](./11-nfr-security-tenancy.md) が所有。
+> S3/DynamoDB/Bedrock は VPC エンドポイント経由でインターネットに出さない。詳細な NW 3 層（SG/NACL/ルート）とデータ境界は [`11`](./11-nonfunctional-security-tenancy.md) が所有。
+>
+> **スナップショット経路の統一:** 論理的な事前集計経路は全図で **DWH → セマンティック/メトリクス層 → スナップショット**（ブリーフ §5: スナップショットは DWH 由来の派生）で統一する。
+> 本図の物理配置 `Redshift → CloudFront` は、この論理経路（セマンティック層での指標集計を含む）を配信面に圧縮した表現であり、経路の相違ではない。
 
 ---
 
@@ -478,7 +484,7 @@ flowchart TB
 - **方式:** ハイブリッド（Pooled + Silo）。Pooled は共有 DB・共有スキーマ + `tenant_id BIGINT NOT NULL` + PostgreSQL **RLS**（`tenant_id = current_setting('app.tenant_id')::bigint`）。Silo は大規模/高分離要件でスキーマ or DB 分離（同一 DDL）。
 - **テナント識別:** Firebase Custom Claims の `tenant_id` → API がクレームから解決。任意で `X-Tenant-Id` ヘッダをクレームと突合（不一致は 403）。全 DB セッションで `SET app.tenant_id` を張り RLS を効かせる。
 - **DWH:** `dim_tenant` + fact の `tenant_id`（Redshift DISTKEY/パーティション）で分離。
-- **移行ギャップ:** 継承実装（Honshu）には `tenant_id` が一切存在しない。これが最大の移行差分であり、[`32 メーカー OLTP`](../database-design/32-manufacturer-oltp.md) が「既存 DDL への tenant_id 導入 + 全 UNIQUE のテナントスコープ化」を明記する。
+- **移行ギャップ:** 継承実装（Honshu）には `tenant_id` が一切存在しない。これが最大の移行差分であり、[`32 メーカー OLTP`](../database-design/32-oltp-manufacturer-schema.md) が「既存 DDL への tenant_id 導入 + 全 UNIQUE のテナントスコープ化」を明記する。
 
 ```mermaid
 flowchart LR
@@ -488,7 +494,7 @@ flowchart LR
     DB -->|"tenant_id = current_setting(...)"| ROW["テナント行のみ可視"]
 ```
 
-> **委譲:** RLS ポリシー・Silo ルーティング・分離レベル・鍵管理は [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md) が権威。本節は配置の俯瞰に留める。
+> **委譲:** RLS ポリシー・Silo ルーティング・分離レベル・鍵管理は [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md) が権威。本節は配置の俯瞰に留める。
 
 ### 7.2 AI 基盤
 
@@ -507,12 +513,12 @@ flowchart LR
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SoT_確定: "SoT 書込（OLTP / ソース）"
-    SoT_確定 --> 派生反映中: "イベント同期（CDC/EventBridge）"
-    派生反映中 --> 一致: "Canonical/DWH/スナップショット/ベクター更新成功"
-    派生反映中 --> 不整合: "同期失敗 / イベント欠落"
-    不整合 --> 再同期中: "手動再同期（リプレイ / Reconciler）"
-    再同期中 --> 一致: "Raw から再変換で復元"
+    [*] --> SoT_確定: SoT 書込（OLTP / ソース）
+    SoT_確定 --> 派生反映中: イベント同期（CDC/EventBridge）
+    派生反映中 --> 一致: Canonical/DWH/スナップショット/ベクター更新成功
+    派生反映中 --> 不整合: 同期失敗 / イベント欠落
+    不整合 --> 再同期中: 手動再同期（リプレイ / Reconciler）
+    再同期中 --> 一致: Raw から再変換で復元
     一致 --> [*]
 ```
 
@@ -552,22 +558,22 @@ stateDiagram-v2
 
 | # | 論点 | 選択肢 / トレードオフ | 一次議論先 |
 |---|---|---|---|
-| A-1 | DWH エンジンの最終選定 | Redshift Serverless（主, 運用容易）か S3+Iceberg+Athena（コスト最適/レイクハウス）か。データ量・クエリ特性で判断 | [`12 ADR`](./12-adr.md) / 35 |
-| A-2 | ベクター基盤の規模切替閾値 | pgvector on Aurora（主, 統合容易）か OpenSearch（大規模）か。ベクター件数の閾値を要定義 | [`12 ADR`](./12-adr.md) / 38 |
-| A-3 | DocDB 選定 | DynamoDB（主, AWS ネイティブ）か Firestore（Firebase 資産活用）か | [`12 ADR`](./12-adr.md) / 26 / 38 |
+| A-1 | DWH エンジンの最終選定 | Redshift Serverless（主, 運用容易）か S3+Iceberg+Athena（コスト最適/レイクハウス）か。データ量・クエリ特性で判断 | [`12 ADR`](./12-architecture-decision-records.md) / 35 |
+| A-2 | ベクター基盤の規模切替閾値 | pgvector on Aurora（主, 統合容易）か OpenSearch（大規模）か。ベクター件数の閾値を要定義 | [`12 ADR`](./12-architecture-decision-records.md) / 38 |
+| A-3 | DocDB 選定 | DynamoDB（主, AWS ネイティブ）か Firestore（Firebase 資産活用）か | [`12 ADR`](./12-architecture-decision-records.md) / 26 / 38 |
 | A-4 | CDC 実装方式 | DMS / Debezium / 論理レプリケーション / アプリイベントのいずれで OLTP → Raw を実現するか | 21 / 10 |
 | A-5 | サービング API の DWH 直結 vs スナップショット優先 | 直結（鮮度）とスナップショット（低レイテンシ/コスト）の使い分け方針 | 26 / 07 |
-| A-6 | App Runner のマルチインスタンス時のプロセスローカルキャッシュ | 継承実装で顕在化（権限キャッシュ 60s 不整合）。ElastiCache 共有への置換判断 | [`11`](./11-nfr-security-tenancy.md) |
-| A-7 | プラットフォーム正式名称 | コード名 SCIP は仮。ブランディング/商標確認を経てオペレーター確定 | [`01 構想`](./01-concept-and-overview.md) |
+| A-6 | App Runner のマルチインスタンス時のプロセスローカルキャッシュ | 継承実装で顕在化（権限キャッシュ 60s 不整合）。ElastiCache 共有への置換判断 | [`11`](./11-nonfunctional-security-tenancy.md) |
+| A-7 | プラットフォーム正式名称 | コード名 SCIP は仮。ブランディング/商標確認を経てオペレーター確定 | [`01 構想`](./01-concept-and-vision.md) |
 
 ---
 
 ## 関連ドキュメント
 
-- [`01-concept-and-overview.md`](./01-concept-and-overview.md) — 構想と全体像（ビジョン・スコープ・提供価値）
+- [`01-concept-and-vision.md`](./01-concept-and-vision.md) — 構想と全体像（ビジョン・スコープ・提供価値）
 - [`03-canonical-domain-model.md`](./03-canonical-domain-model.md) — 正準ドメインモデル（Party/Product/Location/Region 等の概念）
-- [`10-data-integration-mapping.md`](./10-data-integration-mapping.md) — データ連携とマッピング（他社アプリ取込経路の詳細）
-- [`11-nfr-security-tenancy.md`](./11-nfr-security-tenancy.md) — 非機能 / セキュリティ / マルチテナンシー（RLS・VPC・分離レベル）
-- [`12-adr.md`](./12-adr.md) — アーキテクチャ決定記録（DWH/ベクター/DocDB/Bedrock 選定の根拠）
-- [`../database-design/30-schema-strategy-sot.md`](../database-design/30-schema-strategy-sot.md) — スキーマ戦略と SoT（命名/DDL 規約・TZ 方針の総則、データストア SoT の権威）
+- [`10-data-integration-and-mapping.md`](./10-data-integration-and-mapping.md) — データ連携とマッピング（他社アプリ取込経路の詳細）
+- [`11-nonfunctional-security-tenancy.md`](./11-nonfunctional-security-tenancy.md) — 非機能 / セキュリティ / マルチテナンシー（RLS・VPC・分離レベル）
+- [`12-architecture-decision-records.md`](./12-architecture-decision-records.md) — アーキテクチャ決定記録（DWH/ベクター/DocDB/Bedrock 選定の根拠）
+- [`../database-design/30-schema-strategy-sot.md`](../database-design/30-schema-strategy-and-sot.md) — スキーマ戦略と SoT（命名/DDL 規約・TZ 方針の総則、データストア SoT の権威）
 - [`../README.md`](../README.md) — ドキュメント索引 / 全体マップ

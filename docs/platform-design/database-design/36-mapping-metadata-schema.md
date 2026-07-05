@@ -89,7 +89,7 @@ flowchart LR
 |--------|---------|
 | 論理マッピングの同一性 | `(tenant_id, source_field_id, canonical_attribute_id)` |
 | 版の識別 | `version INTEGER`（同一論理マッピング内で単調増加） |
-| 現行版は 1 つ | 部分一意索引 `WHERE is_current = TRUE AND is_deleted = FALSE` |
+| 現行版は 1 つ | 各版数管理表に部分一意索引を張り物理担保: `mapping_rule`=`uq_mapping_rule_current`（`tenant_id, source_field_id, canonical_attribute_id`）／ `dq_rule`=`uq_dq_rule_current`（`tenant_id, code`）／ `transform_expression`=`uq_transform_expression_current`（`tenant_id, name`, ライブラリ式）。いずれも `WHERE is_current = TRUE AND is_deleted = FALSE` |
 | 旧版の保持 | 旧版は `is_current = FALSE` で残置（物理削除しない） |
 | 適用実績の追跡 | `data_lineage.mapping_rule_id` が版レコードを直接指す |
 
@@ -104,11 +104,13 @@ erDiagram
     SOURCE_FIELD    ||--o{ MAPPING_RULE   : "項目→正準属性の写像"
     CANONICAL_ATTRIBUTE ||--o{ MAPPING_RULE : "写像先カタログ"
     TRANSFORM_EXPRESSION ||--o{ MAPPING_RULE : "変換式(任意)"
+    TRANSFORM_EXPRESSION ||--o{ DATA_LINEAGE : "適用した変換式版"
     MAPPING_RULE    ||--o{ MAPPING_REVIEW  : "人的解決の記録(append)"
     MAPPING_RULE    ||--o{ DATA_LINEAGE    : "どの版で生成したか"
-    SOURCE_DATASET  ||--o{ DQ_RULE         : "DQ適用スコープ"
-    SOURCE_FIELD    ||--o{ DQ_RULE         : "項目単位DQ(任意)"
-    CANONICAL_ATTRIBUTE ||--o{ DQ_RULE     : "正準属性DQ(任意)"
+    SOURCE_DATASET  ||--o{ DQ_RULE         : "DQ適用スコープ(scope=2)"
+    SOURCE_FIELD    ||--o{ DQ_RULE         : "項目単位DQ(scope=1)"
+    CANONICAL_ATTRIBUTE ||--o{ DQ_RULE     : "正準属性DQ(scope=3)"
+    MAPPING_RULE    ||--o{ DQ_RULE         : "マッピング単位DQ(scope=4/dq_refs)"
     SOURCE_SYSTEM   ||--o{ LOAD_RUN        : "取込/変換の実行単位"
     SOURCE_DATASET  ||--o{ LOAD_RUN        : "実行対象"
     LOAD_RUN        ||--o{ DATA_LINEAGE    : "1ランに多数の来歴行"
@@ -410,6 +412,10 @@ CREATE TABLE transform_expression (
 CREATE UNIQUE INDEX uq_transform_expression_lib
     ON transform_expression (tenant_id, name, version)
     WHERE is_library = TRUE AND is_deleted = FALSE;                     -- ライブラリ式は名称×版で一意
+-- ライブラリ式の現行版は名称ごとに高々1つ（§2.2「現行版は1つ」を物理担保。名称なしのインライン式は対象外）
+CREATE UNIQUE INDEX uq_transform_expression_current
+    ON transform_expression (tenant_id, name)
+    WHERE is_current = TRUE AND is_library = TRUE AND is_deleted = FALSE AND name IS NOT NULL;
 CREATE INDEX idx_transform_expression_current ON transform_expression (tenant_id) WHERE is_current = TRUE AND is_deleted = FALSE;
 COMMENT ON TABLE  transform_expression         IS '変換式。決定論的・副作用なし・冪等（21 §3.3）。リプレイ再現性のため時刻/乱数/外部I/O/副問合せを禁止';
 COMMENT ON COLUMN transform_expression.on_error IS '式失敗時の扱い。1=当該行をquarantine(MAP-004) 2=null化 3=default_value 充当';
@@ -502,6 +508,10 @@ CREATE TABLE dq_rule (
         (scope_type = 4 AND mapping_rule_id        IS NOT NULL)),
     CONSTRAINT uq_dq_rule_code UNIQUE (tenant_id, code, version)
 );
+-- DQ ルールの現行版は code ごとに高々1つ（§2.2「現行版は1つ」を物理担保。評価エンジンの現行版選択を決定的にする）
+CREATE UNIQUE INDEX uq_dq_rule_current
+    ON dq_rule (tenant_id, code)
+    WHERE is_current = TRUE AND is_deleted = FALSE;
 CREATE INDEX idx_dq_rule_dataset ON dq_rule (tenant_id, source_dataset_id) WHERE is_active = TRUE AND is_deleted = FALSE;
 CREATE INDEX idx_dq_rule_field   ON dq_rule (tenant_id, source_field_id)   WHERE is_active = TRUE AND is_deleted = FALSE;
 CREATE INDEX idx_dq_rule_rule    ON dq_rule (tenant_id, mapping_rule_id)   WHERE is_active = TRUE AND is_deleted = FALSE;
@@ -517,6 +527,8 @@ COMMENT ON COLUMN dq_rule.error_code IS '送出エラーコード。権威的レ
 ## 8. 人的解決の記録: `mapping_review`
 
 **「誰がいつマッピングを解決したか、確信度はいくつか」の append 中心の監査記録**（本ドキュメントの核心要件）。`mapping_rule.status` の**遷移ごとに 1 行を追記**し、履歴を消さない。承認・差戻し・自動承認・改訂・廃止のすべてを追跡する。
+
+> **マイグレーション順序の注意（本書の唯一の前方参照）:** `mapping_review.load_run_id` は §9 の `load_run(id)` を参照するが、本書はセクション順に CREATE TABLE を並べるため定義位置は `load_run`（§9）より前にある。**実マイグレーションでは `load_run` を先行作成する**（またはこの FK を `ALTER TABLE mapping_review ADD CONSTRAINT ... FOREIGN KEY (load_run_id) REFERENCES load_run(id)` で後付け分離する）。本書はドキュメントとして人的解決（§8）→ 実行記録（§9）の設計順を優先し提示している。
 
 ```sql
 -- mapping_review — マッピングの人的解決/レビューの記録（append 中心・巻き戻さない, 原則2）

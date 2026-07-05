@@ -228,7 +228,7 @@ erDiagram
 
 ### 4.1 マスタ台帳と所有
 
-継承実装の 17 ドメインマスタ + 補助マスタ（通貨・為替レート）を本ドキュメントが所有する。利用者マスタは Control Plane（37）へ昇格し**本ドキュメントは参照のみ**（§4.4）。全マスタに `tenant_id` を付与し、`code` の一意性を `UNIQUE(tenant_id, code)` へスコープ化する（M1/M2）。
+継承実装の 17 ドメインマスタ + 補助マスタ（為替レート）を本ドキュメントが所有する。**通貨マスタ（`currency`, ISO 4217）は [34 MDM/Canonical](./34-mdm-canonical-schema.md) が所有する正準エンティティであり、本ドキュメントでは再定義せず論理参照する**（ブリーフ §14 所有マップ・「共通エンティティは所有ドキュメントが定義し他は参照のみ」）。トランザクション各表の通貨は §9 規約どおり inline `currency_code CHAR(3) DEFAULT 'JPY'` で保持し、`currency` マスタへの物理 FK は張らない。利用者マスタは Control Plane（37）へ昇格し**本ドキュメントは参照のみ**（§4.4）。全マスタに `tenant_id` を付与し、`code` の一意性を `UNIQUE(tenant_id, code)` へスコープ化する（M1/M2）。
 
 | # | テーブル | 役割 | 品番寄与 | 識別列 | 主要 FK |
 |---|---------|------|---------|--------|---------|
@@ -249,8 +249,7 @@ erDiagram
 | 15 | `document_template_purchases` | 発注書 定型本文 | — | — | — |
 | 16 | `document_template_confirmations` | 確認表 定型本文 | — | `standard_print_flag` | — |
 | 17 | `document_text_purchases` | 発注書 動的条項 | — | `standard_print_flag` | — |
-| 補 | `currencies` | 通貨（ISO 4217） | — | — | — |
-| 補 | `exchange_rates` | 為替レート履歴 | — | — | `currency_id` |
+| 補 | `exchange_rates` | 為替レート履歴（メーカー固有・§4.3.8） | — | `base_currency_code` / `quote_currency_code` | 34 canonical `currency` への論理参照（越境 FK なし） |
 | ※ | ~~`users`~~ → `app_user`（37 所有） | 利用者/権限 | — | — | 参照のみ |
 
 ### 4.2 マスタ共通雛形（tenant_id + delete_flag 版）
@@ -279,7 +278,7 @@ COMMENT ON COLUMN brands.code        IS '業務コード。ゼロパディング
 COMMENT ON COLUMN brands.delete_flag IS 'マスタ論理削除フラグ。過去取引の参照整合性保護のため物理削除は禁止';
 ```
 
-同型のマスタ（`functions`, `departments`, `countries`, `warehouses`, `product_groups`, `material_classifications`, `document_template_purchases`, `document_template_confirmations`, `document_text_purchases`, `currencies`）は上記雛形に固有属性列を加えるのみ。`product_groups.planning_fee NUMERIC(12,2)`、`document_template_confirmations.standard_print_flag SMALLINT`、`document_text_purchases.standard_print_flag SMALLINT` を追加する。
+同型のマスタ（`functions`, `departments`, `countries`, `warehouses`, `product_groups`, `material_classifications`, `document_template_purchases`, `document_template_confirmations`, `document_text_purchases`）は上記雛形に固有属性列を加えるのみ。`product_groups.planning_fee NUMERIC(12,2)`、`document_template_confirmations.standard_print_flag SMALLINT`、`document_text_purchases.standard_print_flag SMALLINT` を追加する。
 
 ### 4.3 固有属性を持つマスタの DDL
 
@@ -422,12 +421,43 @@ COMMENT ON COLUMN delivery_destinations.canonical_party_id IS '名寄せ済取�
 
 > **canonical への参照方針:** `canonical_party_id` は別スキーマ（Aurora 上の MDM）を指すため物理 FK を張れない。クロスウォーク `party_xref`（34 所有）で app-local id ⇄ canonical id を解決するのが正である。本列は「解決結果のキャッシュ」であり SoT は `party_xref`（30 SoT マップ準拠）。NULL は「未名寄せ」を意味する。
 
+```sql
+-- 4.3.8 exchange_rates — 為替レート履歴（メーカー固有）
+-- 通貨マスタ（currency）は 34 MDM/Canonical が所有。本表は通貨を再定義せず、
+-- 通貨コードは §9 の inline currency_code（ISO 4217）で保持し、canonical currency へは論理参照のみ張る。
+CREATE TABLE exchange_rates (
+    id                    BIGSERIAL     PRIMARY KEY,
+    tenant_id             BIGINT        NOT NULL REFERENCES tenant(id),  -- M1（RLS 対象）
+    base_currency_code    CHAR(3)       NOT NULL DEFAULT 'JPY',          -- 基軸通貨（ISO 4217、§9 inline。34 currency 論理参照）
+    quote_currency_code   CHAR(3)       NOT NULL,                        -- 相手通貨（ISO 4217、§9 inline。34 currency 論理参照）
+    rate                  NUMERIC(18,8) NOT NULL,                        -- 1 base = rate quote
+    effective_from        DATE          NOT NULL,                        -- 有効開始日
+    effective_to          DATE          NULL,                            -- NULL=現在有効
+    delete_flag           BOOLEAN       NOT NULL DEFAULT FALSE,          -- マスタ論理削除（物理削除禁止）
+    created_at            TIMESTAMPTZ   NOT NULL DEFAULT now(),          -- M3
+    updated_at            TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    created_by_user_id    BIGINT        NULL REFERENCES app_user(id),
+    updated_by_user_id    BIGINT        NULL REFERENCES app_user(id),
+    legacy_id             VARCHAR(64)   NULL,
+    CONSTRAINT chk_er_rate             CHECK (rate > 0),
+    CONSTRAINT chk_er_effective_range  CHECK (effective_to IS NULL OR effective_to > effective_from),
+    CONSTRAINT uq_er_tenant_pair_from  UNIQUE (tenant_id, base_currency_code, quote_currency_code, effective_from)
+);
+CREATE INDEX idx_er_tenant_current
+    ON exchange_rates (tenant_id, base_currency_code, quote_currency_code, effective_from DESC)
+    WHERE effective_to IS NULL AND delete_flag = FALSE;
+COMMENT ON COLUMN exchange_rates.base_currency_code  IS '基軸通貨コード（ISO 4217）。通貨メタデータの正準定義は 34 MDM canonical currency が所有。本列は §9 inline 表現であり currency マスタへの物理 FK は張らない';
+COMMENT ON COLUMN exchange_rates.quote_currency_code IS '相手通貨コード（ISO 4217）。34 canonical currency への論理参照。越境 FK は張らない';
+```
+
+> **通貨所有の是正:** 継承実装が持っていた `currencies` テーブル（ISO 4217 通貨マスタ）は、ブリーフ §14 の所有マップにより通貨（`currency`）・単位（`uom`）が [34 MDM/Canonical](./34-mdm-canonical-schema.md) の所有エンティティであるため、本ドキュメントでは**所有を主張せず削除**した。`exchange_rates` はメーカー固有の為替履歴として残すが、通貨識別は §9 の inline `currency_code`（ISO 4217）で表し、通貨の正準定義（表示名・小数桁・記号等）は 34 の canonical `currency` を論理参照する（物理 FK・越境参照は張らない）。トランザクション各表も従来どおり inline `currency_code CHAR(3) DEFAULT 'JPY'` を用い、`currencies` への FK は存在しない。
+
 ### 4.4 利用者マスタ → app_user 昇格（M5）
 
 継承実装の `users` テーブル（`employee_no`/`login_id`/`display_name` + 4 権限カテゴリ）は、プラットフォームでは Control Plane の `app_user`（37 所有）へ集約する（ブリーフ §5「ユーザ業務情報/権限は RDS Control Plane が SoT」）。
 
 - メーカー OLTP は `app_user` を**参照のみ**とし、監査列（`created_by_user_id`/`updated_by_user_id`）と発注担当者（`orderer_user_id` 等）で `REFERENCES app_user(id)` を張る。
-- 継承実装の 4 権限カテゴリ（品番台帳管理 / 発注書作成 / 発注情報管理 / 工程実績管理）は、Control Plane の `role`/`permission`（37）へマッピングする。メーカー固有権限のコード体系は 37 と [05 メーカーサービス](../basic-design/05-manufacturer-service.md) で確定する。
+- 継承実装の 4 権限カテゴリ（品番台帳管理 / 発注書作成 / 発注情報管理 / 工程実績管理）は、Control Plane の `role`/`permission`（37）へマッピングする。メーカー固有権限のコード体系は 37 と [05 メーカーサービス](../basic-design/05-service-manufacturer.md) で確定する。
 - 移行: `users` 行を `app_user` へ移送（`employee_no`→ビジネスキー、`login_id`→Firebase Email 連携キー）。旧メーカー DB 内 `users` は移行後に廃止し、全 FK を `app_user(id)` へ張り替える。
 
 ---
@@ -545,7 +575,7 @@ flowchart LR
   C --> R["NA1001A4010"]
 ```
 
-- **採番方針:** 上位 9 桁（1-9 桁目 + 連番）は `product_families` 登録時に確定。10-11 桁は `products`（色 × サイズ展開）生成時に `sizes.item_conversion_code` から合成。`sequence_no`（4-6 桁）は `(tenant_id, planned_year_code, product_type_id, product_season_id, factory_supplier_id)` の範囲内で採番する。採番の同時実行制御はアプリ層のアドバイザリロック or `SELECT ... FOR UPDATE` + 連番テーブルで担保（詳細は [05 メーカーサービス](../basic-design/05-manufacturer-service.md)）。
+- **採番方針:** 上位 9 桁（1-9 桁目 + 連番）は `product_families` 登録時に確定。10-11 桁は `products`（色 × サイズ展開）生成時に `sizes.item_conversion_code` から合成。`sequence_no`（4-6 桁）は `(tenant_id, planned_year_code, product_type_id, product_season_id, factory_supplier_id)` の範囲内で採番する。採番の同時実行制御はアプリ層のアドバイザリロック or `SELECT ... FOR UPDATE` + 連番テーブルで担保（詳細は [05 メーカーサービス](../basic-design/05-service-manufacturer.md)）。
 - **一意性:** 合成後の `sku` は `uq_products_tenant_sku` で担保。桁構成変更・再採番に耐えるため `sku` は PK にせず `id` を PK とする（30 §6）。
 
 ### 5.4 product_images（商品画像）
@@ -748,13 +778,13 @@ stateDiagram-v2
   state "発注済" as S1
   state "発注中止" as S2
   state "発注削除" as S3
-  [*] --> S0: "作成 status=0/ordered_at NULL"
-  S0 --> S1: "発注操作 ordered_at 設定"
-  S0 --> S2: "中止 status=1"
-  S1 --> S2: "中止 status=1"
-  S0 --> S3: "論理削除 is_deleted"
-  S1 --> S3: "論理削除 is_deleted"
-  S2 --> S3: "論理削除 is_deleted"
+  [*] --> S0: 作成 status=0 / ordered_at NULL
+  S0 --> S1: 発注操作 ordered_at 設定
+  S0 --> S2: 中止 status=1
+  S1 --> S2: 中止 status=1
+  S0 --> S3: 論理削除 is_deleted
+  S1 --> S3: 論理削除 is_deleted
+  S2 --> S3: 論理削除 is_deleted
   S3 --> [*]
 ```
 
@@ -1208,7 +1238,7 @@ CREATE TRIGGER trg_products_set_updated_at
 
 | 区分 | テーブル |
 |------|---------|
-| マスタ（17 + 補助 2） | `sizes` `product_types` `product_seasons` `colors` `suppliers` `brands` `functions` `materials` `material_classifications` `product_groups` `departments` `countries` `warehouses` `delivery_destinations` `document_template_purchases` `document_template_confirmations` `document_text_purchases` `currencies` `exchange_rates` |
+| マスタ（17 + 補助 1） | `sizes` `product_types` `product_seasons` `colors` `suppliers` `brands` `functions` `materials` `material_classifications` `product_groups` `departments` `countries` `warehouses` `delivery_destinations` `document_template_purchases` `document_template_confirmations` `document_text_purchases` `exchange_rates` |
 | 商品・価格・BOM | `product_families` `products` `product_images` `product_supplier_prices` `product_materials` `product_set_components` |
 | 発注 | `purchase_orders` `purchase_order_lines` `purchase_order_line_deliveries` `purchase_order_export_logs` |
 | 生産・素材 | `production_instructions` `production_instruction_lines` `material_orders` `material_order_lines` |
@@ -1272,7 +1302,7 @@ ALTER TABLE products
 
 ## 12. スタースキーマ写像
 
-メーカー OLTP の各トランザクションを DWH（35 所有）の fact/dim へ写像する。**dim/fact は本ドキュメントで再定義せず**、写像元と結合キー、conformed dimension の対応のみ定義する（取込・変換の詳細は [22 スタースキーマ変換](../detailed-design/22-star-schema-transform.md)）。
+メーカー OLTP の各トランザクションを DWH（35 所有）の fact/dim へ写像する。**dim/fact は本ドキュメントで再定義せず**、写像元と結合キー、conformed dimension の対応のみ定義する（取込・変換の詳細は [22 スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)）。
 
 | DWH fact（35 所有） | 写像元（32 OLTP） | 粒度 | 主 measures | 主 dim 結合 |
 |--------------------|------------------|------|-------------|------------|
@@ -1324,7 +1354,9 @@ flowchart LR
 
 ## 13. 想定エラーコード
 
-継承実装のメーカー系接頭辞（`PROD`/`ORDER`/`MASTER`/`PRICE`/`BOM`/`PINST`/`MORD`）を尊重し、新規に販売/在庫（`SALES`/`INV`）と移行（`MFG`）を追加する。テナント越境等の横断エラーは `CMN`（30 §9 所有）を参照。
+継承実装のメーカー系接頭辞（`PROD`/`ORDER`/`MASTER`/`PRICE`/`BOM`/`PINST`/`MORD`）を尊重する。販売/在庫（`SALES`/`INV`）と移行（`MFG`）の 3 接頭辞は本ドキュメントで独自増設せず、**プラットフォーム共通のエラーコードレジストリ（ブリーフ §10）へメーカー系拡張として正式登録したうえで使用する**。登録元・SoT は [30 スキーマ戦略と SoT](./30-schema-strategy-and-sot.md) §9（継承メーカー系接頭辞の拡張定義を所有）であり、本節はそこに登録済みの接頭辞を参照して逆引き一覧を提供する（レジストリ未登録の接頭辞を各ドキュメントが独自に増設しない）。テナント越境等の横断エラーは `CMN`（30 §9 所有）を参照。
+
+> **接頭辞レジストリ整合（原則 5・6）:** `SALES`（受注/売上）・`INV`（在庫）・`MFG`（メーカー移行バッチ）は、既存の `ORDER`（発注）／`CMN`（横断）とドメインが重複しないメーカー固有領域として 30 §9 とブリーフ §10 のレジストリへ双方向に登録する。30 側にこの 3 接頭辞が追加されるまで本節のコードは暫定であり、登録完了をもって確定とする（未登録のまま運用しない）。
 
 | コード | 事象 | 契機 | 対処 |
 |--------|------|------|------|
@@ -1378,9 +1410,9 @@ flowchart LR
 ## 16. 関連ドキュメント
 
 - [30 スキーマ戦略と SoT](./30-schema-strategy-and-sot.md) — 命名/DDL 規約・RLS 雛形・共通列・移行方針の SoT（本ドキュメントが従う横断規約）
-- [05 メーカーサービス（基本設計）](../basic-design/05-manufacturer-service.md) — 業務フロー・画面・採番/権限の要件
+- [05 メーカーサービス（基本設計）](../basic-design/05-service-manufacturer.md) — 業務フロー・画面・採番/権限の要件
 - [34 MDM / Canonical スキーマ](./34-mdm-canonical-schema.md) — `canonical_party`/`canonical_sku`/`canonical_location`・各 `*_xref` の SoT（本ドキュメントの canonical 参照先）
 - [35 スタースキーマ DWH](./35-star-schema-dwh.md) — `dim_*`/`fact_*`・DISTKEY/SORTKEY（§12 写像先）
 - [37 コントロールプレーン / バックオフィス](./37-control-plane-backoffice-schema.md) — `tenant`/`app_user`/権限/監査の SoT（監査列・利用者マスタ昇格先）
-- [22 スタースキーマ変換（詳細設計）](../detailed-design/22-star-schema-transform.md) — OLTP → DWH の取込・変換パイプライン
+- [22 スタースキーマ変換（詳細設計）](../detailed-design/22-star-schema-transformation.md) — OLTP → DWH の取込・変換パイプライン
 - [honshu-master-schema（ドメインコンテキスト）](../../../.ai-native/domain-context/industry/honshu-master-schema.md) — 継承実装の 18 マスタ・11 桁品番の正規仕様

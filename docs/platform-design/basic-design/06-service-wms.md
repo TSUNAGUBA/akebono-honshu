@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: 倉庫向け自社サービス（WMS）の機能・データ・業務フロー・帳票・荷主請求を基本設計として定義する
-related: [oltp-wms-schema, service-analytics, service-backoffice, canonical-domain-model, data-integration-mapping]
+related: [oltp-wms-schema, service-analytics, service-backoffice, canonical-domain-model, data-integration-mapping, star-schema-dwh, nfr-security-tenancy]
 ---
 
 # 基本設計: 倉庫向けサービス（WMS）
@@ -18,7 +18,7 @@ SKU マスタ（倉庫視点）・入出庫と在庫のトランザクション�
 
 > **本ドキュメントの所有範囲（owns）:** WMS サービスの**機能・業務フロー・帳票・荷主請求の基本設計**の権威的記述。
 > **物理スキーマ（CREATE TABLE / 索引 / 制約 / `tenant_id` / RLS / 監査列）は本書では定義しない。** WMS OLTP の物理スキーマは
-> [`33 WMS OLTP`](../database-design/33-wms-oltp-schema.md) が権威的に所有する。本書はエンティティを**論理レベル**で記述し、
+> [`33 WMS OLTP`](../database-design/33-oltp-wms-schema.md) が権威的に所有する。本書はエンティティを**論理レベル**で記述し、
 > 正準モデル（[`03 正準ドメインモデル`](./03-canonical-domain-model.md) / MDM 34）およびスタースキーマ（[`35 DWH`](../database-design/35-star-schema-dwh.md)）への写像方針を示すに留める。
 > `canonical_*` / `dim_*` / `fact_*` / `tenant` / `app_user` 等の共通テーブルは所有ドキュメントの定義を参照し、再定義しない。
 
@@ -329,7 +329,7 @@ graph TD
     T2["tenant（倉庫事業者B）"] -.RLS で完全遮断.- T
 ```
 
-- **テナント分離（`tenant_id`）:** ブリーフ §6 準拠。全テーブル `tenant_id BIGINT NOT NULL`、RLS で `tenant_id = current_setting('app.tenant_id')::bigint` 強制。一意制約はテナントスコープ（例 `uq_sku_master_(tenant_id, shipper_id, sku)`）。
+- **テナント分離（`tenant_id`）:** ブリーフ §6 準拠。全テーブル `tenant_id BIGINT NOT NULL`、RLS で `tenant_id = current_setting('app.tenant_id')::bigint` 強制。一意制約はテナントスコープ（例 `uq_sku_master_tenant_id_shipper_id_sku`＝テナント＋荷主スコープで SKU 一意。確定 DDL は 33 が所有）。
 - **荷主分離（`shipper_id`）:** 同一テナント内で在庫・作業・請求を荷主で分離。**倉庫作業者は複数荷主を横断**して作業するため既定は tenant スコープでアクセスし、`shipper_id` で業務フィルタ。
   **荷主自身がポータルで自社在庫を閲覧する場合**は、追加で `app.shipper_id` を張り荷主スコープ RLS を効かせ、他荷主データを遮断する。
 - **共有 vs 専用ロケーション:** ビンは荷主専用（`bin.dedicated_shipper_id`）と共用（フリーロケーション）を属性で区別。共用ビンでも在庫レコード（`wms_inventory`）は必ず `shipper_id` を持ち、混在保管でも所有権を追跡できる。
@@ -365,7 +365,7 @@ flowchart TD
 
 ### 7.1 論理 ER（本サービスが SoT の主要エンティティ）
 
-> 下図は**論理モデル**。物理 DDL（列型・制約・索引・`tenant_id`/`shipper_id`/RLS/監査列）は [`33 WMS OLTP`](../database-design/33-wms-oltp-schema.md) が所有する。
+> 下図は**論理モデル**。物理 DDL（列型・制約・索引・`tenant_id`/`shipper_id`/RLS/監査列）は [`33 WMS OLTP`](../database-design/33-oltp-wms-schema.md) が所有する。
 
 ```mermaid
 erDiagram
@@ -410,7 +410,7 @@ erDiagram
 | SHIPPER（荷主） | canonical_party（role=shipper） | party_xref | dim_customer（荷主） / dim_party |
 | SHIPMENT / OUTBOUND_ORDER_LINE | — | — | **fact_shipment**（出荷明細粒度） |
 | INVENTORY_MOVEMENT | — | — | **fact_inventory_movement**（移動イベント） |
-| WMS_INVENTORY（周期断面） | — | — | **fact_inventory_snapshot**（SKU×拠点/ビン×日付） |
+| WMS_INVENTORY（周期断面） | — | — | **fact_inventory_snapshot**（適合粒度 = SKU×拠点×日付。※ビン明細は WMS OLTP ローカルの粒度で、供給時に拠点粒度へ集約） |
 | SHIPPER_BILLING_LINE | — | — | **fact_billing**（請求明細粒度） |
 
 ### 7.3 fact への供給契約
@@ -451,7 +451,7 @@ flowchart LR
 |--------------|------|------|--------|
 | fact_shipment | 出荷明細 × 日付 | 日次 CDC/バッチ | `Idempotency-Key`/`source_record_id` で重複排除。load_run 単位再実行可（36） |
 | fact_inventory_movement | 移動イベント | 準リアルタイム/日次 | 同上 |
-| fact_inventory_snapshot | SKU × ビン/拠点 × 日 | 日次周期スナップショット | 日付キーで冪等 upsert |
+| fact_inventory_snapshot | SKU × 拠点 × 日（§8 適合粒度。WMS OLTP は bin×SKU×ロット行粒度で保持し、供給時に拠点粒度へ集約） | 日次周期スナップショット | 日付キーで冪等 upsert |
 | fact_billing | 請求明細 × 対象月 | 月次締め時 | （荷主, 対象月, 区分）キーで冪等 upsert |
 
 > **データフロー整合（review-standards 2.3 / CLAUDE.md 原則6）:** 本サービス OLTP（SoT）→ Data Plane（派生）の一方向。逆流（DWH → OLTP 書戻し）は行わない。
@@ -592,7 +592,7 @@ graph TD
 | WMS-602 | 請求 | 確定済請求月の再締め要求（巻き戻し禁止） | WARNING | 訂正明細フローへ誘導 |
 | WMS-603 | 請求 | 締めバッチの重複実行（Idempotency-Key 重複） | INFO | 既存締め結果を返却・冪等無害化 |
 | WMS-701 | 連携 | 分析供給バッチの重複ロード | INFO | load_run 冪等で無害化・記録のみ |
-| WMS-702 | 連携 | 上流（EC/小売 06 外）出荷指示の突合失敗 | WARNING | 手動再同期パスへ誘導 |
+| WMS-702 | 連携 | 上流（本書 06 の外＝EC/小売 04・メーカー 05）からの出荷指示の突合失敗 | WARNING | 手動再同期パスへ誘導 |
 
 > **エラーハンドリング（review-standards 3.4 / CLAUDE.md 原則4）:** 補助処理（帳票発行・ASN 送信・分析供給・名寄せ）の失敗は主要フロー（入荷計上・出荷確定・在庫更新）を止めない
 > グレースフルデグラデーション。致命的（WMS-001/003/303/401）のみ例外を投げる。全想定エラーにコードを付与し逆引き可能に一元管理する。
@@ -601,7 +601,7 @@ graph TD
 
 ## 11. 非機能・テナンシー観点（サマリ）
 
-詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md) が所有。本サービス固有の要点のみ記す。
+詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md) が所有。本サービス固有の要点のみ記す。
 
 - **二層分離:** `tenant_id`（RLS 強制）＋ `shipper_id`（荷主業務分離、ポータル時は荷主 RLS 併用）。一意制約はテナント（＋荷主）スコープ（ブリーフ §6）。
 - **認証/認可:** Firebase Bearer ＋ tenant クレーム解決、任意で `X-Tenant-Id` 突合（不一致 403 = WMS-001）。荷主ポータルは荷主スコープの限定ロール。全 API 認可必須。
@@ -619,7 +619,7 @@ graph TD
 | 1 | PDF 生成ライブラリ | (a) QuestPDF（.NET ネイティブ・宣言的レイアウト） / (b) HTML→PDF（Playwright/wkhtmltopdf） / (c) ClosedXML→PDF 変換 | 暫定(a)。継承実装は xlsx のみのため新規選定。ライセンス（QuestPDF Community 条件）と帳票レイアウト自由度を 12 ADR で確定 |
 | 2 | 荷主分離の RLS 適用範囲 | (a) 倉庫作業者は tenant スコープ＋アプリフィルタ、荷主のみ RLS / (b) 全アクセスで shipper RLS 強制 | 暫定(a)。作業者は複数荷主横断が必須のため。荷主ポータルのみ(b)相当を適用 |
 | 3 | 保管料計算方式の既定 | (a) 三期制を既定 / (b) 荷主ごとに必ず明示指定 | 暫定(a)＋荷主単位上書き。日本の倉庫業慣行に整合。海外/特殊貨物は日建て/坪建て |
-| 4 | 出荷指示の入口 | (a) 荷主直接 API / (b) 小売（04/06 EC 連携）/メーカー（05）からの連携 / (c) ファイル投函 | 全経路サポート。突合失敗は手動再同期（WMS-702）。SoT 境界は「出荷指示受領後は WMS が SoT」 |
+| 4 | 出荷指示の入口 | (a) 荷主直接 API / (b) 小売（04 EC 連携）/メーカー（05）からの連携 / (c) ファイル投函 | 全経路サポート。突合失敗は手動再同期（WMS-702）。SoT 境界は「出荷指示受領後は WMS が SoT」 |
 | 5 | ロット/期限の在庫粒度 | (a) `wms_inventory` にロット/期限を含めた行粒度 / (b) 別ロットテーブルに分離 | 暫定(a)（ビン×SKU×ロット×期限を 1 行）。ロット多発時のカーディナリティは 33 で索引設計 |
 | 6 | 付帯作業料の実績データ源 | (a) `inventory_movement` の作業種別に集約 / (b) 独立の作業実績テーブル | 暫定(a)。付帯作業が多様化したら(b)へ分離（33 と協議） |
 | 7 | 荷主請求と SCIP 課金の関係 | 荷主請求（本書）と倉庫事業者への SCIP 利用料課金（37）の帳票/データ二重管理 | 明確分離: 荷主請求＝WMS 業務データ（fact_billing）、SCIP 課金＝Control Plane（37）。相互参照のみ |
@@ -629,10 +629,10 @@ graph TD
 
 ## 13. 関連ドキュメント
 
-- [`33 WMS OLTP`](../database-design/33-wms-oltp-schema.md)（document_id: oltp-wms-schema） — 本サービスの**物理スキーマを権威的に所有**（`sku_master`/`zone`/`location`/`bin`/`inbound_receipt`/`outbound_order`/`wms_inventory`/`inventory_movement`/`shipment`/`shipping_document`/`shipper`/`shipper_billing`/`billing_rate` の CREATE TABLE / 索引 / 制約 / `tenant_id` / `shipper_id` / RLS）。
-- [`07 分析・可視化サービス`](./07-analytics-visualization.md)（document_id: service-analytics） — 本サービスが供給する `fact_shipment`/`fact_inventory_movement`/`fact_billing` の消費側。集計・ダッシュボードの本体。
+- [`33 WMS OLTP`](../database-design/33-oltp-wms-schema.md)（document_id: oltp-wms-schema） — 本サービスの**物理スキーマを権威的に所有**（`sku_master`/`zone`/`location`/`bin`/`inbound_receipt`/`outbound_order`/`wms_inventory`/`inventory_movement`/`shipment`/`shipping_document`/`shipper`/`shipper_billing`/`billing_rate` の CREATE TABLE / 索引 / 制約 / `tenant_id` / `shipper_id` / RLS）。
+- [`07 分析・可視化サービス`](./07-service-analytics.md)（document_id: service-analytics） — 本サービスが供給する `fact_shipment`/`fact_inventory_movement`/`fact_billing` の消費側。集計・ダッシュボードの本体。
 - [`09 バックオフィス`](./09-service-backoffice.md)（document_id: service-backoffice） — テナント（倉庫事業者）の契約・SCIP 利用料課金・エンタイトルメント。荷主**請求**（本書）とは責務が異なる（対比を §5.4/§12-7 で明示）。
 - [`03 正準ドメインモデル`](./03-canonical-domain-model.md) — 共通エンティティ（Product/SKU・Location・Party(role=shipper)・Region）の定義。本書はこれへ写像。
-- [`10 データ連携とマッピング`](./10-data-integration-mapping.md) — 他社 WMS の取込・人的マッピング経路（差別化の対比、§6.2）。
+- [`10 データ連携とマッピング`](./10-data-integration-and-mapping.md) — 他社 WMS の取込・人的マッピング経路（差別化の対比、§6.2）。
 - [`35 スタースキーマDWH`](../database-design/35-star-schema-dwh.md) — dim/fact の権威的定義（本書は写像方針のみ）。
 - 参考: [`02 全体アーキテクチャ`](./02-overall-architecture.md)、[`04 クロスリテーラーサービス`](./04-service-retail.md)（EC 出荷連携）、[`05 メーカーサービス`](./05-service-manufacturer.md)。

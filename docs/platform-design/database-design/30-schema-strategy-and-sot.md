@@ -67,17 +67,17 @@ flowchart LR
     S8["S8 pgvector"]
   end
   S11["S11 Firebase Auth"]
-  S10["S10 S3 オブジェクト"]
+  S10["S10 Amazon S3<br/>オブジェクト"]
 
-  S1 -->|CDC/バッチ取込| S6
+  S1 -->|"CDC/バッチ取込"| S6
   S6 --> S2
   S2 --> S5
   S5 --> S9
   S5 --> S7
   S2 --> S8
-  S3 -.->|テナント/権限| S1
-  S4 -.->|変換定義| S5
-  S11 -.->|UID/Claims| S1
+  S3 -.->|"テナント/権限"| S1
+  S4 -.->|"変換定義"| S5
+  S11 -.->|"UID/Claims"| S1
 ```
 
 > **原則（ブリーフ §5）:** SoT 側書込を先行、キャッシュ/派生は後追い。逆順は不整合の温床。各ドキュメントは自分が扱うデータの SoT を明示し、同期パス（イベント受信 + 手動再同期の両方）を欠落なく設計する。
@@ -95,19 +95,25 @@ flowchart LR
 | クロスウォーク（app-local id ⇄ canonical id） | S2 Canonical | — | 34 MDM | 名寄せ解決時に確定 |
 | Raw/Staging（取込生データ） | ソース側システム（各 OLTP / 他社アプリ） | S6 に保持 | 36 マッピング | ソース → S6 |
 | Star Schema（dim/fact） | 派生（Canonical/Raw 由来） | — | 35 DWH | Canonical/Raw → DWH |
-| メトリクス/セマンティック定義 | S4 メタデータ | S5 での物化ビュー | 35 DWH / 36 | 定義 → 変換 |
+| メトリクス/セマンティック定義（指標一元定義） | S4 メタデータ | S5 での物化ビュー | 37 コントロールプレーン（メタデータ同居） | 定義 → 変換 |
 | マッピング定義（source_field / mapping_rule 等） | S4 メタデータ | — | 36 マッピング | — |
 | スナップショット（事前集計） | 派生（DWH 由来） | S9 S3+CDN | 26（詳細設計） | DWH → S9 |
 | テナント拡張属性 | S7 DocDB | — | 38 / 27 | アプリ → DocDB |
 | 読み取りモデル（DocDB） | 派生（OLTP/DWH 由来） | S7 DocDB | 26 / 38 | SoT → DocDB |
 | ベクター/埋め込み | 派生（原文/KB 由来） | S8 pgvector | 38 AI | 原文 → 埋め込み → pgvector |
-| ナレッジ原文 | S10 S3（原文） + S3 メタ RDS | S8 ベクター | 38 AI | 原文 → チャンク → ベクター |
+| ナレッジ原文 | S10 Amazon S3（原文=SoT） + S2 Aurora（`kb_*` メタデータ） | S8 ベクター | 38 AI | 原文 → チャンク → ベクター |
 | オブジェクト（画像/帳票） | S10 S3 | — | 各 OLTP | Pre-signed URL |
 | 認証情報（UID/Email/PW ハッシュ） | S11 Firebase Auth | — | 37（参照） | — |
 | ユーザ業務情報/権限ロール | S3 Control Plane | Firebase Custom Claims | 37 コントロールプレーン | **RDS 先行 → Claims 後追い** |
 | テナント/契約/課金/エンタイトルメント | S3 Control Plane | — | 37 コントロールプレーン | — |
-| 監査ログ | S3 Control Plane（append-only） | S6 → S3 Glacier IR（長期） | 37 コントロールプレーン | INSERT 専用 → アーカイブ |
+| 監査ログ | S3 Control Plane（append-only） | S6 → Amazon S3 Glacier IR（長期） | 37 コントロールプレーン | INSERT 専用 → アーカイブ |
 | シークレット | S12 Secrets Manager | — | 非機能（11） | — |
+
+> **表記規約（ストア ID と Amazon S3 の綴り分け）:** カタログのストア ID `S3` は **Control Plane DB（RDS PG16）** を指す（§1）。ストレージサービスとしての Amazon S3 は必ず「Amazon S3」「Amazon S3 Glacier」と綴り、ストア ID `S3` と混同しない。本マップ内の Amazon S3 参照は S6（レイクハウス）/ S9（スナップショット）/ S10（オブジェクト）が該当する。
+>
+> **ナレッジメタデータの格納ストア確定（§7・カタログと一致）:** `kb_document` / `kb_chunk` 等のメタデータは **S2 Aurora PostgreSQL** に格納する（pgvector = S8 を Aurora に同居させる 38 の設計に合わせ、メタとベクターのトランザクション境界を共有するため）。原文は **S10 Amazon S3** が SoT。ブリーフ §5 は同メタを「RDS」と表記するが、本プラットフォームでは pgvector 同居性を優先し **Aurora（S2）を正**とする（§7 物理配置表の「AI ベクター/ナレッジ(38) = Aurora + S3 + DynamoDB」と一致）。この差分は 38 AI ドキュメントでも同一に扱う。
+>
+> **メトリクス/セマンティック定義の所有ドキュメント一意確定（07 §12-1 未決の解消）:** 指標一元定義（メトリクス/セマンティック定義）の**物理スキーマ所有先を 37 コントロールプレーン/バックオフィスに一意確定**する。定義系メタデータは S4 メタデータ DB（Control 系と同一 RDS インスタンスに同居, §7）に格納し、プラットフォーム共通の定義メタとして 37 が CREATE TABLE を権威的に所有する。**36 マッピングメタデータは「マッピング定義（`source_field` / `mapping_rule` / `transform_expression` 等）の SoT」に限定**し、メトリクス/セマンティック定義テーブルは所有しない（ブリーフ §14 の 36 所有一覧に指標定義テーブルが存在しないことと整合）。07 §12 未決 #1 が挙げた候補「30 新設 / 37 同居」のうち、30 は本ドキュメント冒頭（owns 宣言）で個別業務テーブル定義を所有しないと明示しているため、自己整合的な選択肢は **37** のみ。**追随修正が必要（他ファイル）:** ① 07 §12 未決 #1 を「37 所有で確定」に更新し §9 所有マップにも反映、② ブリーフ §14 の 37 所有一覧に `metric_definition` / `semantic_entity` 等の指標定義テーブルを追記、③ 36 マッピングメタデータドキュメントに「メトリクス定義は非所有（37 が所有）」を明記——の 3 点を本確定に揃える。
 
 ### SoT 二重管理の要注意ポイント
 
@@ -140,10 +146,10 @@ flowchart LR
 | 項目 | 規約 | 補足 |
 |------|------|------|
 | PK | `id BIGSERIAL PRIMARY KEY` | C# `long` に対応。`GENERATED IDENTITY` / PG ENUM は使わないハウススタイル |
-| テナント列 | `tenant_id BIGINT NOT NULL REFERENCES tenant(id)`（テナントスコープ全テーブル） | RLS 前提。§4 参照 |
+| テナント列 | `tenant_id BIGINT NOT NULL`（テナントスコープ全テーブル）。`tenant(id)` への参照は**論理参照**（§7 のインスタンス分離のため物理 FK は張らない） | RLS 前提。§4 / §6 / §7 参照 |
 | タイムスタンプ | `created_at`/`updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`（UTC 保存/ローカル表示） | 継承実装の JST-naive `TIMESTAMP` からの移行差分は §8 / 32 で明記 |
 | 論理削除（新規） | `is_deleted BOOLEAN NOT NULL DEFAULT FALSE` | メーカー OLTP(32) は継承慣習（マスタ=`delete_flag`）を後方互換維持 |
-| 監査列 | `created_by_user_id`/`updated_by_user_id BIGINT REFERENCES app_user(id)` | 軽量ログ系は省略可（明記のこと） |
+| 監査列 | `created_by_user_id`/`updated_by_user_id BIGINT`（`app_user(id)` への**論理参照**。§7 のインスタンス分離のため物理 FK は張らない） | 軽量ログ系は省略可（明記のこと） |
 | enum/ステータス | `SMALLINT + CHECK(x IN (...))` + アプリ解釈 | 日本語文字列ステータスはアンチパターン。正規化する |
 | 金額 | 単価 `NUMERIC(12,2)`、明細小計 `NUMERIC(14,2)`〜`(16,2)` | 計算列は `GENERATED ALWAYS AS (...) STORED` |
 | 数量 | `NUMERIC(12,4)`〜`(14,4)` | — |
@@ -178,7 +184,7 @@ flowchart TD
 -- テナントスコープテーブルの物理雛形（Pooled + RLS）
 CREATE TABLE example_entity (
     id                  BIGSERIAL   PRIMARY KEY,                       -- 代理主キー
-    tenant_id           BIGINT      NOT NULL REFERENCES tenant(id),    -- テナント識別子（RLS対象）
+    tenant_id           BIGINT      NOT NULL,                          -- テナント識別子（RLS対象。tenant(id) への論理参照, §7）
     code                VARCHAR(64) NOT NULL,                          -- 業務コード（テナント内一意）
     name                VARCHAR(255) NOT NULL,                         -- 名称
     status              SMALLINT    NOT NULL DEFAULT 0,                -- 状態 0=Draft/1=Active/2=Discontinued
@@ -187,10 +193,14 @@ CREATE TABLE example_entity (
     is_deleted          BOOLEAN     NOT NULL DEFAULT FALSE,            -- 論理削除フラグ
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),            -- 作成日時（UTC保存）
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),            -- 更新日時（UTC保存）
-    created_by_user_id  BIGINT      NULL REFERENCES app_user(id),     -- 作成者
-    updated_by_user_id  BIGINT      NULL REFERENCES app_user(id),     -- 更新者
+    created_by_user_id  BIGINT      NULL,                              -- 作成者（app_user(id) への論理参照, §7）
+    updated_by_user_id  BIGINT      NULL,                              -- 更新者（app_user(id) への論理参照, §7）
     CONSTRAINT chk_example_entity_status CHECK (status IN (0, 1, 2))
 );
+
+-- 注: tenant_id / created_by_user_id / updated_by_user_id は Control Plane（別インスタンス, §7）が
+--     所有する tenant / app_user を指すため、物理 FK ではなく論理参照とする（整合はアプリ層 + RLS で保証）。
+--     tenant / app_user を同一インスタンスに同居させる配置を採る場合に限り REFERENCES を付与できる（§7 参照）。
 
 -- ★ 一意性はすべてテナントスコープ（tenant_id を先頭に含める）
 ALTER TABLE example_entity
@@ -236,10 +246,10 @@ CREATE POLICY tenant_isolation ON example_entity
 
 | 系統 | 列 | 型 | 必須 | 備考 |
 |------|-----|-----|------|------|
-| テナント | `tenant_id` | `BIGINT NOT NULL` | ○（テナントスコープ） | RLS 対象。UNIQUE 先頭 |
+| テナント | `tenant_id` | `BIGINT NOT NULL` | ○（テナントスコープ） | RLS 対象。UNIQUE 先頭。`tenant(id)` へは論理参照（§7） |
 | タイムスタンプ | `created_at` / `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | ○ | UTC 保存 |
 | 論理削除 | `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | ○（新規） | 32 はマスタ=`delete_flag` 後方互換 |
-| 監査 | `created_by_user_id` / `updated_by_user_id` | `BIGINT REFERENCES app_user(id)` | △ | 軽量ログ系は省略可 |
+| 監査 | `created_by_user_id` / `updated_by_user_id` | `BIGINT`（`app_user(id)` へ論理参照, §7） | △ | 軽量ログ系は省略可 |
 | 来歴 | `source_system` / `source_record_id` / `legacy_id` | `VARCHAR` | △（取込系） | 移行・取込データのみ |
 
 ### 5.1 updated_at 自動更新トリガ（共通）
@@ -317,12 +327,25 @@ graph TD
 | メーカー OLTP | 32 | RDS PG16 | 同上。継承実装から一般化 |
 | WMS OLTP | 33 | RDS PG16 | 同上 |
 | Canonical/MDM | 34 | Aurora PG | 読取スケール。pgvector 同居 |
-| メタデータ（マッピング/メトリクス） | 36 | RDS PG16 | Control 系と同居可 |
+| マッピングメタデータ（`source_field`/`mapping_rule` 等） | 36 | RDS PG16 | Control 系と同居可 |
+| メトリクス/セマンティック定義（指標一元定義） | 37 | RDS PG16（メタデータ同居, S4） | 定義メタとして Control 系と同居（§2 で 37 所有に確定） |
 | コントロールプレーン | 37 | RDS PG16（独立） | プラットフォーム共通。テナント横断 |
 | Star Schema DWH | 35 | Redshift Serverless | 列指向 MPP。テナントは `tenant_id`+`DISTKEY` |
 | AI ベクター/ナレッジ | 38 | Aurora(pgvector) + S3 + DynamoDB | 用途別 |
 
 > **コントロールプレーンは例外的にテナント横断**（`tenant` テーブル自体を持つため）。それ以外の業務スキーマは全テーブルが `tenant_id` を持つテナントスコープ。
+
+### 7.1 インスタンス分離と参照整合（物理 FK の可否）
+
+`tenant` / `app_user` は **Control Plane DB（S3 / RDS PG16, 独立インスタンス）** が所有する（37 / ブリーフ §14）。一方、業務 OLTP（S1）・Canonical（S2）等は別インスタンス（別データベース）である。PostgreSQL は**別インスタンス間の物理外部キー制約を張れない**ため、業務テーブルの `tenant_id` / `created_by_user_id` / `updated_by_user_id` から `tenant(id)` / `app_user(id)` への参照は、以下の方針で確定する。
+
+- **標準（インスタンス分離を維持する場合）:** これらの列は**論理参照**とし、物理 FK 制約を張らない。整合は次の三層で保証する。
+  1. **RLS**: `tenant_id` は全セッションで `SET app.tenant_id` により強制され、他テナント値の混入を防ぐ（§4.2 / §6）。
+  2. **アプリ層**: 書込時に有効な `tenant_id` / ユーザ ID をクレーム由来で解決し付与する（存在しない ID を書かない）。
+  3. **参照健全性ジョブ**: 孤児参照（削除済ユーザ ID 等）を定期検知し是正する（37 で設計）。
+- **例外（同居配置を採る場合）:** テナント数が少ない Silo テナント等で `tenant` / `app_user` を業務 OLTP と**同一インスタンスの別スキーマに同居**させる配置を採る場合に限り、cross-schema FK（`REFERENCES tenant(id)` / `REFERENCES app_user(id)`）を付与できる。この場合は §4.1 雛形・§5・§8.3 の該当列に `REFERENCES` を復活させる。
+
+> **ブリーフ §9 との対応:** ブリーフ §9 の `tenant_id BIGINT NOT NULL REFERENCES tenant(id)` / `... REFERENCES app_user(id)` という表記は**参照関係（論理的な意図）**を示す簡略記法であり、物理 FK 制約の必須を意味しない。本プラットフォームの標準配置（Control Plane 独立インスタンス, §7）では上記のとおり論理参照として実装する。§6「`tenant_id` は FK 列に含めず、参照先テーブルの RLS が整合を担保する（アプリ層で `tenant_id` 一致を保証）」と平仄が一致する。
 
 ---
 
@@ -359,10 +382,9 @@ ALTER TABLE products ADD COLUMN tenant_id BIGINT;
 -- 2) 既定テナント(Honshu = 1 と仮定)でバックフィル
 UPDATE products SET tenant_id = 1 WHERE tenant_id IS NULL;
 
--- 3) NOT NULL + FK 制約を確定
+-- 3) NOT NULL を確定（tenant は Control Plane の別インスタンス, §7 のため物理 FK は張らず論理参照とする。
+--    整合はアプリ層 + RLS が保証。tenant を同一インスタンスに同居させる配置時のみ REFERENCES を付与可）
 ALTER TABLE products ALTER COLUMN tenant_id SET NOT NULL;
-ALTER TABLE products ADD CONSTRAINT fk_products_tenant
-    FOREIGN KEY (tenant_id) REFERENCES tenant(id);
 
 -- 4) 旧 UNIQUE をテナントスコープへ差し替え（M2）
 ALTER TABLE products DROP CONSTRAINT IF EXISTS uq_products_sku;

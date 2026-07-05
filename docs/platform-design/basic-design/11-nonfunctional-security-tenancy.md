@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: SCIP プラットフォームの非機能要件・マルチテナント分離・セキュリティ・可観測性・可用性/DR・コスト・コンプライアンス・AI ガバナンスの横断方針を権威的に定義する
-related: [overall-architecture, schema-strategy-sot, control-plane-backoffice-schema, adr, service-backoffice, data-integration-mapping, ai-rag-vector, decision-support-ai]
+related: [overall-architecture, schema-strategy-sot, control-plane-backoffice-schema, adr, service-backoffice, data-integration-mapping, concept-and-vision, star-schema-dwh, ai-vector-knowledge-schema, snapshot-docdb, si-customization-provisioning, manufacturer-oltp-schema]
 ---
 
 # 基本設計: 非機能要件 / セキュリティ / マルチテナンシー
@@ -23,9 +23,9 @@ related: [overall-architecture, schema-strategy-sot, control-plane-backoffice-sc
 > **本ドキュメントの所有範囲（owns）:** 非機能・セキュリティ・テナンシーの**横断方針**の権威的記述。
 > RLS の適用方針・テナント解決フロー・機微データマスキング方針・可観測性の標準・SLA/DR 目標・AI ガバナンスの原則を定義する。
 > **物理スキーマ（CREATE TABLE / 索引 / 制約 / `tenant_id` 列 / RLS ポリシーの DDL）は本書では定義しない。**
-> 命名/DDL 規約と SoT の総則は [`30 スキーマ戦略と SoT`](../database-design/30-schema-strategy-sot.md)、
+> 命名/DDL 規約と SoT の総則は [`30 スキーマ戦略と SoT`](../database-design/30-schema-strategy-and-sot.md)、
 > `tenant`/`app_user`/`role`/`permission`/`audit_logs` 等の物理定義は [`37 コントロールプレーン/バックオフィス スキーマ`](../database-design/37-control-plane-backoffice-schema.md)、
-> 技術選定の根拠は [`12 ADR`](./12-adr.md) が所有する。本書はこれらを横断的な**方針レベル**で束ねる。
+> 技術選定の根拠は [`12 ADR`](./12-architecture-decision-records.md) が所有する。本書はこれらを横断的な**方針レベル**で束ねる。
 
 ---
 
@@ -43,7 +43,7 @@ related: [overall-architecture, schema-strategy-sot, control-plane-backoffice-sc
 | 監査 | 主要トランザクションのみ / 3 年保管 / 改竄防止 | **全プレーン横断の監査 + ユーザアクションログ + AI 実行ログ**へ拡張（§6） |
 | データ保管 | 日本国内保管（業務データ本体） | **国内保管を維持**。認証情報（Firebase）の海外配置はオペレーター許容済（§2.6 / ADR） |
 
-> **review-standards 非機能層の適用:** 本書は [`review-standards`](../../.ai-native/methodology/common/review-standards.md) の
+> **review-standards 非機能層の適用:** 本書は [`review-standards`](../../../.ai-native/methodology/common/review-standards.md) の
 > LAYER_4（4.1 パフォーマンス=UI 体感、4.2 セキュリティ=機密度で深度決定、4.3 リソースコスト=キャパシティ/致命的パターン）を
 > プラットフォーム規模へ適用したものである。UI 体感パフォーマンスは品質ゲート、インフラ負荷・スケーラビリティ・致命的パターンは安全ゲートで検証する。
 
@@ -97,7 +97,7 @@ graph TD
 | Silo(schema) | 中〜大規模、規制要件あり | スキーマ分離（同一 DB） | 中コスト / スキーマ数増によるメタデータ肥大 |
 | Silo(db) | 最大規模、専用性能・専用鍵要件 | DB インスタンス分離 | 高コスト / 数増でパッチ・監視負荷増 |
 
-昇格（Pooled → Silo）はデータ移行を伴うため、[`27 SIカスタマイズ/プロビジョニング`](../detailed-design/27-si-customization-provisioning.md) の
+昇格（Pooled → Silo）はデータ移行を伴うため、[`27 SIカスタマイズ/プロビジョニング`](../detailed-design/27-si-customization-and-provisioning.md) の
 プロビジョニングタスクとして扱う。既定は Pooled で開始し、契約・負荷・監査要件の変化で昇格する。
 
 ### 2.2 テナント識別列と一意性のテナントスコープ化
@@ -106,7 +106,7 @@ graph TD
 - **一意性制約はすべてテナントスコープ**。継承実装の `UNIQUE(code)` / `UNIQUE(sku)` / `UNIQUE(mgmt_no)` 等は、
   プラットフォームでは `UNIQUE(tenant_id, code)` のように **tenant_id を先頭に含める**（ブリーフ §6・§9）。
 - 継承実装（Honshu）には `tenant_id` が一切存在しない点が最大の移行ギャップである。
-  既存 DDL への `tenant_id` 導入と全 UNIQUE のテナントスコープ化の差分は [`32 メーカーOLTP`](../database-design/32-manufacturer-oltp-schema.md) が具体設計する。
+  既存 DDL への `tenant_id` 導入と全 UNIQUE のテナントスコープ化の差分は [`32 メーカーOLTP`](../database-design/32-oltp-manufacturer-schema.md) が具体設計する。
 - DWH はテナントを `dim_tenant` + 各 fact の `tenant_id`（Redshift DISTKEY/パーティション）で分離する（[`35 DWH`](../database-design/35-star-schema-dwh.md) 所有）。
 
 ### 2.3 テナント解決とセッションコンテキスト（RLS 強制）
@@ -215,8 +215,8 @@ graph TD
         D1["RLS: tenant_id 強制<br/>機微列マスキング（§3.3）"]
     end
     L3 --> OK["許可 → データ返却"]
-    L1 -.->|"不一致"| DENY["403 TEN-002 / CMN-403"]
-    L2 -.->|"権限不足"| DENY
+    L1 -.->|"不一致"| DENY1["403 TEN-002"]
+    L2 -.->|"権限不足"| DENY2["403 CMN-002"]
 ```
 
 - **権限の SoT は RDS（`role`/`permission`、37 所有）**。Custom Claims は**権限のキャッシュ**であり、RDS で権限変更時に Firebase Admin SDK の `setCustomUserClaims()` で再同期する（**SoT 先行 → キャッシュ後追い**、ブリーフ §5 / CLAUDE.md 原則 6）。
@@ -266,7 +266,7 @@ graph TD
 **設計原則:**
 
 - **分析の重い処理はオンライン同期に載せない。** メトリクスクエリ（セマンティック層）とスナップショット取得で対話性を確保し、
-  DWH 直結は鮮度要求時に限定する（使い分け方針は ADR A-5 / [`26 スナップショット/DocDB`](../detailed-design/26-snapshot-docdb.md)）。
+  DWH 直結は鮮度要求時に限定する（使い分け方針は ADR A-5 / [`26 スナップショット/DocDB`](../detailed-design/26-snapshot-and-document-db.md)）。
 - **キャッシュ共有:** 継承実装はプロセスローカルの権限キャッシュ（60s）で App Runner マルチインスタンス時に不整合が顕在化した（ADR A-6）。
   プラットフォーム規模では **ElastiCache for Redis 共有キャッシュ**へ置換し、テナントスコープキーで管理する。
 - **スケールアウト前提化:** 継承実装は「スケールアウト不要」だったが、マルチテナントでは App Runner の水平スケール・従量 DWH を前提とする。
@@ -289,7 +289,7 @@ graph TD
 | Intelligence（AI/RAG/エージェント） | ベストエフォート（劣化許容） | 24h | ベクターは原文から再生成可能 | 補助機能。障害時はグレースフルデグラデーション |
 
 > **グレースフルデグラデーション（CLAUDE.md 原則 4）:** AI/分析の一時障害は業務系（OLTP）をブロックしない。
-> 派生ストアの一時不整合は `CMN-503`（再同期待ち）で通知し、業務トランザクションは継続する。
+> 派生ストアの一時不整合は `CMN-004`（再同期待ち）で通知し、業務トランザクションは継続する。
 
 ### 5.2 バックアップ / DR
 
@@ -408,7 +408,7 @@ flowchart TD
 2. **出力の根拠提示:** 回答には引用元（`kb_document`/`kb_chunk`、38 所有）を付与する。根拠のない断定を抑制する。
 3. **ハルシネーション抑制（数値の非生成）:** **数値は DWH/メトリクス層から取得し LLM に生成させない**。LLM は取得済み数値の解釈・要約・提示に限定する。
 4. **機微データマスキング:** プロンプト・コンテキスト・ログのいずれでも機微仕入原価等はマスク後に扱う。AI 実行ログにも生の機微値を残さない。
-5. **バーチャルカンパニー / エージェントの HITL:** 部門ロールエージェント群の意思決定支援は Human-in-the-Loop を前提とし、重要判断は人的承認を挟む。エージェントのメモリ/セッション/ツール実行はテナントスコープで隔離する（[`24 AIエージェント`](../detailed-design/24-ai-agents-virtual-company.md) / 38 所有）。
+5. **バーチャルカンパニー / エージェントの HITL:** 部門ロールエージェント群の意思決定支援は Human-in-the-Loop を前提とし、重要判断は人的承認を挟む。エージェントのメモリ/セッション/ツール実行はテナントスコープで隔離する（[`24 AIエージェント`](../detailed-design/24-ai-agent-and-virtual-company.md) / 38 所有）。
 6. **監査可能性:** AI 実行ログ（§6.2）で入出力・引用・モデル・トークン・コストを保持し、事後検証・コンプライアンス監査に供する。
 
 ---
@@ -433,20 +433,22 @@ flowchart TD
 
 本書が横断的に扱うテナンシー/セキュリティ/可観測性/AI 関連の想定エラー（ブリーフ §10 / 02 のレジストリと整合）。
 
+> **採番方式:** ブリーフ §10 の「`DOMAIN-NNN`・3 桁ゼロ埋めの逆引きレジストリ」規約に従い、**`NNN` はドメイン内の逐次採番**とする（HTTP ステータス値を `NNN` に流用しない）。HTTP ステータスは下表の **HTTP 列のみ**で表現する。継承実装由来のコード（`AUTH`/`PRICE`/`AUDIT` 系）も既存の逐次採番を尊重する。
+
 | コード | 意味 | 発生箇所 | HTTP |
 |--------|------|---------|------|
-| `CMN-401` | ID Token 未提供 / 署名検証失敗 | 全 API（JWKS 検証） | 401 |
-| `CMN-403` | 認可失敗（権限不足） | 全 API（ポリシー評価） | 403 |
+| `CMN-001` | ID Token 未提供 / 署名検証失敗 | 全 API（JWKS 検証） | 401 |
+| `CMN-002` | 認可失敗（権限不足） | 全 API（ポリシー評価） | 403 |
+| `CMN-003` | 冪等キー衝突 / 一意制約違反 | 書込 API | 409 |
+| `CMN-004` | 派生ストア一時不整合（再同期待ち） | 分析/AI サービング | 503 |
 | `TEN-001` | テナント解決失敗（クレーム欠落） | テナント解決ミドルウェア | 401 |
 | `TEN-002` | `X-Tenant-Id` とクレーム不一致 | テナント突合 | 403 |
-| `CMN-409` | 冪等キー衝突 / 一意制約違反 | 書込 API | 409 |
-| `CMN-503` | 派生ストア一時不整合（再同期待ち） | 分析/AI サービング | 503 |
 | `AUTH-003` | 削除済/無効ユーザのログイン試行（継承） | 認証 | 403 |
 | `PRICE-xxx` | 機微価格の開示条件不成立（継承 PRICE 系） | 機微列開示 | 403 |
 | `AI-001` | RAG テナント境界違反（越境検索の遮断） | Intelligence Plane | 403 |
 | `AUDIT-xxx` | 監査ログ記録失敗（継承 AUDIT 系） | 監査記録 | 500 |
 
-> **委譲:** 各コードの完全な逆引きレジストリは、発生元の機能・DB 設計ドキュメント（32/37/38 等）が所有する。本表は横断方針で参照する主要コードの抜粋である。
+> **委譲:** 各コードの完全な逆引きレジストリは、発生元の機能・DB 設計ドキュメント（32/37/38 等）が所有する。本表は横断方針で参照する主要コードの抜粋である。`CMN` 共通ドメインの逐次採番は 02 のレジストリと突合し、衝突がないよう一元管理する。
 
 ---
 
@@ -454,13 +456,13 @@ flowchart TD
 
 | # | 論点 | 選択肢 / トレードオフ | 一次議論先 |
 |---|------|---------------------|-----------|
-| N-1 | Pooled → Silo 昇格の閾値 | データ量/契約/監査要件のどの指標で昇格判定するか。自動昇格 vs 運営判断 | [`27 プロビジョニング`](../detailed-design/27-si-customization-provisioning.md) / 09 |
-| N-2 | 仕入単価の列単位暗号化 | KMS ストレージ暗号化のみ（MVP）か pgcrypto 列暗号化か。運用負荷 vs 保護深度。Phase 5 で再評価（tech-stack #5） | [`12 ADR`](./12-adr.md) / 32 |
-| N-3 | テナント専用 KMS 鍵の適用範囲 | 全 Silo に専用鍵か、要求テナントのみか。鍵管理コスト vs レジデンシ要件 | [`12 ADR`](./12-adr.md) / 30 |
+| N-1 | Pooled → Silo 昇格の閾値 | データ量/契約/監査要件のどの指標で昇格判定するか。自動昇格 vs 運営判断 | [`27 プロビジョニング`](../detailed-design/27-si-customization-and-provisioning.md) / 09 |
+| N-2 | 仕入単価の列単位暗号化 | KMS ストレージ暗号化のみ（MVP）か pgcrypto 列暗号化か。運用負荷 vs 保護深度。Phase 5 で再評価（tech-stack #5） | [`12 ADR`](./12-architecture-decision-records.md) / 32 |
+| N-3 | テナント専用 KMS 鍵の適用範囲 | 全 Silo に専用鍵か、要求テナントのみか。鍵管理コスト vs レジデンシ要件 | [`12 ADR`](./12-architecture-decision-records.md) / 30 |
 | N-4 | Custom Claims 同期の一貫性 | イベント同期のみか、reconciler バッチ併用か。頻度と整合性のトレードオフ（R-11） | [`37 スキーマ`](../database-design/37-control-plane-backoffice-schema.md) / 09 |
 | N-5 | DWH クロステナント集計の分離 | 運営専用ワークグループ分離か、行フィルタか。運営自社分析の安全な実現方式 | [`35 DWH`](../database-design/35-star-schema-dwh.md) / 07 |
-| N-6 | ベクター規模の OpenSearch 切替閾値 | pgvector（主）から OpenSearch への移行件数閾値（ADR A-2 と連動） | [`12 ADR`](./12-adr.md) / 38 |
-| N-7 | NFR §4.2 記述の改訂 | 認証情報の海外配置を「業務データは国内保管、認証情報は Firebase によりグローバル配置を許容」と明示化（tech-stack #11 推奨） | Phase 3 NFR 改訂 / [`12 ADR`](./12-adr.md) |
+| N-6 | ベクター規模の OpenSearch 切替閾値 | pgvector（主）から OpenSearch への移行件数閾値（ADR A-2 と連動） | [`12 ADR`](./12-architecture-decision-records.md) / 38 |
+| N-7 | NFR §4.2 記述の改訂 | 認証情報の海外配置を「業務データは国内保管、認証情報は Firebase によりグローバル配置を許容」と明示化（tech-stack #11 推奨） | Phase 3 NFR 改訂 / [`12 ADR`](./12-architecture-decision-records.md) |
 | N-8 | 本書ファイル名の統一 | 兄弟ドキュメントは `11-nfr-security-tenancy.md` へリンクするが本ファイルは `11-nonfunctional-security-tenancy.md`。索引で別名解決 or リネームを要確定 | [`README`](../README.md) |
 
 ---
@@ -470,11 +472,11 @@ flowchart TD
 - [`01-concept-and-vision.md`](./01-concept-and-vision.md) — 構想と全体像（ビジョン・スコープ）
 - [`02-overall-architecture.md`](./02-overall-architecture.md) — 全体アーキテクチャ（5 プレーン・デプロイトポロジ・共通エラーレジストリ）
 - [`09-service-backoffice.md`](./09-service-backoffice.md) — バックオフィス（課金モデル・エンタイトルメント・使用量計測の論理設計）
-- [`10-data-integration-mapping.md`](./10-data-integration-mapping.md) — データ連携とマッピング（他社アプリ取込のテナント境界）
-- [`12-adr.md`](./12-adr.md) — アーキテクチャ決定記録（DWH/ベクター/DocDB/Bedrock/暗号化方針の根拠）
-- [`../database-design/30-schema-strategy-sot.md`](../database-design/30-schema-strategy-sot.md) — スキーマ戦略と SoT（命名/DDL 規約・RLS・TZ 方針の総則）
+- [`10-data-integration-mapping.md`](./10-data-integration-and-mapping.md) — データ連携とマッピング（他社アプリ取込のテナント境界）
+- [`12-adr.md`](./12-architecture-decision-records.md) — アーキテクチャ決定記録（DWH/ベクター/DocDB/Bedrock/暗号化方針の根拠）
+- [`../database-design/30-schema-strategy-sot.md`](../database-design/30-schema-strategy-and-sot.md) — スキーマ戦略と SoT（命名/DDL 規約・RLS・TZ 方針の総則）
 - [`../database-design/37-control-plane-backoffice-schema.md`](../database-design/37-control-plane-backoffice-schema.md) — コントロールプレーン物理スキーマ（`tenant`/`app_user`/`role`/`permission`/`audit_logs`/`usage_metering`）
 - [`../database-design/35-star-schema-dwh.md`](../database-design/35-star-schema-dwh.md) — スタースキーマ DWH（テナント分離・DISTKEY/SORTKEY）
 - [`../database-design/38-ai-vector-knowledge-schema.md`](../database-design/38-ai-vector-knowledge-schema.md) — AI/ベクター/ナレッジ（RAG テナント境界・AI 実行ログ）
-- [`../detailed-design/26-snapshot-docdb.md`](../detailed-design/26-snapshot-docdb.md) — スナップショット/DocDB（サービング性能）
-- [`../detailed-design/27-si-customization-provisioning.md`](../detailed-design/27-si-customization-provisioning.md) — SI カスタマイズ/プロビジョニング（Silo 昇格）
+- [`../detailed-design/26-snapshot-docdb.md`](../detailed-design/26-snapshot-and-document-db.md) — スナップショット/DocDB（サービング性能）
+- [`../detailed-design/27-si-customization-provisioning.md`](../detailed-design/27-si-customization-and-provisioning.md) — SI カスタマイズ/プロビジョニング（Silo 昇格）

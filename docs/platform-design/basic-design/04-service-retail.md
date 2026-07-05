@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: 小売向け自社サービス「クロスリテーラーサービス」の機能・データ・画面・業務フローを基本設計として定義する
-related: [oltp-retail-schema, service-analytics, canonical-domain-model, data-integration-mapping]
+related: [oltp-retail-schema, service-analytics, canonical-domain-model, data-integration-mapping, mdm-canonical-schema, star-schema-dwh]
 ---
 
 # 基本設計: クロスリテーラーサービス（小売）
@@ -17,7 +17,7 @@ related: [oltp-retail-schema, service-analytics, canonical-domain-model, data-in
 
 > **本ドキュメントの所有範囲（owns）:** 小売サービスの**機能・業務フロー・画面・論理データ設計**の権威的記述。
 > **物理スキーマ（CREATE TABLE / 索引 / 制約）は本書では定義しない。** 小売 OLTP の物理スキーマは
-> [`31 小売OLTP`](../database-design/31-retail-oltp-schema.md) が権威的に所有する。本書はエンティティを
+> [`31 小売OLTP`](../database-design/31-oltp-retail-schema.md) が権威的に所有する。本書はエンティティを
 > **論理レベル**で記述し、正準モデル（[`03 正準ドメインモデル`](./03-canonical-domain-model.md) / MDM）および
 > スタースキーマ（[`35 DWH`](../database-design/35-star-schema-dwh.md)）への写像方針を示すに留める。
 > `canonical_*` / `dim_*` / `fact_*` / `tenant` / `app_user` 等の共通テーブルは所有ドキュメントの定義を参照し、再定義しない。
@@ -92,8 +92,8 @@ graph TD
     MASTER --> TXN
     TXN --> SALES
     TXN --> INV
-    SALES -.供給.-> ANL["分析・可視化サービス（07）"]
-    INV -.供給.-> ANL
+    SALES -.->|"供給"| ANL["分析・可視化サービス（07）"]
+    INV -.->|"供給"| ANL
 ```
 
 **スコープ外（他ドキュメント所有）:** 名寄せ・MDM（34/20）、取込マッピング（10/21）、スタースキーマ変換（22/35）、
@@ -236,8 +236,8 @@ flowchart LR
     M3 --> S
     M4 --> S
     M5 --> S
-    S -.周期スナップショット.-> F["fact_inventory_snapshot（35）"]
-    M -.トランザクション.-> G["fact_inventory_movement（35）"]
+    S -.->|"周期スナップショット"| F["fact_inventory_snapshot（35）"]
+    M -.->|"トランザクション"| G["fact_inventory_movement（35）"]
 ```
 
 > `available` は保存列ではなく `GENERATED ALWAYS AS (on_hand_qty - allocated_qty) STORED`（物理定義は 31）で導出し、整合を DB レベルで保証する。
@@ -272,7 +272,7 @@ flowchart LR
 
 ### 5.1 論理 ER（本サービスが SoT の主要エンティティ）
 
-> 下図は**論理モデル**。物理 DDL（列型・制約・索引・`tenant_id`/RLS/監査列）は [`31 小売OLTP`](../database-design/31-retail-oltp-schema.md) が所有する。
+> 下図は**論理モデル**。物理 DDL（列型・制約・索引・`tenant_id`/RLS/監査列）は [`31 小売OLTP`](../database-design/31-oltp-retail-schema.md) が所有する。
 
 ```mermaid
 erDiagram
@@ -404,7 +404,7 @@ flowchart TD
 ```
 
 - **自社アプリ経路:** 本サービスは最初から正準/スター写像可能なスキーマで持つため、取込は**項目マッピング不要**（差別化点。ブリーフ §2）。
-- **他社小売サービス経路:** 他社 POS/EC は Data Plane の取込口に接続し、[`10 データ連携とマッピング`](./10-data-integration-mapping.md) の人的マッピングで正規化される。本サービスと**同じ canonical/fact に着地**する。
+- **他社小売サービス経路:** 他社 POS/EC は Data Plane の取込口に接続し、[`10 データ連携とマッピング`](./10-data-integration-and-mapping.md) の人的マッピングで正規化される。本サービスと**同じ canonical/fact に着地**する。
 - **WMS（06）連携:** EC 出荷指示・出荷完了 Webhook・倉庫在庫の突合。**手動再同期パス**も設ける（イベント欠落時の回復。ブリーフ §5、CLAUDE.md 原則6-2）。
 - **メーカーサービス（05）連携:** 仕入・納品データの受領（在庫入荷の源泉）。
 
@@ -432,7 +432,7 @@ stateDiagram-v2
     Ordered --> Allocated: "在庫引当"
     Allocated --> Shipped: "出荷"
     Shipped --> Completed: "検収/売上確定"
-    Draft --> Confirmed: "POS 即時確定"
+    [*] --> Confirmed: "POS 即時確定"
     Confirmed --> Completed: "レジ完了"
     Ordered --> Cancelled: "キャンセル（引当解放）"
     Allocated --> Cancelled: "キャンセル（引当解放）"
@@ -488,7 +488,7 @@ stateDiagram-v2
 
 ## 11. 非機能・テナンシー観点（サマリ）
 
-詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md) が所有。本サービス固有の要点のみ記す。
+詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md) が所有。本サービス固有の要点のみ記す。
 
 - **テナント分離:** 全テーブルに `tenant_id BIGINT NOT NULL`、RLS で `tenant_id = current_setting('app.tenant_id')::bigint` を強制（ブリーフ §6）。一意制約はすべてテナントスコープ。
 - **認証/認可:** Firebase Bearer + tenant クレーム解決、任意で `X-Tenant-Id` 突合（不一致 403 = RTL-001）。全 API 認可必須。
@@ -514,9 +514,9 @@ stateDiagram-v2
 ## 13. 関連ドキュメント
 
 - [`03 正準ドメインモデル`](./03-canonical-domain-model.md) — 共通エンティティ（Product/SKU・Location・Party・Region）の定義。本書はこれへ写像。
-- [`07 分析・可視化サービス`](./07-analytics-visualization.md)（document_id: service-analytics） — 本サービスが供給する fact の消費側。集計・ダッシュボードの本体。
-- [`10 データ連携とマッピング`](./10-data-integration-mapping.md) — 他社小売サービスの取込・人的マッピング経路。
-- [`31 小売OLTP`](../database-design/31-retail-oltp-schema.md)（document_id: oltp-retail-schema） — 本サービスの**物理スキーマを権威的に所有**（CREATE TABLE / 索引 / 制約 / tenant_id / RLS）。
+- [`07 分析・可視化サービス`](./07-service-analytics.md)（document_id: service-analytics） — 本サービスが供給する fact の消費側。集計・ダッシュボードの本体。
+- [`10 データ連携とマッピング`](./10-data-integration-and-mapping.md) — 他社小売サービスの取込・人的マッピング経路。
+- [`31 小売OLTP`](../database-design/31-oltp-retail-schema.md)（document_id: oltp-retail-schema） — 本サービスの**物理スキーマを権威的に所有**（CREATE TABLE / 索引 / 制約 / tenant_id / RLS）。
 - [`02 全体アーキテクチャ`](./02-overall-architecture.md) — 5 プレーンと本サービスの位置づけ。
 - [`35 スタースキーマDWH`](../database-design/35-star-schema-dwh.md) — dim/fact の権威的定義（本書は写像方針のみ）。
 - 参考: [`01 構想と全体像`](./01-concept-and-vision.md)、[`05 メーカーサービス`](./05-service-manufacturer.md)、[`06 WMS`](./06-service-wms.md)。

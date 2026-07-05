@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: スタースキーマ + AI を核とする分析・可視化サービスの機能・分析軸・セマンティック/メトリクス層・サービング方式・AI組み込みを基本設計する
-related: [star-schema-dwh, ai-rag-vectorization, star-schema-transformation, snapshot-document-db, decision-support-ai]
+related: [star-schema-dwh, ai-rag-vectorization, star-schema-transformation, snapshot-document-db, decision-support-ai, ai-vector-knowledge, overall-architecture, concept-and-vision, service-retail, service-manufacturer, data-integration-mapping, nonfunctional-security-tenancy]
 ---
 
 # 基本設計: 分析・可視化プラットフォーム
@@ -26,12 +26,12 @@ related: [star-schema-dwh, ai-rag-vectorization, star-schema-transformation, sna
 > - Canonical → dim/fact の **ETL 変換・SCD・ロード**は
 >   [スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22）が所有。
 > - **AI/RAG/ベクター化の詳細**（チャンク化・埋め込み・取得・LLM オーケストレーション・プロンプト）は
->   [AI/RAG/ベクター化](../detailed-design/23-ai-rag-vectorization.md)（23）および
->   [AI/ベクター/ナレッジ スキーマ](../database-design/38-ai-vector-knowledge.md)（38）が所有。
+>   [AI/RAG/ベクター化](../detailed-design/23-ai-rag-and-vectorization.md)（23）および
+>   [AI/ベクター/ナレッジ スキーマ](../database-design/38-ai-vector-knowledge-schema.md)（38）が所有。
 > - **スナップショット静的ファイル / DocDB 読み取りモデル**の詳細は
->   [スナップショット/DocDB](../detailed-design/26-snapshot-docdb.md)（26）が所有。
+>   [スナップショット/DocDB](../detailed-design/26-snapshot-and-document-db.md)（26）が所有。
 > - AI エージェント/バーチャルカンパニーによる意思決定支援は
->   [意思決定支援/AIエージェント](./08-decision-support-ai-agents.md)（08）が所有。
+>   [意思決定支援/AIエージェント](./08-service-decision-support-ai.md)（08）が所有。
 
 ---
 
@@ -332,7 +332,8 @@ flowchart TD
 ### 5.2 体感パフォーマンスとの整合（review-standards 4.1）
 
 - 初期表示は**スナップショット優先**で 200ms 以下を狙う。インタラクティブが 100ms を超える見込みは
-  スケルトン + 非同期ロード、超過時はキュー化 + 完了プッシュ（review-standards 4.1、CLAUDE.md 原則8 の体感補償）。
+  スケルトン + 非同期ロード、超過時はキュー化 + 完了プッシュ（review-standards 4.1 の体感パフォーマンス補償）。
+  ※レスポンシブ（CLAUDE.md 原則8）はレイアウトの適用であり本節の体感補償とは別観点。原則8 の適用は §8 を参照。
 - スナップショット未生成時は**インタラクティブへフォールバック**し、機能停止させない
   （非ブロッキング、CLAUDE.md 原則4）。フォールバックは ANL-003 として記録し、スナップショット生成を促す。
 
@@ -470,8 +471,14 @@ UI を持つサービスのため、USABILITY_STANDARDS（U-1〜U-5）と CLAUDE
 ## 10. 想定エラーコード（ANL-NNN）
 
 本サービスで発生しうる想定エラー（ブリーフ §10、`DOMAIN-NNN` 形式）。本書が **ANL 接頭辞の
-レジストリを権威的に所有**する。API は RFC 7807 Problem Details の `code` に本コードを載せる（ブリーフ §11）。
-ANL-001 は既存の兄弟ドキュメント（01/02）の用法と整合させる。
+レジストリを権威的に所有**する（下表の ANL-NNN のみが権威定義）。API は RFC 7807 Problem Details の
+`code` に本コードを載せる（ブリーフ §11）。ANL-001 は既存の兄弟ドキュメント（01/02）の用法と整合させる。
+
+> **CMN-001 の扱い（参照・非所有）:** CMN 接頭辞は共通ドメインが SoT（ブリーフ §10）であり、本書は所有しない。
+> 下表末尾の CMN-001 は分析機能が返し得る**参照エントリ**として掲げるにとどめ、正規定義は共通ドメイン側に従う。
+> **適用面の切り分け:** CMN-001 は **I/F 層**（API のクレーム/`X-Tenant-Id` ヘッダ突合の失敗、ブリーフ §11）で返し、
+> ANL-005 は **データ層**（DWH クエリ/RLS の `tenant_id` 不一致）で返す。同一リクエストが両面で違反する場合は
+> 早期に検出される I/F 層の CMN-001 が優先する。
 
 | コード | 意味 | 発生機能 | 誘導（U-4） | HTTP |
 |--------|------|----------|-------------|------|
@@ -479,14 +486,14 @@ ANL-001 は既存の兄弟ドキュメント（01/02）の用法と整合させ�
 | ANL-002 | 分析軸の粒度がメトリクス宣言粒度と非整合 | クロス集計・ドリル | 有効粒度に丸める/切替 | 400 |
 | ANL-003 | スナップショット未生成/鮮度切れ（インタラクティブへフォールバック） | サービング | 自動フォールバック（非停止, §5.2） | 200（記録） |
 | ANL-004 | インタラクティブクエリの行数上限/タイムアウト超過 | インタラクティブ | 非同期化 + 完了通知（§5.1） | 202/413 |
-| ANL-005 | 分析対象のテナント境界違反（tenant_id 不一致） | 全機能 | 遮断（RLS/DWH で機械強制） | 403 |
+| ANL-005 | 分析対象のテナント境界違反（データ層 = DWH/RLS の tenant_id 不一致） | 全機能 | 遮断（RLS/DWH で機械強制） | 403 |
 | ANL-006 | 権限外の機微メジャー（原価/粗利）アクセス | メトリクス/AI 出力 | マスク維持 + 権限案内（§3.2） | 403 |
 | ANL-007 | 他社アプリのマッピング未完により当該軸/指標が分析不能 | 他社アプリ分析 | マッピング画面へ誘導（§7.2, MAP/ETL 連携） | 409 |
 | ANL-008 | 動的地域粒度の設定が商圏規模と不整合 | 地域分析 | 推奨粒度を提示（§2.1） | 400 |
 | ANL-009 | 半加法/非加法メジャーの不正集計（時間 SUM 等） | 集計 | 期末/平均・比率算出に是正（§3.3） | 400 |
 | ANL-010 | クライアント固有オプション軸が未登録/未マッピング | オプション軸分析 | 軸登録/マッピングへ誘導（§7） | 409 |
 | ANL-011 | NLQ を安全なメトリクス IR に変換不能（曖昧/範囲外） | NLQ（B1） | 明確化を促す/定型分析へ誘導 | 422 |
-| CMN-001 | 共通: テナントスコープ違反（クレーム突合失敗） | 全機能 | 遮断（ブリーフ §11） | 403 |
+| CMN-001（参照・CMN 所有） | 共通: テナントスコープ違反（I/F 層 = クレーム/ヘッダ突合失敗） | 全機能 | 遮断（ブリーフ §11、SoT は共通ドメイン） | 403 |
 
 ---
 
@@ -522,12 +529,12 @@ ANL-001 は既存の兄弟ドキュメント（01/02）の用法と整合させ�
 
 - [データベース設計: スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35, `star-schema-dwh`） — 分析の数値源泉である全 `dim_*`/`fact_*` の**物理所有**（DISTKEY/SORTKEY）。本書の軸・指標はここへ写像。
 - [詳細設計: スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22, `star-schema-transformation`） — Canonical → dim/fact の ETL・SCD・ロード。AI 分類ラベルの還流経路も管理。
-- [詳細設計: AI/RAG/ベクター化](../detailed-design/23-ai-rag-vectorization.md)（23, `ai-rag-vectorization`） — AI 組み込みの詳細（チャンク化・埋め込み・取得・LLM・NLQ）。本書 §6 の詳細委譲先。
-- [詳細設計: スナップショット/DocDB](../detailed-design/26-snapshot-docdb.md)（26, `snapshot-document-db`） — スナップショット静的ファイル/読み取りモデルの物理・生成トリガー。本書 §5 の詳細委譲先。
-- [基本設計: 意思決定支援/AIエージェント](./08-decision-support-ai-agents.md)（08, `decision-support-ai`） — 分析結果を根拠として消費するバーチャルカンパニー/意思決定支援。
-- [データベース設計: AI/ベクター/ナレッジ](../database-design/38-ai-vector-knowledge.md)（38） — `insight`/`kb_*`/ベクターの物理所有。
+- [詳細設計: AI/RAG/ベクター化](../detailed-design/23-ai-rag-and-vectorization.md)（23, `ai-rag-vectorization`） — AI 組み込みの詳細（チャンク化・埋め込み・取得・LLM・NLQ）。本書 §6 の詳細委譲先。
+- [詳細設計: スナップショット/DocDB](../detailed-design/26-snapshot-and-document-db.md)（26, `snapshot-document-db`） — スナップショット静的ファイル/読み取りモデルの物理・生成トリガー。本書 §5 の詳細委譲先。
+- [基本設計: 意思決定支援/AIエージェント](./08-service-decision-support-ai.md)（08, `decision-support-ai`） — 分析結果を根拠として消費するバーチャルカンパニー/意思決定支援。
+- [データベース設計: AI/ベクター/ナレッジ](../database-design/38-ai-vector-knowledge-schema.md)（38） — `insight`/`kb_*`/ベクターの物理所有。
 - [基本設計: 全体アーキテクチャ](./02-overall-architecture.md)（02） — プレーン構成（Data/Intelligence Plane）と本サービスの配置。
 - [基本設計: 構想と全体像](./01-concept-and-vision.md)（01） — 分析軸（商品×地域×販売先）とビジョンの出所。
 - [基本設計: 小売サービス](./04-service-retail.md)（04） / [基本設計: メーカーサービス](./05-service-manufacturer.md)（05） — 事実データの供給側（自社アプリの写像契約）。
-- [基本設計: データ連携とマッピング](./10-data-integration-mapping.md)（10） — 他社アプリの取込・マッピング（§7 の実現性差の前提）。
+- [基本設計: データ連携とマッピング](./10-data-integration-and-mapping.md)（10） — 他社アプリの取込・マッピング（§7 の実現性差の前提）。
 - [基本設計: 非機能/セキュリティ/テナンシー](./11-nonfunctional-security-tenancy.md)（11） — RLS・機微値・体感性能の非機能詳細。

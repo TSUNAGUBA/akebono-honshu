@@ -95,7 +95,9 @@ erDiagram
     OUTBOUND_ORDER ||--|{ OUTBOUND_ORDER_LINE : "明細"
     SKU_MASTER ||--o{ OUTBOUND_ORDER_LINE : "出荷SKU"
     OUTBOUND_ORDER ||--o{ SHIPMENT : "出荷"
-    SHIPMENT ||--o{ SHIPPING_DOCUMENT : "帳票"
+    SHIPMENT ||--o{ SHIPPING_DOCUMENT : "帳票(種別1)"
+    OUTBOUND_ORDER ||--o{ SHIPPING_DOCUMENT : "帳票(種別0)"
+    SHIPPER_BILLING ||--o{ SHIPPING_DOCUMENT : "帳票(種別2)"
     SHIPPER_BILLING ||--|{ SHIPPER_BILLING_LINE : "明細"
     BILLING_RATE ||--o{ SHIPPER_BILLING_LINE : "料率適用"
 
@@ -168,6 +170,7 @@ erDiagram
     INBOUND_RECEIPT_LINE {
         bigint id PK "入荷明細"
         bigint inbound_receipt_id FK "親"
+        bigint shipper_id FK "荷主(冗長/RLS)"
         bigint sku_master_id FK "SKU"
         numeric received_qty "入荷数量"
     }
@@ -181,6 +184,7 @@ erDiagram
     OUTBOUND_ORDER_LINE {
         bigint id PK "出荷明細"
         bigint outbound_order_id FK "親"
+        bigint shipper_id FK "荷主(冗長/RLS)"
         bigint sku_master_id FK "SKU"
         numeric ordered_qty "指示数量"
         numeric shipped_qty "出荷数量"
@@ -221,6 +225,8 @@ erDiagram
 ```
 
 > 上図は本ドキュメントが所有するテーブルのみを示す。外部参照（`tenant` / `app_user` / `canonical_*` / `dim_*` / `*_xref`）は §11 の外部参照表を参照。名寄せ（app-local id ⇄ canonical id）は 34 のクロスウォークで解決され、OLTP 側に canonical への物理 FK は張らない（DB 境界を跨ぐため）。
+>
+> **`shipping_document` の帳票対象は種別により排他的に 4 系統:** `related_entity_type` で `0=outbound_order`（ピッキング/検品リスト）/ `1=shipment`（納品書/送り状/ASN）/ `2=shipper_billing`（請求書）/ `3=inbound_receipt`（在庫報告等）のいずれか 1 つのみを充足する（§8.1 `chk_shipdoc_target`）。ER 上の 3 本の `... ||--o{ SHIPPING_DOCUMENT` 関連（種別 0/1/2）は同時ではなく種別により**排他的**に成立する。**種別 3（`inbound_receipt` 相当）は物理 FK 列を持たず**（`chk_shipdoc_target` の種別 3 は全 FK が NULL）、荷主単位の在庫報告書等を `shipper_id` のみで結び付ける論理参照であるため ER には FK 関連として描かない。
 >
 > **06 §7.1 ER との整合:** [`06 WMS`](../basic-design/06-service-wms.md) の論理 ER は「ZONE → LOCATION → BIN」を示すが、複数拠点を運営する倉庫事業者を表現するため本書は最上位に **`warehouse`（倉庫拠点）** を追加し「WAREHOUSE → ZONE → LOCATION → BIN」の 4 階層とする（06 §7.2 が「BIN/LOCATION/ZONE（倉庫拠点）→ canonical_location」と括った拠点概念を物理テーブルに具体化したもの）。`warehouse` が `canonical_location`（type=warehouse/dc）へ写像する主体である（§8 未決 W-1）。
 
@@ -660,6 +666,7 @@ CREATE TABLE inbound_receipt_line (
     id                   BIGSERIAL    PRIMARY KEY,                    -- 代理主キー
     tenant_id            BIGINT       NOT NULL REFERENCES tenant(id), -- テナント識別子（RLS 対象）
     inbound_receipt_id   BIGINT       NOT NULL REFERENCES inbound_receipt(id) ON DELETE CASCADE, -- 親（明細はヘッダに従属）
+    shipper_id           BIGINT       NOT NULL REFERENCES shipper(id),-- 荷主（分析軸/荷主 RLS のための冗長保持。親 inbound_receipt.shipper_id と一致・アプリ保証）
     line_no              SMALLINT     NOT NULL,                       -- 明細番号
     sku_master_id        BIGINT       NOT NULL REFERENCES sku_master(id), -- SKU
     sku_snapshot         VARCHAR(64)  NOT NULL,                       -- SKU スナップショット（マスタ変更耐性）
@@ -687,8 +694,11 @@ ALTER TABLE inbound_receipt_line
     ADD CONSTRAINT uq_inbound_line_receipt_no UNIQUE (inbound_receipt_id, line_no);
 CREATE INDEX idx_inbound_line_tenant_receipt ON inbound_receipt_line (tenant_id, inbound_receipt_id);
 CREATE INDEX idx_inbound_line_tenant_sku ON inbound_receipt_line (tenant_id, sku_master_id);
+-- 荷主ポータルの明細直接クエリ（荷主 RLS の絞り込み）
+CREATE INDEX idx_inbound_line_tenant_shipper ON inbound_receipt_line (tenant_id, shipper_id);
 
 COMMENT ON TABLE  inbound_receipt_line          IS '入荷明細（SKU × ロット/期限）。予定 vs 実績 vs 検品内訳。論理削除なし・親に ON DELETE CASCADE';
+COMMENT ON COLUMN inbound_receipt_line.shipper_id IS '荷主（冗長保持）。親 inbound_receipt.shipper_id と一致（アプリ保証）。明細を直接クエリする荷主ポータルで shipper_isolation RLS を効かせるため保有（§10.2 / WMS-003）';
 COMMENT ON COLUMN inbound_receipt_line.good_qty IS '良品数量。格納（putaway）で wms_inventory.on_hand に加算される数量の源泉';
 COMMENT ON COLUMN inbound_receipt_line.lot_no   IS 'ロット番号。sku_master.lot_managed=true で必須（WMS-203, アプリ検証）';
 ```
@@ -887,6 +897,7 @@ CREATE TABLE outbound_order_line (
     id                   BIGSERIAL    PRIMARY KEY,                    -- 代理主キー
     tenant_id            BIGINT       NOT NULL REFERENCES tenant(id), -- テナント識別子（RLS 対象）
     outbound_order_id    BIGINT       NOT NULL REFERENCES outbound_order(id) ON DELETE CASCADE, -- 親（明細はヘッダに従属）
+    shipper_id           BIGINT       NOT NULL REFERENCES shipper(id),-- 荷主（分析軸/荷主 RLS のための冗長保持。親 outbound_order.shipper_id と一致・アプリ保証）
     line_no              SMALLINT     NOT NULL,                       -- 明細番号
     sku_master_id        BIGINT       NOT NULL REFERENCES sku_master(id), -- SKU
     sku_snapshot         VARCHAR(64)  NOT NULL,                       -- SKU スナップショット（マスタ変更耐性）
@@ -912,8 +923,11 @@ ALTER TABLE outbound_order_line
     ADD CONSTRAINT uq_outbound_line_order_no UNIQUE (outbound_order_id, line_no);
 CREATE INDEX idx_outbound_line_tenant_order ON outbound_order_line (tenant_id, outbound_order_id);
 CREATE INDEX idx_outbound_line_tenant_sku ON outbound_order_line (tenant_id, sku_master_id);
+-- 荷主ポータルの明細直接クエリ（荷主 RLS の絞り込み）
+CREATE INDEX idx_outbound_line_tenant_shipper ON outbound_order_line (tenant_id, shipper_id);
 
 COMMENT ON TABLE  outbound_order_line             IS '出荷明細。fact_shipment（出荷明細粒度）の source。measures=ordered/allocated/picked/shipped。論理削除なし・親に ON DELETE CASCADE';
+COMMENT ON COLUMN outbound_order_line.shipper_id  IS '荷主（冗長保持）。親 outbound_order.shipper_id と一致（アプリ保証）。明細を直接クエリする荷主ポータルで shipper_isolation RLS を効かせるため保有（§10.2 / WMS-003）';
 COMMENT ON COLUMN outbound_order_line.shipped_qty IS '出荷数量。shipment 確定時に on_hand 引落と対応。fact_shipment.shipped_qty へ写像';
 COMMENT ON COLUMN outbound_order_line.lot_no      IS '引当ロット（FEFO 結果）。ピッキング差異（WMS-302）や期限切れロット（WMS-303）の照合キー';
 ```
@@ -1151,7 +1165,7 @@ COMMENT ON COLUMN shipper_billing_line.is_correction IS '訂正明細（status=9
 
 ### 10.1 テナント分離 RLS（全テーブル共通）
 
-全テナントスコープテーブル（本書所有の全 14 テーブル）に、[30 §4.2](./30-schema-strategy-and-sot.md) と同型の RLS を適用する。`current_setting('app.tenant_id')` 未設定時は例外となり全行漏洩を防ぐ（fail-closed, CMN-001 / WMS-001）。
+全テナントスコープテーブル（本書所有の全 17 テーブル）に、[30 §4.2](./30-schema-strategy-and-sot.md) と同型の RLS を適用する。`current_setting('app.tenant_id')` 未設定時は例外となり全行漏洩を防ぐ（fail-closed, CMN-001 / WMS-001）。
 
 ```sql
 -- 本書所有の全テーブルに一括適用（冪等: DROP ... IF EXISTS → CREATE でマイグレーション化）
@@ -1197,11 +1211,15 @@ graph TD
 ```
 
 - **倉庫作業者:** 複数荷主を横断して作業するため、既定は tenant スコープでアクセスし、`shipper_id` は**アプリ層フィルタ**で業務分離する（06 §6.1、未決 W-2）。
-- **荷主ポータル利用者（`shipper.portal_enabled=true`）:** 追加で `SET LOCAL app.shipper_id` を張り、`shipper_id` 保有テーブルに荷主スコープ RLS を**併用**して他荷主データを遮断する（WMS-003）。
+- **荷主ポータル利用者（`shipper.portal_enabled=true`）:** 追加で `SET LOCAL app.shipper_id` を張り、`shipper_id` 保有テーブルに荷主スコープ RLS を**併用**して他荷主データを遮断する（WMS-003）。**明細テーブル（`inbound_receipt_line` / `outbound_order_line`）も荷主が直接クエリしうるため、親と同型の冗長 `shipper_id`（アプリ保証）を保有し、本ポリシーの展開対象に含める**（親ヘッダにのみ RLS を張り明細を tenant スコープのまま残すと、他荷主の SKU/数量/ロット/期限が漏洩する）。
 
 ```sql
--- 荷主ポータル用の追加ポリシー（shipper_id を持つテーブルにのみ適用。app.shipper_id 未設定時は全荷主可＝作業者モード）
--- 例: wms_inventory（同型を shipper_id 保有テーブルに展開）
+-- 荷主ポータル用の追加ポリシー（shipper_id を持つ全テーブルに同型で展開。app.shipper_id 未設定時は全荷主可＝作業者モード）
+-- 展開対象（shipper_id 保有）: shipper, sku_master, billing_rate,
+--   inbound_receipt, inbound_receipt_line, wms_inventory, inventory_movement,
+--   outbound_order, outbound_order_line, shipment, shipper_billing, shipper_billing_line
+--   （shipping_document は shipper_id NULL 可＝作業帳票。NULL 行はポータルから不可視となり所望どおり）
+-- 例: wms_inventory（下記を上記全テーブルに同型展開）
 CREATE POLICY shipper_isolation ON wms_inventory
     USING (
         current_setting('app.shipper_id', TRUE) IS NULL
@@ -1347,7 +1365,7 @@ flowchart LR
 
 | # | 論点 | 選択肢とトレードオフ | 暫定 |
 |---|------|--------------------|------|
-| W-1 | 倉庫物理構造の階層（`warehouse` 追加の是非） | (a) `warehouse`+zone+location+bin の 4 階層（複数拠点・dim_location 明確）/ (b) 06 §7.1 通り zone を最上位に据え warehouse を持たない | **(a)**。倉庫事業者は複数拠点運営が一般的で dim_location の拠点粒度が必要。06 の「BIN/LOCATION/ZONE（倉庫拠点）」を物理具体化。ブリーフ §14 owns の「location/zone/bin」に `warehouse` を追加する差分をオペレーター確認 |
+| W-1 | 倉庫物理構造の階層（`warehouse` 追加の是非） | (a) `warehouse`+zone+location+bin の 4 階層（複数拠点・dim_location 明確）/ (b) 06 §7.1 通り zone を最上位に据え warehouse を持たない | **(a)（暫定・オペレーター確定前）**。倉庫事業者は複数拠点運営が一般的で dim_location の拠点粒度が必要。06 の「BIN/LOCATION/ZONE（倉庫拠点）」を物理具体化。**本書は暫定的に `warehouse` を最上位に追加しているが、共有契約（ブリーフ §14 の 33 owns＝「location/zone/bin」）に `warehouse` は未収載であり、この差分は未確定**。確定時は次を同時整合する差分パッチをオペレーターに提示する: ①ブリーフ §14 の 33 owns を「warehouse/location/zone/bin」へ更新、②06（拠点写像）/34（`location_xref` の拠点写像元）/35（`dim_location` 粒度）の件数・階層記述を同期。確定までは W-8/§10.2 の「物理構造はテナント共有・荷主 RLS 非適用」も暫定として維持 |
 | W-2 | 荷主分離の RLS 適用範囲 | (a) 作業者は tenant スコープ＋アプリフィルタ、荷主のみ RLS / (b) 全アクセスで shipper RLS 強制 | **(a)**。作業者は複数荷主横断が必須（06 §12-2）。荷主ポータルのみ `shipper_isolation` 併用（§10.2） |
 | W-3 | 出荷の粒度（`shipment` を明細なしヘッダにするか） | (a) shipment=ヘッダのみ、明細は outbound_order_line.shipped_qty / (b) shipment_line を新設し分割出荷を厳密表現 | **(a)**（MVP）。1 指示 1 出荷が主。分割出荷が多発する荷主が出たら (b) を追加（fact_shipment 粒度は出荷明細で不変） |
 | W-4 | 棚卸の専用テーブル要否 | (a) `inventory_movement(adjust)` + `bin.is_frozen` に集約 / (b) 棚卸計画/カウントの専用テーブル | **(a)**（MVP）。棚卸プロセス（計画/カウント/再カウント）が複雑化したら (b) を追加（06 §3.3） |

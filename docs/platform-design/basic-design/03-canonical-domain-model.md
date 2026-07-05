@@ -19,7 +19,7 @@ related: [overall-architecture, mdm-canonical-schema, star-schema-dwh, glossary]
 > **位置づけ / 所有範囲:** 本書は正準ドメインモデルの**概念・論理**を権威的に所有する。
 > 正準エンティティの**物理スキーマ（CREATE TABLE・制約・索引）は [MDM/Canonical スキーマ設計](../database-design/34-mdm-canonical-schema.md)（34）が所有**し、
 > 分析用の**スタースキーマ（dim/fact）は [スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35）が所有**する。
-> 本書はそれらを参照するが物理定義を再定義しない。用語の正規定義は [用語集](../overview/00-glossary.md) が所有する。
+> 本書はそれらを参照するが物理定義を再定義しない。用語の正規定義は [用語集](../00-glossary.md) が所有する。
 
 ---
 
@@ -124,6 +124,13 @@ graph TD
 > | UoM / Currency | `uom`, `currency` | 34 |
 > | クロスウォーク | `party_xref`, `product_xref`, `sku_xref`, `location_xref` | 34 |
 > | Calendar / Time | `dim_date` | 35 |
+> | Channel（チャネル） | 正準テーブルなし。分析次元 `dim_channel`（35）＋各 OLTP のローカル属性としてのみ存在 | 35 / 31-33 |
+> | Price / Cost（価格・原価） | 正準テーブルなし。分析次元 `dim_promotion`（35）＋各 OLTP のローカル価格/原価属性・取引明細の単価列としてのみ存在 | 35 / 31-33 |
+>
+> Channel・Price/Cost はブリーフ §7 で正準エンティティとして列挙されるが、**独立した正準テーブル（34 所有）は持たない**。
+> これらは「全テナントで名寄せすべきゴールデンレコード」ではなく、分析軸としては DWH 次元（`dim_channel` / `dim_promotion`, 35 所有）で、
+> 業務上は各 OLTP のローカル属性（小売のチャネル区分・価格/プロモ列、取引明細の単価列等, 31-33）として表現される。
+> §2 の図では正準概念の網羅性を示すため両ノードを描くが、物理 SoT は上表のとおり 34 には属さない。
 
 ---
 
@@ -352,18 +359,21 @@ erDiagram
     CANONICAL_SKU ||--o{ SKU_XREF : "app-local id を集約"
     CANONICAL_SKU }o--|| UOM : "基準単位"
     CANONICAL_PRODUCT }o--|| TENANT : "テナントスコープ"
+    CANONICAL_SKU }o--|| TENANT : "テナントスコープ（親経由で継承）"
     CANONICAL_PRODUCT {
         bigint id PK "正準 ProductFamily ID"
         bigint tenant_id FK "テナント"
         bigint category_id FK "商品分類"
         string family_code "企画コード（正規化）"
         string brand "ブランド"
-        string season "シーズン"
+        string season_year "年式（会計年次）"
+        string season "シーズン区分（春夏/秋冬等）"
         string product_type "商品タイプ"
         string material "素材"
     }
     CANONICAL_SKU {
         bigint id PK "正準 SKU ID"
+        bigint tenant_id FK "テナント（34 が付与, 親経由で境界継承）"
         bigint product_id FK "所属企画"
         string sku_code "正準 SKU コード"
         string color "色"
@@ -372,8 +382,11 @@ erDiagram
     }
 ```
 
-- **ProductFamily（企画）:** brand/category/season/type/material 等の企画レベル属性を持つ。
+- **ProductFamily（企画）:** brand/category/season_year/season/type/material 等の企画レベル属性を持つ（年式 `season_year` とシーズン区分 `season` は別属性、§7.3）。
 - **SKU（品目）:** ProductFamily に color/size を掛けた最小販売/在庫単位。分析・在庫・取引の粒度。
+- **テナントスコープ:** `canonical_sku` はブリーフ §6・§14 上のテナントスコープテーブル（34 所有）であり、
+  物理 `tenant_id BIGINT NOT NULL`（RLS 対象）を 34 が付与する。論理的にはテナント境界を親 `canonical_product` 経由で継承するが、
+  他の正準エンティティ（`canonical_product` / `product_category` 等）と表現を揃えるため、本図でもテナント列を明示する。
 
 ### 7.2 ProductCategory（可変段数の分類階層）
 
@@ -422,13 +435,18 @@ flowchart LR
 
 | 11桁品番の桁 | Honshu ソースマスタ | 正準属性への写像先 |
 |--------------|--------------------|--------------------|
-| 1桁目（年式） | コードロジック（`planned_year_code`） | `canonical_product.season` の年次要素（属性化） |
-| 2桁目 | `product_type.item_conversion_code` | `canonical_product.product_type` |
-| 3桁目 | `product_season.item_conversion_code` | `canonical_product.season` |
+| 1桁目（年式） | `product_families.planned_year_code` | `canonical_product.season_year`（年式。season とは別列に分離） |
+| 2桁目 | `product_types.item_conversion_code` | `canonical_product.product_type` |
+| 3桁目 | `product_seasons.item_conversion_code` | `canonical_product.season`（シーズン区分。年式は 1 桁目→`season_year` へ分離） |
 | 4-6桁目 | `product_families.sequence_no` | `canonical_product.family_code`（連番部） |
-| 7桁目 | `supplier.item_conversion_code`（工場） | 取引（発注）側の supplier Party として関連づけ |
-| 8-9桁目 | `color.item_conversion_code` | `canonical_sku.color` |
-| 10-11桁目 | `size.item_conversion_code` 由来 | `canonical_sku.size` |
+| 7桁目 | `suppliers.item_conversion_code`（工場） | 取引（発注）側の supplier Party として関連づけ |
+| 8-9桁目 | `colors.item_conversion_code` | `canonical_sku.color` |
+| 10-11桁目 | `sizes.item_conversion_code` 由来 | `canonical_sku.size` |
+
+> **年式（`season_year`）とシーズン（`season`）の分離:** 1 桁目の年式と 3 桁目のシーズン区分は
+> 意味が異なる分析軸（会計年次 vs 春夏/秋冬等の季節区分）であり、単一 `season` 列へ二重写像しない。
+> 正準側では `canonical_product.season_year`（年式）と `canonical_product.season`（シーズン区分）を
+> **別属性**として保持し、分析軸での区別を可能にする（マスタ綴りはブリーフ §15 / Honshu マスタ仕様の複数形に準拠）。
 
 > **写像の非可逆性に関する注記:** 正準 SKU は「色・サイズ・企画」という意味を保持するが、
 > 11桁への**再構築**は Honshu のコード変換ルール（`item_conversion_code`）を要するため、
@@ -466,7 +484,7 @@ SKU × Location を粒度とし、**スナップショット（時点残高）**
 | invoice / billing | 請求（荷主請求含む） | 倉庫・バックオフィス | `fact_billing` |
 
 > これらのイベントの物理スキーマは発生元 OLTP が所有し（例: purchase_order は 32、shipment は 33）、
-> ファクトへの変換は [スタースキーマ変換](../detailed-design/22-star-schema-transform.md)（22）が担う。
+> ファクトへの変換は [スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22）が担う。
 
 ---
 
@@ -535,7 +553,7 @@ stateDiagram-v2
 ```
 
 > 名寄せの詳細アルゴリズム・スコアリング・人的レビュー記録は
-> [Canonical/MDM/名寄せ](../detailed-design/20-canonical-mdm-reconciliation.md)（20）と
+> [Canonical/MDM/名寄せ](../detailed-design/20-canonical-mdm-and-entity-resolution.md)（20）と
 > `mapping_review`（36）が所有する。本書は状態の意味のみを定義する。
 
 ### 10.2 ProductFamily / SKU のカタログ状態
@@ -611,8 +629,8 @@ graph LR
 - **判断基準:** 「全テナント共通か」→ ①、「コンテキスト内で安定か」→ ②、「テナント固有・可変か」→ ③。
 - **JSONB / DocDB の使い分け:** 検索・集計対象になる準構造化属性は PostgreSQL `attributes JSONB`
   （GIN 索引可）、大規模・非構造・読み取りモデルは DynamoDB。詳細は
-  [SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-provisioning.md)（27）と
-  [スナップショット/DocDB](../detailed-design/26-snapshot-docdb.md)（26）へ委譲する。
+  [SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-and-provisioning.md)（27）と
+  [スナップショット/DocDB](../detailed-design/26-snapshot-and-document-db.md)（26）へ委譲する。
 - **SoT 原則:** テナント拡張属性の SoT は DocDB（ブリーフ §5）。正準共通属性の SoT は Canonical DB。
   ①→②→③ の順に「共通性が下がり・可変性が上がる」ため、**上位層を優先**し、
   安易に ③ へ逃がして正準化を放棄しない（IQ 原則: 汎用化はユーザ価値に貢献する場合のみ）。
@@ -716,7 +734,7 @@ graph LR
 - [基本設計: 全体アーキテクチャ](./02-overall-architecture.md)（02） — プレーン構成・コンテキスト配置の全体像。
 - [データベース設計: MDM/Canonical スキーマ](../database-design/34-mdm-canonical-schema.md)（34） — 本書の正準エンティティの**物理所有**。
 - [データベース設計: スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35） — 適合次元・ファクトの**物理所有**。
-- [詳細設計: Canonical/MDM/名寄せ](../detailed-design/20-canonical-mdm-reconciliation.md)（20） — 名寄せアルゴリズム・状態遷移の実装。
-- [詳細設計: 取込とマッピングパイプライン](../detailed-design/21-ingestion-mapping-pipeline.md)（21） / [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata.md)（36） — クロスウォーク・写像の実装。
-- [用語集](../overview/00-glossary.md)（00） — ユビキタス言語の正規定義。
+- [詳細設計: Canonical/MDM/名寄せ](../detailed-design/20-canonical-mdm-and-entity-resolution.md)（20） — 名寄せアルゴリズム・状態遷移の実装。
+- [詳細設計: 取込とマッピングパイプライン](../detailed-design/21-ingestion-and-mapping-pipeline.md)（21） / [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata-schema.md)（36） — クロスウォーク・写像の実装。
+- [用語集](../00-glossary.md)（00） — ユビキタス言語の正規定義。
 - グラウンディング: [Honshu マスタ仕様](../../../.ai-native/domain-context/industry/honshu-master-schema.md)、[商品マスタ→発注業務フロー](../../../.ai-native/domain-context/business-flow/product-master-to-purchase-order-flow.md)

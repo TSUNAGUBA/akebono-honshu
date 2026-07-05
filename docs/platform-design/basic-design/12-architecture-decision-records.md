@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: SCIP プラットフォーム設計における主要なアーキテクチャ決定を、背景・選択肢・決定・根拠・トレードオフ・継承実装（Honshu）差分の観点で正規に記録する
-related: [overall-architecture, nonfunctional-security-tenancy, schema-strategy-sot]
+related: [overall-architecture, nonfunctional-security-tenancy, schema-strategy-sot, glossary]
 ---
 
 # 基本設計: アーキテクチャ決定記録（ADR）
@@ -541,7 +541,10 @@ SCIP の差別化は「分析サービスへの連携難易度の低さ」。他
 | `TEN-003` | クレームとヘッダのテナント不一致 | ADR-011 | 11 |
 | `ANL-001/002/010/011/020` | メトリクス制約欠落 / 未ロード参照 / SCD2 未解決 / 粒度不一致 | ADR-002/007/009 | 07/35 |
 | `AI-001/002/003/010/011/012` | 埋め込み/RAG/モデル次元/LLM 呼出/ガードレール/引用欠落 | ADR-003/005 | 23/24/38 |
-| `CMN-010/011/020/021/030/040` | 読取モデル同期 / 拡張属性 / TZ / 名寄せ重複 / 旧ステータス未変換 | ADR-004/006/012/013 | 30/26 |
+| `CMN-010/011` | 読取モデル同期遅延 / 拡張属性スキーマ検証失敗 | ADR-004 | 26 |
+| `CMN-020/021` | TZ 未指定時刻の受理拒否 / 移行時 TZ 変換不整合検知 | ADR-006 | 30 |
+| `CMN-030` | 名寄せ候補の重複検知 | ADR-012 | 34 |
+| `CMN-040` | 旧日本語ステータス値の移行未変換検知 | ADR-013 | 32/30 |
 | `MAP-001/002/010` | 未マッピング / 承認前ロード / クロスウォーク未解決 | ADR-008/012 | 36/34 |
 | `ETL-001/002` | 変換式評価 / DQ 違反 | ADR-008 | 36/21 |
 | `AUTH-001/003` | トークン検証 / 削除済ユーザ（継承尊重） | ADR-011 | 11 |
@@ -574,8 +577,8 @@ SCIP の差別化は「分析サービスへの連携難易度の低さ」。他
 ## 関連ドキュメント
 
 - [`02 全体アーキテクチャ`](./02-overall-architecture.md)（document_id: overall-architecture） — 本書の各決定が具体化される論理 5 プレーン構成・コンポーネント・デプロイトポロジ。決定の適用先。
-- [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md)（document_id: nonfunctional-security-tenancy） — ADR-001（テナント境界/RLS）・ADR-011（認証/データ境界）・監査の**権威的定義**。本書は根拠を保持し、境界仕様は 11 が所有。
-- [`30 スキーマ戦略と SoT`](../database-design/30-schema-strategy-sot.md)（document_id: schema-strategy-sot） — ADR-006（TIMESTAMPTZ）・ADR-013（DDL ハウススタイル/論理削除線引き）の DDL 標準を**権威的に所有**。本書は採否根拠を保持。
+- [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md)（document_id: nonfunctional-security-tenancy） — ADR-001（テナント境界/RLS）・ADR-011（認証/データ境界）・監査の**権威的定義**。本書は根拠を保持し、境界仕様は 11 が所有。
+- [`30 スキーマ戦略と SoT`](../database-design/30-schema-strategy-and-sot.md)（document_id: schema-strategy-sot） — ADR-006（TIMESTAMPTZ）・ADR-013（DDL ハウススタイル/論理削除線引き）の DDL 標準を**権威的に所有**。本書は採否根拠を保持。
 - [`00 用語集`](../00-glossary.md)（document_id: glossary） — ユビキタス言語。
 - 設計ファウンデーション・ブリーフ（共有契約 §4 技術スタック / §5 SoT マップ / §6 テナンシー / §8 スタースキーマ / §9 DDL 規約 / §10 エラーコード）— 本書の全決定の上位契約。
 - [`Phase 4 技術スタック確定`](../../../.ai-native/outputs/phase4/tech-stack-decision.md) — 継承技術スタックの根拠（Firebase/RDS/App Runner 等）。ADR-002〜005 はこの Phase 4 判断を「マルチテナント・分析プラットフォーム化」の文脈で拡張する。
