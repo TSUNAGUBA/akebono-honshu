@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: 自社/他社アプリからのデータ連携・人的マッピング・正準化・スタースキーマ化の基本設計を、取込方式・コネクタ・マッピングプロセス・DQ/来歴/リプレイ・SoT整合の観点で定義する
-related: [ingestion-mapping-pipeline, mapping-metadata-schema, mdm-canonical-schema, star-schema-transformation]
+related: [ingestion-mapping-pipeline, mapping-metadata-schema, mdm-canonical-schema, star-schema-transformation, canonical-mdm-matching, star-schema-dwh, control-plane-backoffice]
 ---
 
 # 基本設計: データ連携と項目マッピング
@@ -26,18 +26,18 @@ SCIP の**差別化の源泉**は「分析サービスへの連携難易度の�
 > DQ/冪等性/来歴/リプレイの方針、ETL/MAP エラーコードレジストリ）。以下は**参照するが物理定義・詳細実装を再定義しない**
 > （ブリーフ §14 テーブル所有マップ準拠）:
 > - **取込・変換パイプラインの詳細実装**（Glue/Step Functions ジョブ、CDC 実装、変換エンジン内部）は
->   [取込とマッピングパイプライン](../detailed-design/21-ingestion-mapping-pipeline.md)（21）が所有。
+>   [取込とマッピングパイプライン](../detailed-design/21-ingestion-and-mapping-pipeline.md)（21）が所有。
 > - **マッピングメタデータの物理スキーマ**（`source_system`/`source_field`/`canonical_attribute`/`mapping_rule`/
 >   `transform_expression`/`dq_rule`/`load_run`/`data_lineage`/`mapping_review` の DDL）は
 >   [マッピングメタデータスキーマ](../database-design/36-mapping-metadata-schema.md)（36）が所有。
 > - **Canonical/MDM・名寄せの詳細**（マッチングアルゴリズム、ゴールデンレコード生成、クロスウォーク解決）は
->   [Canonical/MDM/名寄せ](../detailed-design/20-canonical-mdm-matching.md)（20）および
+>   [Canonical/MDM/名寄せ](../detailed-design/20-canonical-mdm-and-entity-resolution.md)（20）および
 >   [MDM/Canonical スキーマ](../database-design/34-mdm-canonical-schema.md)（34）が所有。
 > - **Canonical → dim/fact の変換（SCD・サロゲートキー採番・ロード）** は
 >   [スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22）、
 >   物理 dim/fact は [スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35）が所有。
 > - コネクタ/接続設定の登録（`connector`/`connector_config`）は
->   [コントロールプレーン/バックオフィス](../database-design/37-control-plane-backoffice.md)（37）が所有。
+>   [コントロールプレーン/バックオフィス](../database-design/37-control-plane-backoffice-schema.md)（37）が所有。
 
 ---
 
@@ -222,8 +222,7 @@ flowchart LR
     C1 -->|"機械: 名寄せ + サロゲート採番（20/22）"| D1
     C2 --> D2
     C3 --> F1
-    C4 --> D2
-    C4 -.-> F2
+    C4 --> F2
 ```
 
 > **要点:** 第1層の解決を人が行い（`mapping_rule` に `transform_expression` を添えて `mapping_review` で承認）、
@@ -292,7 +291,7 @@ stateDiagram-v2
 - app-local id と canonical id の対応は**クロスウォーク**（`party_xref`/`product_xref`/`sku_xref`/`location_xref`, 34 所有）に記録する。
   クロスウォークは**マッピング解決の SoT**（ブリーフ §5）であり、名寄せ結果の一貫性を担保する。
 - **本書の関与範囲は「マッピングで正準属性のキー（`*_bk`）を確定させ、名寄せの入力を整える」ところまで**。
-  マッチングロジック・スコアリング・生存ルール（survivorship）は [20](../detailed-design/20-canonical-mdm-matching.md) が所有する。
+  マッチングロジック・スコアリング・生存ルール（survivorship）は [20](../detailed-design/20-canonical-mdm-and-entity-resolution.md) が所有する。
 
 ### 4.2 変換からスタースキーマ化（詳細は 22 / 35）
 
@@ -453,11 +452,11 @@ flowchart LR
 
 | # | 論点 | 選択肢 / トレードオフ | 一次議論先 |
 |---|------|--------------------|-----------|
-| D-1 | CDC 実装方式 | DMS（マネージド/運用容易）／ Debezium（柔軟/自前運用）／ 論理レプリケーション／ アプリイベント。ソース側 DB 種別と鮮度要件で判断 | [`21`](../detailed-design/21-ingestion-mapping-pipeline.md) / [`12 ADR`](./12-adr.md) |
-| D-2 | AI マッピング支援の適用度合い | 「候補提示のみ（人が全確定）」か「高信頼度は自動承認 + 事後監査」か。誤マッピングリスクと工数のトレードオフ | [`23`](../detailed-design/23-ai-rag-vectorization.md) / §5.2 |
-| D-3 | 未知マスタコードの自動補完ポリシー | MIG-3 型「自動 INSERT（legacy_id 保存）+ 後追い確定」を標準にするか、常に人的承認を要求するか | [`20`](../detailed-design/20-canonical-mdm-matching.md) / [`34`](../database-design/34-mdm-canonical-schema.md) |
-| D-4 | DQ 逸脱行の保持期間・再処理 SLA | 隔離行の保持と再処理の運用（自動リトライ有無・エスカレーション） | [`21`](../detailed-design/21-ingestion-mapping-pipeline.md) / [`11`](./11-nfr-security-tenancy.md) |
-| D-5 | ストリーミング/CDC の採用範囲 | どの指標を準リアルタイム化するか（在庫のみ等）。日次スナップショット（26）で足りる範囲との線引き | [`07`](./07-service-analytics.md) / [`26`](../detailed-design/26-snapshot-docdb.md) |
+| D-1 | CDC 実装方式 | DMS（マネージド/運用容易）／ Debezium（柔軟/自前運用）／ 論理レプリケーション／ アプリイベント。ソース側 DB 種別と鮮度要件で判断 | [`21`](../detailed-design/21-ingestion-and-mapping-pipeline.md) / [`12 ADR`](./12-architecture-decision-records.md) |
+| D-2 | AI マッピング支援の適用度合い | 「候補提示のみ（人が全確定）」か「高信頼度は自動承認 + 事後監査」か。誤マッピングリスクと工数のトレードオフ | [`23`](../detailed-design/23-ai-rag-and-vectorization.md) / §5.2 |
+| D-3 | 未知マスタコードの自動補完ポリシー | MIG-3 型「自動 INSERT（legacy_id 保存）+ 後追い確定」を標準にするか、常に人的承認を要求するか | [`20`](../detailed-design/20-canonical-mdm-and-entity-resolution.md) / [`34`](../database-design/34-mdm-canonical-schema.md) |
+| D-4 | DQ 逸脱行の保持期間・再処理 SLA | 隔離行の保持と再処理の運用（自動リトライ有無・エスカレーション） | [`21`](../detailed-design/21-ingestion-and-mapping-pipeline.md) / [`11`](./11-nonfunctional-security-tenancy.md) |
+| D-5 | ストリーミング/CDC の採用範囲 | どの指標を準リアルタイム化するか（在庫のみ等）。日次スナップショット（26）で足りる範囲との線引き | [`07`](./07-service-analytics.md) / [`26`](../detailed-design/26-snapshot-and-document-db.md) |
 | D-6 | マッピングテンプレートの初期セット | 業種/代表 SaaS ごとにどこまで事前整備するか。初期投資と立ち上げ速度のトレードオフ | [`36`](../database-design/36-mapping-metadata-schema.md) / §5.1 |
 
 ---
@@ -467,14 +466,14 @@ flowchart LR
 - [`02-overall-architecture.md`](./02-overall-architecture.md) — 全体アーキテクチャ（プレーン構成・横断エラーコード俯瞰・同期/再同期）
 - [`03-canonical-domain-model.md`](./03-canonical-domain-model.md) — 正準ドメインモデル（Party/Product/Location/Region 等の概念）
 - [`07-service-analytics.md`](./07-service-analytics.md) — 分析・可視化（連携先の定型分析・セマンティック層・ハルシネーション抑制）
-- [`11-nfr-security-tenancy.md`](./11-nfr-security-tenancy.md) — 非機能 / セキュリティ / テナンシー（RLS・境界・SLA）
-- [`12-adr.md`](./12-adr.md) — アーキテクチャ決定記録（CDC/DWH/ベクター選定の根拠）
-- [`../detailed-design/20-canonical-mdm-matching.md`](../detailed-design/20-canonical-mdm-matching.md) — Canonical/MDM/名寄せ（マッチング・ゴールデンレコード）
-- [`../detailed-design/21-ingestion-mapping-pipeline.md`](../detailed-design/21-ingestion-mapping-pipeline.md) — 取込とマッピングパイプライン（詳細実装）
+- [`11-nfr-security-tenancy.md`](./11-nonfunctional-security-tenancy.md) — 非機能 / セキュリティ / テナンシー（RLS・境界・SLA）
+- [`12-adr.md`](./12-architecture-decision-records.md) — アーキテクチャ決定記録（CDC/DWH/ベクター選定の根拠）
+- [`../detailed-design/20-canonical-mdm-matching.md`](../detailed-design/20-canonical-mdm-and-entity-resolution.md) — Canonical/MDM/名寄せ（マッチング・ゴールデンレコード）
+- [`../detailed-design/21-ingestion-mapping-pipeline.md`](../detailed-design/21-ingestion-and-mapping-pipeline.md) — 取込とマッピングパイプライン（詳細実装）
 - [`../detailed-design/22-star-schema-transformation.md`](../detailed-design/22-star-schema-transformation.md) — スタースキーマ変換（SCD・ロード）
 - [`../database-design/34-mdm-canonical-schema.md`](../database-design/34-mdm-canonical-schema.md) — MDM/Canonical スキーマ（正準エンティティ・クロスウォーク）
 - [`../database-design/35-star-schema-dwh.md`](../database-design/35-star-schema-dwh.md) — スタースキーマ DWH（dim/fact 物理定義）
 - [`../database-design/36-mapping-metadata-schema.md`](../database-design/36-mapping-metadata-schema.md) — マッピングメタデータスキーマ（source/rule/dq/lineage/review）
-- [`../database-design/37-control-plane-backoffice.md`](../database-design/37-control-plane-backoffice.md) — コントロールプレーン（connector/connector_config）
+- [`../database-design/37-control-plane-backoffice.md`](../database-design/37-control-plane-backoffice-schema.md) — コントロールプレーン（connector/connector_config）
 - [`../../migration/mig-3-strategy.md`](../../migration/mig-3-strategy.md) — 既存生産管理システム CSV 取込戦略（レガシー人的マッピングの実例）
 - [`../README.md`](../README.md) — ドキュメント索引 / 全体マップ

@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: メーカー向け自社サービス（商品マスタ・生産/発注/納品/売上/在庫のトランザクション管理と分析連携）の機能・データ・業務フローを基本設計する
-related: [oltp-manufacturer-schema, service-analytics, canonical-domain-model]
+related: [oltp-manufacturer-schema, service-analytics, canonical-domain-model, overall-architecture, nonfunctional-security-tenancy, star-schema-transform, si-customization-provisioning, star-schema-dwh]
 ---
 
 # 基本設計: メーカー向けサービス
@@ -309,7 +309,7 @@ Honshu の 11桁品番は「各マスタの `item_conversion_code` を機械的�
 
 - Honshu は「11桁・上記構成」を既定プロファイルとして持つ。
 - 他メーカーテナントは自社の採番規則をプロファイルとして登録する（詳細は
-  [SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-provisioning.md)（27）へ委譲）。
+  [SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-and-provisioning.md)（27）へ委譲）。
 - **SKU の SoT はメーカー OLTP（32）**。正準側（34）は `sku_xref` で対応づけるのみで、
   正準側からローカル品番を一意に再構築することは保証しない（03 §7.3 の非可逆性注記）。
 
@@ -332,7 +332,7 @@ erDiagram
         bigint tenant_id FK "テナント"
         bigint family_id FK "対象企画"
         smallint part_type "部位: 甲皮/中底/底/付属/副資材"
-        bigint material_id FK "materials マスタ参照"
+        bigint material_id FK "material マスタ参照（物理列名の最終確定は 32）"
         numeric required_qty "1足あたり所要量"
         string uom "単位: 足/組/枚/㎡ 等"
         numeric loss_rate "ロス率（任意, DEFAULT 0）"
@@ -360,8 +360,9 @@ erDiagram
 
 - **所要量の SoT は BOM（`product_materials`）**。企画側の 3 部位代表素材 FK（甲皮/中底/底、表示用に存置）とは
   **疎結合**とし、BOM から企画側へは書き戻さない（差分 upsert・書戻しなし、`production-extension-design.md` §3/§6）。
-- 付属（面ファスナー等）・副資材（値札/証紙/箱）も `materials` マスタに登録して BOM 行にする（甲皮素材は
-  `material` マスタ参照で対応、`honshu-master-schema.md` §4-2）。
+- 付属（面ファスナー等）・副資材（値札/証紙/箱）も `material` マスタに登録して BOM 行にする（甲皮素材も
+  `material` マスタ参照で対応、`honshu-master-schema.md` §4-2）。素材マスタ名は §4.1 の `material`（単数）に統一する
+  （継承実装の単数マスタ命名慣習に整合。物理列名・参照先の最終確定は 32 に委ねる）。
 
 ### 6.2 生産指示（加工指図）
 
@@ -432,7 +433,7 @@ sequenceDiagram
 ## 8. スタースキーマ連携（写像契約）
 
 メーカーサービスの事実データを、DWH（35 所有）の適合次元・ファクトへ写す**写像契約**を定義する。
-実際の ETL 変換は [スタースキーマ変換](../detailed-design/22-star-schema-transform.md)（22）が担い、
+実際の ETL 変換は [スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22）が担い、
 本書は「どの業務テーブルがどのファクトへ、どの粒度で写るか」を宣言する（自社アプリの分析連携前提設計）。
 
 ```mermaid
@@ -592,7 +593,7 @@ graph LR
 - [基本設計: 正準ドメインモデル](./03-canonical-domain-model.md)（03） — 商品/取引先/拠点の正準エンティティと写像（クロスウォーク）。
 - [基本設計: 全体アーキテクチャ](./02-overall-architecture.md)（02） — プレーン構成・コンテキスト配置。
 - [基本設計: 構想と全体像](./01-concept-and-vision.md)（01） — ビジョン・分析軸の出所。
-- [データベース設計: スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35） / [詳細設計: スタースキーマ変換](../detailed-design/22-star-schema-transform.md)（22） — ファクト/次元の物理所有と ETL 変換。
-- [詳細設計: SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-provisioning.md)（27） — 採番規則プロファイル等のテナント設定。
+- [データベース設計: スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35） / [詳細設計: スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22） — ファクト/次元の物理所有と ETL 変換。
+- [詳細設計: SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-and-provisioning.md)（27） — 採番規則プロファイル等のテナント設定。
 - [基本設計: 非機能/セキュリティ/テナンシー](./11-nonfunctional-security-tenancy.md)（11） — RLS・プーリング・機微値の非機能詳細。
 - グラウンディング: [Honshu マスタ仕様](../../../.ai-native/domain-context/industry/honshu-master-schema.md)、[品番コード変換ルール](../../../.ai-native/domain-context/industry/honshu-product-code-rule.md)、[生産管理業務フロー](../../../.ai-native/domain-context/business-flow/production-management-flow.md)、[生産管理拡張設計サマリ](../../../.ai-native/outputs/production-extension-design.md)

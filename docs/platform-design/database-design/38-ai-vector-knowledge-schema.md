@@ -13,6 +13,9 @@ related:
   - star-schema-dwh
   - control-plane-backoffice-schema
   - mdm-canonical-schema
+  - service-analytics
+  - decision-support-ai
+  - nonfunctional-security-tenancy
 ---
 
 # DBスキーマ設計: AI / ベクター / ナレッジ
@@ -39,12 +42,14 @@ related:
 
 ## 1. SoT 宣言（本書スコープ）
 
-ブリーフ §5 のデータストアカタログと 30 §2 の SoT マップに厳密準拠する。**中核原則: 原文（S3/RDS メタ）が SoT、チャンク・埋め込みは派生であり原文から冪等に再生成可能**（CLAUDE.md 原則2/6）。
+ブリーフ §5 のデータストアカタログと 30 §2 の SoT マップに厳密準拠する。**中核原則: 原文（S3 バイト + Aurora メタ）が SoT、チャンク・埋め込みは派生であり原文から冪等に再生成可能**（CLAUDE.md 原則2/6）。
+
+> **KB 原文メタの格納ストア（30 §2 注記・§7 物理配置に統一）:** `kb_document`/`kb_chunk` 等の原文メタは **Amazon Aurora PostgreSQL（S2, 30 の物理配置表）** に置く。ブリーフ §5 は当該行を「RDS」と表記するが、本プラットフォームでは `kb_embedding`(pgvector) との**同一クラスタ・トランザクション境界共有**（pgvector 同居性）を優先し、30 §2 が「38 でも同一に扱う」と明言したとおり Aurora（S2）を正とする。本書のリレーショナル表は全て Aurora 上（本書冒頭「物理配置」・§3.1 参照）。
 
 | データ | SoT | 派生/キャッシュ | 再構築 | 本書の所有 |
 |--------|-----|----------------|--------|-----------|
 | KB 原本バイト | **S3（30 S10）** | — | — | 参照（`kb_document.s3_uri`） |
-| KB 原文メタ | **RDS `kb_document`** | — | — | 所有 |
+| KB 原文メタ | **Aurora PostgreSQL `kb_document`（S2, pgvector 同居, 30 §2/§7）** | — | — | 所有 |
 | チャンク | **派生**（原文から再チャンク） | `kb_chunk` | ○ | 所有 |
 | 埋め込みベクター | **派生**（チャンク×モデル版から再エンベッド） | `kb_embedding` | ○ | 所有 |
 | チャンク設定・埋め込みモデル版 | **設定は AI DB が SoT** | `chunking_profile` / `embedding_model_config` | — | 所有 |
@@ -83,8 +88,10 @@ erDiagram
     agent_session ||--o{ agent_memory : "記憶昇格元"
     agent_memory ||--o| agent_memory : "訂正/世代"
     agent_session ||--o{ analysis_run : "AI実行"
+    agent ||--o{ analysis_run : "実行エージェント"
     analysis_run ||--o{ insight : "生成"
-    kb_chunk ||--o{ analysis_run : "根拠引用"
+    kb_chunk ||..o{ analysis_run : "根拠引用(JSONB疎参照)"
+    kb_chunk ||..o{ insight : "根拠引用(JSONB疎参照)"
 
     kb_document {
         bigint id PK
@@ -172,6 +179,10 @@ erDiagram
     }
 ```
 
+> **図注（関係の記法）:**
+> - **実線（識別関係, `--`）は物理 FK**。`agent`→`analysis_run` は `analysis_run.agent_id` の物理 FK（§13）で、`agent_session` 経由（`agent_session_id`）とは別経路の直接参照である（非エージェント実行では `agent_session_id` が NULL でも `agent_id` を保持しうる）。
+> - **破線（非識別関係, `..`）は JSONB による疎参照（ソフト参照）で物理 FK ではない**。`kb_chunk`→`analysis_run` は `analysis_run.rag_citations`（§13）、`kb_chunk`→`insight` は `insight.evidence`（§12）に格納する引用 `kb_chunk` id 配列であり、参照整合性は DB ではなくアプリ層で保証する（削除時の孤児は AI-804 で整理）。
+
 ---
 
 ## 3. 前提: 拡張・スキーマ・列挙値
@@ -187,7 +198,20 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 -- AI 層専用スキーマ（30 §7 の物理配置に従い Aurora 上へ）
 CREATE SCHEMA IF NOT EXISTS ai;
 -- 以降の CREATE TABLE は search_path=ai を前提に記す（明示時は ai.<table>）
+
+-- 共有テナント予約IDの抽象化（予約値の最終確定は 37。未決 §3）。
+-- 共有ナレッジ（knowledge_scope=1 / is_shared=TRUE）を格納する予約テナントの id を
+-- 単一箇所で定義し、各表の CHECK 制約・RLS 共有読取ポリシー（§10）はこの関数のみを参照する。
+-- 予約値が確定したら本関数の戻り値のみを変更すれば全 DDL/RLS が追随する（値の直書きを禁止）。
+CREATE OR REPLACE FUNCTION ai.platform_shared_tenant_id()
+    RETURNS BIGINT
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$ SELECT 0::bigint $$;   -- 暫定値 0=PLATFORM_SHARED（37 確定まで暫定。未決 §3）
+COMMENT ON FUNCTION ai.platform_shared_tenant_id() IS
+    '共有ナレッジを格納する予約テナントの id（37 が確定・シード）。CHECK/RLS の共有判定はこの関数のみを参照し予約値の直書きを避ける';
 ```
+
+> **CHECK 制約での関数参照（注意）:** 各ナレッジ表の共有制約は `ai.platform_shared_tenant_id()` を用いる。本関数は `IMMUTABLE` 宣言だが実体は将来 1 度だけ更新しうるため、**予約値を変更する際は既存 `is_shared=TRUE` 行の `tenant_id` を予約テナントへ移送するデータ移行を伴わせる**（CLAUDE.md 原則7・下位互換）。予約値は 37 の `tenant` シードと単一の値を共有する。
 
 ### 3.2 共有列挙値（SMALLINT + CHECK。ブリーフ §9・30 §3.2）
 
@@ -206,7 +230,7 @@ CREATE SCHEMA IF NOT EXISTS ai;
 | `insight_type` | 1..5 | trend / anomaly / opportunity / risk / recommendation |
 | `target_entity_type` | 1..8 | product / sku / location / region / customer / supplier / channel / tenant |
 
-> **共有テナント予約値:** 業界横断ナレッジ（`knowledge_scope=1`）は **予約済みプラットフォーム共有テナント**（`tenant_id` 予約値、例: `0` = `PLATFORM_SHARED`。確定は 37）に格納し `is_shared = TRUE` とする。`tenant` テーブルにこの予約行をシード（37 が所有）。RLS はこの共有分を全テナントに**読取専用**で開放する（§10）。
+> **共有テナント予約値:** 業界横断ナレッジ（`knowledge_scope=1`）は **予約済みプラットフォーム共有テナント**（`tenant_id` 予約値、暫定 `0` = `PLATFORM_SHARED`。確定は 37。§3.1 の `ai.platform_shared_tenant_id()` で抽象化）に格納し `is_shared = TRUE` とする。`tenant` テーブルにこの予約行をシード（37 が所有）。**共有行は必ず予約テナントに固定される**：各ナレッジ表は `CHECK (is_shared = FALSE OR tenant_id = ai.platform_shared_tenant_id())` で一般テナントが自テナント配下に共有行を作れないよう DB 層で強制する（§4/§5/§6/§9）。RLS はこの共有分（予約テナントの行に限る）を全テナントに**読取専用**で開放する（§10）。
 
 ---
 
@@ -243,7 +267,9 @@ CREATE TABLE kb_document (
     CONSTRAINT chk_kb_document_scope       CHECK (knowledge_scope IN (1, 2)),
     CONSTRAINT chk_kb_document_sensitivity CHECK (sensitivity_class IN (0, 1, 2, 3)),
     CONSTRAINT chk_kb_document_status      CHECK (status IN (0, 1, 2, 3, 9)),
-    CONSTRAINT chk_kb_document_shared      CHECK ((knowledge_scope = 1) = is_shared)  -- 共有=業界横断の整合を強制
+    CONSTRAINT chk_kb_document_shared      CHECK ((knowledge_scope = 1) = is_shared),  -- 共有=業界横断の整合を強制
+    -- 共有行は予約テナントに固定（一般テナントが自テナント配下に共有行を作れない＝越境露出の防止, §3.1/§10）
+    CONSTRAINT chk_kb_document_shared_tenant CHECK (is_shared = FALSE OR tenant_id = ai.platform_shared_tenant_id())
 );
 
 -- 同一原文の再取込を冪等スキップ（content_hash 一致, 23 §3.1 / AI-701）
@@ -294,7 +320,9 @@ CREATE TABLE kb_chunk (
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),            -- 作成日時（UTC保存）
     updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),            -- 更新日時（UTC保存）
     CONSTRAINT chk_kb_chunk_scope CHECK (knowledge_scope IN (1, 2)),
-    CONSTRAINT chk_kb_chunk_shared CHECK ((knowledge_scope = 1) = is_shared)
+    CONSTRAINT chk_kb_chunk_shared CHECK ((knowledge_scope = 1) = is_shared),
+    -- 共有行は予約テナントに固定（親文書から継承。§3.1/§10）
+    CONSTRAINT chk_kb_chunk_shared_tenant CHECK (is_shared = FALSE OR tenant_id = ai.platform_shared_tenant_id())
 );
 
 -- チャンク冪等キー: 同一文書×同一プロファイルで chunk_hash 一意（再インジェスト時の重複防止, 23 §3.2）
@@ -342,7 +370,11 @@ CREATE TABLE kb_embedding (
     is_deleted          BOOLEAN      NOT NULL DEFAULT FALSE,            -- 論理削除（失効・再分割で無効化。物理削除は再索引時に一括）
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),            -- 生成日時（UTC保存）
     CONSTRAINT chk_kb_embedding_dim   CHECK (dim = 1024),
-    CONSTRAINT chk_kb_embedding_scope CHECK (knowledge_scope IN (1, 2))
+    CONSTRAINT chk_kb_embedding_scope CHECK (knowledge_scope IN (1, 2)),
+    -- 親チャンクと同一の整合ルール（他ナレッジ表と揃える。継承値の乖離を DB で禁止, §5 の非正規化方針）
+    CONSTRAINT chk_kb_embedding_shared CHECK ((knowledge_scope = 1) = is_shared),
+    -- 共有行は予約テナントに固定（チャンクから継承。§3.1/§10）
+    CONSTRAINT chk_kb_embedding_shared_tenant CHECK (is_shared = FALSE OR tenant_id = ai.platform_shared_tenant_id())
 );
 
 -- upsert 冪等キー: 同一チャンク×同一モデル版は1行（重複行を作らない, 23 §3.4）
@@ -422,8 +454,11 @@ CREATE TABLE chunking_profile (
     CONSTRAINT chk_chunking_sizes CHECK (target_tokens > 0 AND max_tokens >= target_tokens AND overlap_tokens >= 0)
 );
 -- テナント既定/上書きの一意（tenant_id NULL は既定。COALESCE で一意化）
+--   センチネルは有効テナントIDと衝突しない負値 -1 を用いる。予約テナント（暫定 0=PLATFORM_SHARED, 未決 §3）は
+--   tenant テーブルにシードされる実値であり、その上書きプロファイル（tenant_id=予約値）と
+--   プラットフォーム既定（tenant_id NULL）を畳み込みで取り違えない（0 への畳み込み禁止）。
 CREATE UNIQUE INDEX uq_chunking_profile_key
-    ON chunking_profile (COALESCE(tenant_id, 0), profile_key, profile_version)
+    ON chunking_profile (COALESCE(tenant_id, -1), profile_key, profile_version)
     WHERE is_deleted = FALSE;
 
 COMMENT ON TABLE chunking_profile IS 'チャンク化戦略設定の SoT。tenant_id NULL はプラットフォーム既定、値ありはテナント上書き';
@@ -462,7 +497,9 @@ CREATE TABLE domain_knowledge (
     CONSTRAINT chk_dk_scope       CHECK (knowledge_scope IN (1, 2)),
     CONSTRAINT chk_dk_type        CHECK (knowledge_type IN (1, 2, 3)),
     CONSTRAINT chk_dk_sensitivity CHECK (sensitivity_class IN (0, 1, 2, 3)),
-    CONSTRAINT chk_dk_shared      CHECK ((knowledge_scope = 1) = is_shared)
+    CONSTRAINT chk_dk_shared      CHECK ((knowledge_scope = 1) = is_shared),
+    -- 共有行は予約テナントに固定（一般テナントが自テナント配下に共有行を作れない, §3.1/§10）
+    CONSTRAINT chk_dk_shared_tenant CHECK (is_shared = FALSE OR tenant_id = ai.platform_shared_tenant_id())
 );
 
 -- 現行版はテナント×コレクション×タイトルで一意（世代は version で区別）
@@ -499,12 +536,16 @@ CREATE POLICY tenant_isolation ON kb_embedding
     WITH CHECK (tenant_id = current_setting('app.tenant_id')::bigint);
 
 -- ② 共有ナレッジ: 業界横断（is_shared）は全テナントに読取のみ開放（書込不可）
+--    予約テナント（ai.platform_shared_tenant_id()）が所有する行に限定する。
+--    予約テナント条件が無いと「is_shared=TRUE かつ scope=1」の行が所有者に関係なく全テナントへ露出するため必須。
 CREATE POLICY shared_knowledge_read ON kb_embedding
     FOR SELECT
-    USING (is_shared = TRUE AND knowledge_scope = 1);
+    USING (is_shared = TRUE AND knowledge_scope = 1
+           AND tenant_id = ai.platform_shared_tenant_id());
 ```
 
-- **共有分の書込制御:** 共有ナレッジの登録・更新は**プラットフォーム管理ロール**（予約テナントコンテキスト）でのみ行う。テナントセッション（`app.tenant_id` = 一般値）からは②が SELECT 限定のため書込不可（`WITH CHECK` を持たない）。
+- **共有分の書込制御（二重防御）:** 共有ナレッジの登録・更新は**プラットフォーム管理ロール**（予約テナントコンテキスト = `app.tenant_id` を予約値に設定）でのみ行う。一般テナントセッション（`app.tenant_id` = 一般値）が①`tenant_isolation`（`FOR ALL`）で `is_shared=TRUE`/`knowledge_scope=1` 行を**自テナント配下に INSERT する越境を、テーブルの `CHECK (is_shared = FALSE OR tenant_id = ai.platform_shared_tenant_id())`（§4/§5/§6/§9）が DB 層で拒否する**（RLS の `WITH CHECK` は tenant_id 一致しか見ないため、RLS だけでは防げない点に注意）。②`shared_knowledge_read` は SELECT 限定（`WITH CHECK` を持たない）ため共有行の書込経路にはならず、かつ予約テナント条件により**読取対象も予約テナント所有の共有行に限定**される。
+- **越境作成の遮断（本 CRITICAL の要点）:** これにより「一般テナントが自テナント配下で業界横断共有行を作成し全テナントへ露出させる」経路（①の `FOR ALL` 書込＋②の tenant_id 無条件読取の組合せ）が、CHECK（作成側）と予約テナント述語（読取側）の両方で塞がれる。違反試行は AI-802（§18）。
 - **fail-closed（30 §4.2）:** `app.tenant_id` 未設定時は `current_setting` が例外となり全行漏洩を防ぐ（CMN-001）。
 - **エージェント/実行ログ系（`agent`/`agent_session`/`agent_message`/`agent_memory`/`insight`/`analysis_run`）** は共有読取が不要なため、30 §4.2 の**標準 `tenant_isolation` 単独**を適用する（共有ポリシーは付けない）。`agent_memory` のクロス部門想起も検索フィルタ（`agent_id`/`role`）で別途制限する（24 §5.2）。
 - **`chunking_profile`（既定＋上書き混在）** は §8 のとおり `tenant_id IS NULL OR tenant_id = current_setting('app.tenant_id')::bigint` の読取ポリシーを敷く。`embedding_model_config` はテナント横断設定のため RLS 対象外（GRANT で読取を全ロールへ、書込は管理ロール限定）。
@@ -924,7 +965,7 @@ CREATE TRIGGER trg_kb_document_set_updated_at
 | コード | 発生機能（本書の実装点） | 意味 | 重大度 | 対処/誘導 |
 |--------|------------------------|------|--------|-----------|
 | AI-801 | `analysis_run`/`agent_message`（§13/§14.3） | append-only 表への UPDATE/DELETE 試行 | CRITICAL | 実行拒否（GRANT で構造的に不可）・監査記録 |
-| AI-802 | ナレッジ系 RLS（§10） | 共有ナレッジ（`is_shared`）への一般テナントからの書込試行 | CRITICAL | 拒否（②は SELECT 限定）・管理ロール経由へ誘導 |
+| AI-802 | ナレッジ系 CHECK/RLS（§4/§5/§6/§9/§10） | 一般テナントが自テナント配下に共有行（`is_shared=TRUE`）を作成する越境試行、または共有ナレッジへの書込試行 | CRITICAL | `chk_*_shared_tenant` で作成拒否・②は SELECT 限定・管理ロール（予約テナント）経由へ誘導 |
 | AI-803 | `kb_embedding`/`agent_memory`（§6/§15） | ベクター次元不一致（`vector(1024)` と不一致。CHECK/型違反） | CRITICAL | 格納拒否・埋め込み版/設定の是正（23 §AI-713 と整合） |
 | AI-804 | `kb_embedding`（§6） | 孤児ベクター（対象 `kb_chunk` が論理削除済/不在） | WARNING | 再インデックス時に整理・原文から再エンベッド |
 | AI-805 | `domain_knowledge`（§9） | 世代整合違反（現行版が複数、または supersedes 循環） | WARNING | is_current 一意索引で防止・世代連鎖を修復 |
@@ -953,7 +994,7 @@ CREATE TRIGGER trg_kb_document_set_updated_at
 |---|------|--------------------|----------|
 | 1 | 出力ファイル名の不一致 | 本書の指定パスは `38-ai-vector-and-knowledge-schema.md` だが、兄弟4文書（23/24/26/30）は `38-ai-vector-knowledge-schema.md` を参照 | **`38-ai-vector-knowledge-schema.md`（兄弟整合・リンク解決可能な名）で作成**。document_id は `ai-vector-knowledge-schema`。オペレーター確認事項 |
 | 2 | 埋め込み次元の固定 | `vector(1024)` 固定 vs 可変。将来の高次元/半精度（`halfvec`） | 1024 固定（Titan V2 / Cohere, 23 §3.3）。>2000 次元採用時は `halfvec` を検討（23 §4.2） |
-| 3 | 共有テナント予約値 | `tenant_id=0` を予約 vs 専用 UUID/大きな予約ID | 37 が確定。RLS の共有読取ポリシー（§10）は `is_shared`＋`knowledge_scope=1` で駆動し予約値に非依存に保つ |
+| 3 | 共有テナント予約値 | `tenant_id=0` を予約 vs 専用 UUID/大きな予約ID | 37 が確定。予約値は §3.1 の `ai.platform_shared_tenant_id()` に一元化し、各表 CHECK・RLS 共有読取ポリシー（§10）はこの関数のみ参照（値の直書きなし）。確定時は関数戻り値の変更＋既存共有行の移送で追随（下位互換） |
 | 4 | `domain_knowledge` と `kb_*` の重複範囲 | 構造化行 + 原文チャンクの二重保持 | 構造化行は検索/世代/引用のメタ、ベクターは `kb_*` 経由に一本化（重複ベクター化を避ける, §9） |
 | 5 | `analysis_run` の保持期間/パーティション | 全量 RDS 保持 vs 月次パーティション + S3 アーカイブ | append-only 大量化に備え月次レンジパーティション + Glacier IR アーカイブを検討（`audit_logs`(37) と同型。11/37 と協議） |
 | 6 | `agent_memory` のベクター化選別しきい値 | 全メモリ vs 重要度選別（`importance`） | 選別（24 §10-5）。しきい値は運用調整。未ベクター化行は `embedding IS NULL`（部分索引で除外） |

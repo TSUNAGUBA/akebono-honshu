@@ -5,7 +5,7 @@ category: detailed-design
 version: 0.1.0
 status: draft
 purpose: Canonical/Raw からスタースキーマ(dim/fact)への ELT 変換の詳細ロジック（適合次元・サロゲートキー・SCD2・ファクトグレイン/ロード・増分/バックフィル/再構築・整合性検証）を実装レベルで定義する
-related: [star-schema-dwh, ingestion-mapping-pipeline, canonical-mdm-detail, snapshot-document-db, service-analytics]
+related: [star-schema-dwh, ingestion-mapping-pipeline, canonical-mdm-detail, mdm-canonical-schema, mapping-metadata-schema, snapshot-document-db, service-analytics]
 ---
 
 # 詳細設計: スタースキーマ変換
@@ -32,9 +32,9 @@ related: [star-schema-dwh, ingestion-mapping-pipeline, canonical-mdm-detail, sna
 > [Canonical/MDM/名寄せ](./20-canonical-mdm-and-entity-resolution.md)（20）と
 > [MDM/Canonical スキーマ](../database-design/34-mdm-canonical-schema.md)（34）が所有し、
 > 取込・項目マッピング適用・`load_run`/`data_lineage` は
-> [取込とマッピングパイプライン](./21-ingestion-mapping-pipeline.md)（21）と
-> [マッピングメタデータ](../database-design/36-mapping-metadata.md)（36）が所有する。
-> スナップショット静的ファイルの生成・配信詳細は [スナップショット/DocDB](./26-snapshot-document-db.md)（26）が所有する。
+> [取込とマッピングパイプライン](./21-ingestion-and-mapping-pipeline.md)（21）と
+> [マッピングメタデータ](../database-design/36-mapping-metadata-schema.md)（36）が所有する。
+> スナップショット静的ファイルの生成・配信詳細は [スナップショット/DocDB](./26-snapshot-and-document-db.md)（26）が所有する。
 
 ---
 
@@ -175,14 +175,16 @@ graph TD
 | `dim_location` | `tenant_id` + canonical_location_id | 新規拠点出現時 |
 | `dim_customer` | `tenant_id` + canonical_party_id（role=customer） | 新規顧客出現時 |
 | `dim_supplier` | `tenant_id` + canonical_party_id（role=supplier/manufacturer） | 新規仕入先出現時 |
-| `dim_region` | `tenant_id`（共有なら NULL 相当）+ region_code | 地域階層構築時（20 §5） |
-| `dim_date` | `date_key`（YYYYMMDD 整数、自然キー兼サロゲート） | 事前生成（§3.5） |
+| `dim_region` | `tenant_id`（共有参照は共有テナント sentinel `tenant_id=0`）+ region_code | 地域階層構築時（20 §5） |
+| `dim_date` | `tenant_id`（共有参照は共有テナント sentinel `tenant_id=0`）+ `date_key`（YYYYMMDD 整数、自然キー兼サロゲート） | 事前生成（§3.5） |
 
 **採番方式（35 で物理確定、本書は要求と手順を定義）:**
 
 - Redshift の `IDENTITY(1,1)` 列を第一候補とする。ただし Redshift の IDENTITY は**並列ロードで連番・単調性を保証しない**（スライスごとに歯抜けが出る）。分析上は「一意であればよい」ため許容するが、連番前提のロジックを書かない。
+  - **BIGSERIAL と IDENTITY の対応:** ブリーフ §9 が規定する「DWH のディメンションは `*_key BIGSERIAL` をサロゲート PK」は PostgreSQL ハウススタイルの表記であり、Redshift には `SERIAL`/`BIGSERIAL` 型が無いため、Redshift 実装では `BIGINT` 列 + `IDENTITY(1,1)` がその実質的対応物となる。逸脱ではなく物理方言の読み替えであり、物理型・開始値・エンコードの最終確定は 35 に委譲する。
 - テナント境界: サロゲートは**プラットフォーム全体で一意**（テナント跨ぎで衝突しない単一採番）。テナント分離は各行の `tenant_id`（+ 予約メンバーを除く）で担保する。DISTKEY/パーティション方針は §7.4 / 35。
 - 予約メンバー（§3.3）は採番前に固定値（`-1`,`-2`,`0`）で先行 INSERT し、IDENTITY レンジと衝突しないよう 35 の DDL 側で開始値を正数に設定する。
+- **共有ディメンションの `tenant_id`（ブリーフ §8 全 dim tenant_id 原則の充足）:** `dim_date`・`dim_region` のようにテナント横断で内容が共通の参照次元でも、ブリーフ §8「全 dim/fact は tenant_id を持つ」および §6/§9「テナントスコープ全テーブルに `tenant_id BIGINT NOT NULL`」を満たすため、**NULL は用いず共有テナント sentinel（`tenant_id=0`）を割り当てる**。`tenant_id=0` は予約テナント（`tenant` テーブルに sentinel 行を先行登録、37 と整合）で、共有参照データ専用に確保する。テナント固有の暦・地域粒度（会計期のテナント差 §12-4、動的地域粒度 §2）が必要な次元行は実 `tenant_id` で別途保持し、共有行（`tenant_id=0`）とクエリで束ねる。NULL tenant_id は NOT NULL 制約違反かつ RLS 述語（`tenant_id = current_setting('app.tenant_id')::bigint`）で選択不能になるため採用しない。物理制約と sentinel 行の DDL 確定は 35 に委譲する。
 
 ### 3.3 予約メンバー（unknown / not-applicable）— 早期到着ファクト対策
 
@@ -587,7 +589,7 @@ flowchart TD
 | `fact_sales` 等トランザクションファクト | `KEY(product_key)`（最大カーディナリティ結合キー）| 複合 `(tenant_id, date_key)` | 時間レンジ枝刈り + `dim_product` と co-locate |
 | `fact_inventory_snapshot` | `KEY(product_key)` | `(tenant_id, date_key, location_key)` | 締め日 + 拠点での枝刈り |
 
-- **テナント分離（ブリーフ §6）:** テナントは各行 `tenant_id` + SORTKEY 先頭で分離。DISTKEY を `tenant_id` にすると少数の巨大テナントで**データスキュー**が出るため、原則 DISTKEY は結合キー（`product_key`）、`tenant_id` は SORTKEY 先頭 + クエリ述語で枝刈りする。Silo テナント（大規模）は別 namespace 分離も選択肢（35 と確定）。
+- **テナント分離（ブリーフ §6/§8）:** テナントは各行 `tenant_id` + SORTKEY 先頭で分離。ブリーフ §8 の括弧書き「fact の `tenant_id`（Redshift DISTKEY/パーティション）で分離」は、**`tenant_id` を DISTKEY にすることを一意に指定する趣旨ではなく、「Redshift では DISTKEY/SORTKEY（ゾーンマップ）でテナントを物理分離・枝刈りする」という物理手段の総称**と読む。実際に DISTKEY を `tenant_id` にすると少数の巨大テナントで**データスキュー**（ノード間の行数偏り）が出るため、本書は原則 **DISTKEY = 結合キー（`product_key`, 最大カーディナリティ）／`tenant_id` = SORTKEY 先頭 + クエリ述語で枝刈り**でテナント分離を実現する方針を推奨する。Silo テナント（大規模）は別 namespace 分離も選択肢。この読み替えが妥当か、および DISTKEY/SORTKEY の物理最終確定は 35 / ADR に委ねる。
 - **ロード時最適化:** COPY は S3 Parquet から並列ロード、事前に SORTKEY 順へ整列した Parquet を出力すると VACUUM 負荷が減る。Redshift Serverless の自動 VACUUM/ANALYZE を前提とし、大量差分置換後は必要に応じ明示 ANALYZE。
 
 ### 7.5 パーティション方針
@@ -716,6 +718,7 @@ stateDiagram-v2
 | ANL-010 | リラン冪等性違反（差分置換不能・重複ロード検出） | リラン §9.3 | 22 |
 | MAP-001 | クロスウォーク未解決（app-local id に正準未確定） | サロゲート解決入力 | 20/36（参照） |
 | MAP-003 | 誤マージ split（canonical id 再採番→ファクト付け替え） | SCD2 駆動 §4.7/§7.2 | 20（参照） |
+| MAP-005 | 桁/型検証失敗（品番桁数・コード体系不正 → Invalid(-2) 送り） | サロゲート解決入力・予約メンバー §3.3 | 20/36（参照） |
 | ETL-001 | source_system/source_record_id 欠落 | 取込入力 | 21/36（参照） |
 | CMN-001 | テナントスコープ違反（tenant_id 不整合の変換） | 全処理 | 11/37（参照） |
 
@@ -740,7 +743,7 @@ stateDiagram-v2
 
 - [データベース設計: スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35） — 本書が変換対象とする `dim_*`/`fact_*` の**物理所有**（列・制約・DISTKEY/SORTKEY・テナント分離）。本書の物理最適化要求（§7.4）の確定先。
 - [詳細設計: Canonical / MDM / 名寄せ](./20-canonical-mdm-and-entity-resolution.md)（20） — 本書の入力であるゴールデンレコード・xref の生成、ゴールデン改定 → SCD2 駆動の上流契約（§4.7）の出所。
-- [詳細設計: 取込とマッピングパイプライン](./21-ingestion-mapping-pipeline.md)（21） — Raw/Staging・項目マッピング適用・`load_run`/watermark の実装。本書のステージング入力の供給元。
-- [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata.md)（36） — `mapping_rule`/`data_lineage`/`load_run`/`mapping_review` の物理所有。変換来歴・グレイン推定記録の格納先。
-- [詳細設計: スナップショット / DocDB](./26-snapshot-document-db.md)（26） — 事前集計静的ファイルの生成・版管理・CDN 配信・DocDB 読み取りモデル。本書の集計起動点（§8）の下流。
+- [詳細設計: 取込とマッピングパイプライン](./21-ingestion-and-mapping-pipeline.md)（21） — Raw/Staging・項目マッピング適用・`load_run`/watermark の実装。本書のステージング入力の供給元。
+- [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata-schema.md)（36） — `mapping_rule`/`data_lineage`/`load_run`/`mapping_review` の物理所有。変換来歴・グレイン推定記録の格納先。
+- [詳細設計: スナップショット / DocDB](./26-snapshot-and-document-db.md)（26） — 事前集計静的ファイルの生成・版管理・CDN 配信・DocDB 読み取りモデル。本書の集計起動点（§8）の下流。
 - [基本設計: 分析・可視化サービス](../basic-design/07-service-analytics.md)（07） — メトリクス/セマンティック層・加法性制約の消費者。本書のファクト加法性区分（§5.1）を利用する。

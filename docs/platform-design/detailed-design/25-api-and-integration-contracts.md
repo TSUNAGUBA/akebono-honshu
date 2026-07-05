@@ -29,14 +29,14 @@ API 規約（`/api/v1`・複数形 kebab-case・Firebase Bearer・RFC 7807 Probl
 | 区分 | 本書の扱い |
 |------|-----------|
 | **owns（権威的定義）** | API/連携コントラクトの**詳細規約**: バージョニング・命名・エンベロープ・認証認可・テナンシー解決・取込 I/F 契約・分析サービング契約・イベント封筒（envelope）・エラーコントラクト・後方互換ポリシー |
-| **参照（再定義しない）** | 個別業務 API の全列挙（各サービス基本設計 04/05/06/07/09 が所有）、テーブル DDL（DB 設計 30-38 が所有）、マルチテナント分離の非機能方針（[11 非機能/セキュリティ/テナンシー](../basic-design/11-nonfunctional-security-tenancy.md) が所有）、取込パイプラインの内部処理（[21 取込&マッピング](./21-ingestion-and-mapping-pipeline.md) が所有）、スナップショット/DocDB の物理設計（[26 スナップショット/DocDB] が所有） |
+| **参照（再定義しない）** | 個別業務 API の全列挙（各サービス基本設計 04/05/06/07/09 が所有）、テーブル DDL（DB 設計 30-38 が所有）、マルチテナント分離の非機能方針（[11 非機能/セキュリティ/テナンシー](../basic-design/11-nonfunctional-security-tenancy.md) が所有）、取込パイプラインの内部処理（[21 取込&マッピング](./21-ingestion-and-mapping-pipeline.md) が所有）、スナップショット/DocDB の物理設計（[26 スナップショット/DocDB](./26-snapshot-and-document-db.md) が所有） |
 
 > **SoT 宣言（本書が扱うデータの Source of Truth）:** 本書は API という**インターフェース契約**を所有し、データ自体の SoT は持たない。
 > API が参照 / 更新するデータの SoT はブリーフ §5 のデータストアカタログに従う。特に本書で重要なのは以下:
-> - **ユーザ業務情報 / 権限ロール** の SoT は RDS（Control Plane、`app_user`/`role`/`permission`、[37](../database-design/) 所有）。Firebase Custom Claims は**キャッシュ**であり、権限変更は RDS 先行 → Claims 後追いの順序を守る（後述 §3.4）。
-> - **テナント識別（tenant_id）** の SoT は RDS（`tenant`、[37] 所有）。JWT クレームはその写像。
-> - **分析メトリクス数値** の SoT は DWH（`fact_*`、[35] 所有）/ メトリクス定義（メタデータ DB）。サービング API はこれを読み取り専用で提供し、値を生成しない。
-> - **取込生データ** の SoT は**ソース側システム**。取込 API は Raw/Staging（S3、[21] 所有）への着地口であり、それ自体は SoT を作らない。
+> - **ユーザ業務情報 / 権限ロール** の SoT は RDS（Control Plane、`app_user`/`role`/`permission`、[37](../database-design/37-control-plane-backoffice-schema.md) 所有）。Firebase Custom Claims は**キャッシュ**であり、権限変更は RDS 先行 → Claims 後追いの順序を守る（後述 §3.4）。
+> - **テナント識別（tenant_id）** の SoT は RDS（`tenant`、[37](../database-design/37-control-plane-backoffice-schema.md) 所有）。JWT クレームはその写像。
+> - **分析メトリクス数値** の SoT は DWH（`fact_*`、[35](../database-design/35-star-schema-dwh.md) 所有）/ メトリクス定義（メタデータ DB）。サービング API はこれを読み取り専用で提供し、値を生成しない。
+> - **取込生データ** の SoT は**ソース側システム**。取込 API は Raw/Staging（S3、[21](./21-ingestion-and-mapping-pipeline.md) 所有）への着地口であり、それ自体は SoT を作らない。
 
 ---
 
@@ -101,7 +101,7 @@ flowchart LR
 | `meta.pagination` | コレクション時のみ付与 |
 
 > **時刻表現の統一:** プラットフォーム標準は UTC 保存 / テナントローカル表示（ブリーフ §9）。API はワイヤ上すべて **UTC（`Z` サフィックス付き RFC 3339）** で返し、業務日付は `date`（`YYYY-MM-DD`）で返す。
-> 継承実装の JST-naive `TIMESTAMP` はメーカー OLTP 移行時に TIMESTAMPTZ へ是正される（[32 メーカー OLTP] 参照）。API 層はこの差分を吸収し、常に UTC を返す。
+> 継承実装の JST-naive `TIMESTAMP` はメーカー OLTP 移行時に TIMESTAMPTZ へ是正される（[32 メーカー OLTP](../database-design/32-oltp-manufacturer-schema.md) 参照）。API 層はこの差分を吸収し、常に UTC を返す。
 
 ### 1.3 ページング / ソート / フィルタ
 
@@ -135,7 +135,7 @@ flowchart LR
 | 500 | サーバ内部エラー |
 | 503 | 依存停止（DB / DWH / Bedrock / S3 の一時不能）|
 
-> **他テナント秘匿:** テナント境界を越えたリソースへのアクセスは、権限有無に関わらず **404** を返す。403 は「存在するが権限なし」を示唆し情報漏洩となるため、テナント越境では使わない（§3.3、[11] のテナント境界方針に整合）。
+> **他テナント秘匿:** テナント境界を越えたリソースへのアクセスは、権限有無に関わらず **404** を返す。403 は「存在するが権限なし」を示唆し情報漏洩となるため、テナント越境では使わない（§3.3、[11](../basic-design/11-nonfunctional-security-tenancy.md) のテナント境界方針に整合）。
 
 ### 1.5 冪等性
 
@@ -189,7 +189,7 @@ sequenceDiagram
   MW->>MW: "1. 認証（Firebase JWT → principal）"
   MW->>MW: "2. テナント解決（claim ⇔ header 突合）"
   MW->>MW: "3. 認可（permission チェック）"
-  MW->>DB: "4. SET app.tenant_id = <claim>"
+  MW->>DB: "4. SET app.tenant_id = {claim値}"
   MW->>MW: "5. 監査コンテキスト確立（actor/tenant/request_id）"
   MW->>DB: "6. ハンドラ実行（RLS 有効なクエリ）"
   DB-->>MW: "テナントスコープの結果のみ"
@@ -220,7 +220,7 @@ sequenceDiagram
 
 ### 3.2 認可（権限モデル）
 
-権限モデルは **RBAC + パーミッションクレーム**。ロールは RDS（`role`/`permission`、[37] 所有）で定義し、ユーザの実効権限を Firebase Custom Claims に**キャッシュ**する。
+権限モデルは **RBAC + パーミッションクレーム**。ロールは RDS（`role`/`permission`、[37](../database-design/37-control-plane-backoffice-schema.md) 所有）で定義し、ユーザの実効権限を Firebase Custom Claims に**キャッシュ**する。
 
 ```jsonc
 // Firebase Custom Claims（デコード後の JWT ペイロード抜粋）
@@ -267,7 +267,7 @@ flowchart TD
 | テナント識別の唯一の源 | **JWT の `tenant_id` クレーム**（SoT: RDS `tenant`）。クライアントがボディ / クエリで tenant を指定しても無視 |
 | `X-Tenant-Id` ヘッダ | 任意。付与時はクレームと突合し、不一致は 403 TEN-002。マルチテナント管理者（クロステナント運用者）が明示的にコンテキスト切替する用途に限定し、その権限（`platform:cross_tenant`）を持つ場合のみ他テナント値を許可 |
 | Pooled / Silo | ブリーフ §6 のハイブリッド。Pooled は RLS、Silo はルーティング切替。**API 契約は両方式で不変**（クライアントは意識しない） |
-| DWH / 分析 | 分析サービング API も同じ tenant クレームで解決。Redshift 側は `tenant_id` 述語 + `dim_tenant` で分離（[35] 所有） |
+| DWH / 分析 | 分析サービング API も同じ tenant クレームで解決。Redshift 側は `tenant_id` 述語 + `dim_tenant` で分離（[35](../database-design/35-star-schema-dwh.md) 所有） |
 | 越境アクセス | 他テナントリソースは 404 で秘匿（§1.4） |
 
 ### 3.4 権限変更の同期パス（SoT 先行 → キャッシュ後追い）
@@ -347,8 +347,8 @@ sequenceDiagram
 | ストリーミング / Webhook | `POST /api/v1/ingest/events`（他社システムからの push）| 準リアルタイム連携 | `event_id`（送信側 UUID）|
 | コネクタ pull | Control Plane 登録の `connector` 設定に基づき SCIP 側が定期 pull | API/DB コネクタ | ウォーターマーク（増分キー）|
 
-> **コネクタ / データセット定義の SoT:** 取込を受け付ける前提となる `connector`/`connector_config`（[37] 所有）、
-> `source_system`/`source_dataset`/`source_field`（[36 マッピングメタデータ] 所有）は本書では**再定義せず参照**する。
+> **コネクタ / データセット定義の SoT:** 取込を受け付ける前提となる `connector`/`connector_config`（[37](../database-design/37-control-plane-backoffice-schema.md) 所有）、
+> `source_system`/`source_dataset`/`source_field`（[36 マッピングメタデータ](../database-design/36-mapping-metadata-schema.md) 所有）は本書では**再定義せず参照**する。
 > 取込 API はこれらの登録済みメタデータを参照して受入検証を行う。
 
 ### 5.2 取込リクエスト契約
@@ -384,10 +384,10 @@ sequenceDiagram
 
 | 契約項目 | 規約 |
 |---------|------|
-| 受入検証 | 同期では**軽量検証のみ**（コネクタ / データセット存在・フォーマット・サイズ）。スキーマ / DQ 検証は非同期（[21] のパイプラインが実施）|
+| 受入検証 | 同期では**軽量検証のみ**（コネクタ / データセット存在・フォーマット・サイズ）。スキーマ / DQ 検証は非同期（[21](./21-ingestion-and-mapping-pipeline.md) のパイプラインが実施）|
 | 冪等キー | `(tenant_id, connector_id, source_dataset_code, source_batch_id)` で重複取込を抑止。既登録は同一 `load_run_id` を返す（再送安全、CLAUDE.md 原則 2）|
 | 来歴保持 | Raw 着地時に `source_system`/`source_record_id`/`legacy_id` を保持（ブリーフ §9 来歴列）。SoT はソース側システム、Raw はリプレイ源泉 |
-| ステータス取得 | `GET /api/v1/ingest/load-runs/{id}` で取込ラン状態（受理→着地→変換→ロード）を照会。状態は `load_run`（[36] 所有）が SoT |
+| ステータス取得 | `GET /api/v1/ingest/load-runs/{id}` で取込ラン状態（受理→着地→変換→ロード）を照会。状態は `load_run`（[36](../database-design/36-mapping-metadata-schema.md) 所有）が SoT |
 | 非ブロッキング | 一部レコードの DQ 違反は取込全体を止めず、`rejected_count` + 隔離（quarantine）で部分成功を報告（CLAUDE.md 原則 4）|
 
 ### 5.3 取込ステータスモデル
@@ -435,7 +435,7 @@ stateDiagram-v2
 
 ## 6. 分析サービング API（Data Plane）
 
-分析サービングは**読み取り専用**で、DWH（`fact_*`/`dim_*`、[35] 所有）・メトリクス定義（メタデータ DB）・スナップショット（S3+CDN）・DocDB（DynamoDB）を提供する。**数値の SoT は DWH / メトリクス層であり、API はこれを生成しない**（ブリーフ §12 ガードレール: 数値は DWH から取得、LLM に生成させない）。
+分析サービングは**読み取り専用**で、DWH（`fact_*`/`dim_*`、[35](../database-design/35-star-schema-dwh.md) 所有）・メトリクス定義（メタデータ DB）・スナップショット（S3+CDN）・DocDB（DynamoDB）を提供する。**数値の SoT は DWH / メトリクス層であり、API はこれを生成しない**（ブリーフ §12 ガードレール: 数値は DWH から取得、LLM に生成させない）。
 
 ```mermaid
 flowchart LR
@@ -500,7 +500,7 @@ flowchart LR
 | 数値の権威 | `data.source`（fact テーブル）と `as_of`（ロード基準時刻）を必ず返し、数値の由来を明示。値は DWH の集計結果であり API は再計算しない |
 | 機微メトリクス | `margin_amount`/`cost_amount` 等は権限に応じ `masked=true`（§3.5）|
 | テナント境界 | tenant クレームで解決、Redshift 述語 + `dim_tenant` で分離。`filter` で他テナント指定不可 |
-| 地域動的粒度 | `region.prefecture` / `region.municipality` はテナント商圏規模に応じ切替（ブリーフ §7、[20] 所有の Region 階層を参照）|
+| 地域動的粒度 | `region.prefecture` / `region.municipality` はテナント商圏規模に応じ切替（ブリーフ §7、[20](./20-canonical-mdm-and-entity-resolution.md) 所有の Region 階層を参照）|
 
 ### 6.2 スナップショット取得
 
@@ -510,12 +510,12 @@ flowchart LR
 |---------|------|
 | 応答 | 直接 CloudFront URL（署名付き、テナントスコープ）へ 302、または JSON 本文で返す。大容量は署名 URL 方式 |
 | 鮮度 | `meta.as_of`（生成時刻）を返す。派生データ（SoT は DWH）であることを明示 |
-| 再生成 | `POST /api/v1/analytics/snapshots/{key}/refresh`（202、`Idempotency-Key` 必須）でジョブ登録。物理設計・生成ロジックは [26 スナップショット/DocDB] が所有 |
+| 再生成 | `POST /api/v1/analytics/snapshots/{key}/refresh`（202、`Idempotency-Key` 必須）でジョブ登録。物理設計・生成ロジックは [26 スナップショット/DocDB](./26-snapshot-and-document-db.md) が所有 |
 | SoT | スナップショットは**派生 / キャッシュ**。SoT は DWH。復元不能データは持たせない（ブリーフ §5）|
 
 ### 6.3 DocDB 読み取りモデル
 
-`GET /api/v1/analytics/read-models/{model}/{id}` — DynamoDB の柔軟属性 / 読み取りモデル / スナップショットメタを取得（[26] / [38] が形状を所有）。
+`GET /api/v1/analytics/read-models/{model}/{id}` — DynamoDB の柔軟属性 / 読み取りモデル / スナップショットメタを取得（[26](./26-snapshot-and-document-db.md) / [38](../database-design/38-ai-vector-knowledge-schema.md) が形状を所有）。
 
 | 用途区分 | SoT | API の扱い |
 |---------|-----|-----------|
@@ -548,7 +548,7 @@ flowchart LR
 
 | フィールド | 規約 |
 |-----------|------|
-| `event_type` | `<domain>.<entity>.<action>` の 3 階層。domain はブリーフ §10 の接頭辞領域に対応（retail/wms/analytics/...） |
+| `event_type` | `<domain>.<entity>.<action>` の 3 階層。domain は**業務ドメイン**（`sales`/`inventory`/`purchase_order`/`shipment`/`mapping`/`tenant`/`canonical` 等、§7.2 の実例参照）を表す。これはブリーフ §10 の**エラーコード接頭辞レジストリ**（RTL/WMS/ANL 等）とは**別軸**であり、両者は 1:1 対応しない（イベント domain は業務概念単位、エラー接頭辞はサービス / ドメイン領域単位）|
 | `tenant_id` | 全イベント必須。consumer はテナントスコープを厳守（RAG 検索含む）|
 | `event_version` | スキーマ進化に備えた版。破壊的変更は `event_type` を新設 or version 増分（§8）|
 | `sensitivity` | 機微イベントは機微値をマスク / 参照 ID 化してから発行（ブリーフ §12）|
@@ -561,9 +561,9 @@ flowchart LR
 | `inventory.snapshot.captured` | WMS / メーカー OLTP | Data Plane | 在庫スナップショットの fact 化 |
 | `purchase_order.created` | メーカー OLTP | Data Plane, 通知 | 発注 fact 化 |
 | `shipment.completed` | WMS OLTP | Data Plane, 荷主請求 | 出荷 fact・請求連携 |
-| `mapping.resolved` | Control Plane（マッピング）| 取込パイプライン | 未マッピング解決の再開トリガ（[21]）|
+| `mapping.resolved` | Control Plane（マッピング）| 取込パイプライン | 未マッピング解決の再開トリガ（[21](./21-ingestion-and-mapping-pipeline.md)）|
 | `tenant.permission.changed` | Control Plane | 各 OLTP | Claims 再同期トリガ（§3.4）|
-| `canonical.entity.merged` | MDM | DWH, DocDB | 名寄せ結果の SCD2 反映（[20]/[22]）|
+| `canonical.entity.merged` | MDM | DWH, DocDB | 名寄せ結果の SCD2 反映（[20](./20-canonical-mdm-and-entity-resolution.md)/[22](./22-star-schema-transformation.md)）|
 
 ### 7.3 同期 / 再同期パス
 
@@ -656,7 +656,7 @@ flowchart TD
 | `ANL-002` | 422 | クエリ制約違反（軸数 / 期間範囲 / limit 超過）| §6.1 |
 | `ANL-003` | 404 | スナップショット未存在 / 未生成 | §6.2 |
 | `ANL-004` | 503 | DWH 一時不能（Redshift 起動待ち等）| §6 |
-| `MAP-001` | 409 | 未マッピング項目により変換保留（mapping_required）| 取込ステータス（§5.3、[21] 所有の詳細）|
+| `MAP-001` | 409 | 未マッピング項目により変換保留（mapping_required）| 取込ステータス（§5.3、[21](./21-ingestion-and-mapping-pipeline.md) 所有の詳細）|
 
 > 認証系（AUTH）・業務系（PROD/ORDER/MASTER/PRICE/IMAGE/EXPORT/USR）等の継承コードは各サービス設計 / 継承実装が所有。本書はそれらを**参照**する。
 
@@ -929,7 +929,7 @@ paths:
 | [nonfunctional-security-tenancy](../basic-design/11-nonfunctional-security-tenancy.md) | マルチテナント分離・セキュリティ・テナント境界の非機能方針（本書の認証認可 / テナンシーの上位方針） |
 | [ingestion-mapping-pipeline](./21-ingestion-and-mapping-pipeline.md) | 取込ステータス遷移・DQ・冪等・リプレイの内部詳細（本書は外部契約のみ） |
 | [star-schema-transformation](./22-star-schema-transformation.md) | fact/dim 変換（メトリクスクエリが読む対象の生成） |
-| [snapshot-document-db]（26） | スナップショット / DocDB 読み取りモデルの物理設計 |
-| [control-plane-backoffice-schema]（37） | tenant/app_user/role/permission/connector 等のテーブル所有（本書は参照） |
+| [snapshot-document-db](./26-snapshot-and-document-db.md) | スナップショット / DocDB 読み取りモデルの物理設計 |
+| [control-plane-backoffice-schema](../database-design/37-control-plane-backoffice-schema.md) | tenant/app_user/role/permission/connector 等のテーブル所有（本書は参照） |
 
-> **参照テーブル（本書は再定義しない）:** `tenant`/`app_user`/`role`/`permission`/`connector`/`connector_config`（[37] 所有）、`source_system`/`source_dataset`/`source_field`/`load_run`/`mapping_rule`（[36] 所有）、`fact_*`/`dim_*`（[35] 所有）、`canonical_*`/`region`（[34] 所有）。
+> **参照テーブル（本書は再定義しない）:** `tenant`/`app_user`/`role`/`permission`/`connector`/`connector_config`（[37](../database-design/37-control-plane-backoffice-schema.md) 所有）、`source_system`/`source_dataset`/`source_field`/`load_run`/`mapping_rule`（[36](../database-design/36-mapping-metadata-schema.md) 所有）、`fact_*`/`dim_*`（[35](../database-design/35-star-schema-dwh.md) 所有）、`canonical_*`/`region`（[34](../database-design/34-mdm-canonical-schema.md) 所有）。

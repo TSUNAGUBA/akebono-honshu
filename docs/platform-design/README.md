@@ -5,7 +5,7 @@ category: overview
 version: 0.1.0
 status: draft
 purpose: SCIP プラットフォーム設計ドキュメント群の索引・読み方・全体マップを提供する
-related: [glossary, 01-concept, 02-architecture, 03-canonical-domain, 04-retail-service, 05-manufacturer-service, 06-wms-service, 07-analytics-visualization, 08-decision-support, 09-back-office, 10-data-integration, 11-nfr-security-tenancy, 12-adr, 20-canonical-mdm, 21-ingestion-mapping, 22-star-schema-transform, 23-ai-rag-vector, 24-ai-agents, 25-api-contract, 26-snapshot-docdb, 27-si-customization, 30-schema-strategy, 31-retail-oltp, 32-manufacturer-oltp, 33-wms-oltp, 34-mdm-canonical, 35-star-schema-dwh, 36-mapping-metadata, 37-control-plane, 38-ai-vector-knowledge]
+related: [glossary, concept-vision, overall-architecture, canonical-domain-model, service-retail, service-manufacturer, service-wms, service-analytics, decision-support-ai, service-backoffice, data-integration-mapping, nonfunctional-security-tenancy, adr, canonical-mdm-detail, ingestion-mapping-pipeline, star-schema-transformation, ai-rag-vectorization, ai-agent-virtual-company, api-integration-contracts, snapshot-document-db, si-customization-provisioning, schema-strategy-sot, oltp-retail-schema, oltp-manufacturer-schema, oltp-wms-schema, mdm-canonical-schema, star-schema-dwh, mapping-metadata-schema, control-plane-backoffice-schema, ai-vector-knowledge-schema]
 ---
 
 # SCIP プラットフォーム設計ドキュメント 索引
@@ -56,45 +56,45 @@ related: [glossary, 01-concept, 02-architecture, 03-canonical-domain, 04-retail-
 
 | # | document_id | パス | 目的 |
 |---|-------------|------|------|
-| 01 | `01-concept` | [`basic-design/01-concept-and-overview.md`](./basic-design/01-concept-and-overview.md) | 構想と全体像。ビジョン・スコープ・ステークホルダー・提供価値 |
-| 02 | `02-architecture` | [`basic-design/02-overall-architecture.md`](./basic-design/02-overall-architecture.md) | 全体アーキテクチャ。5 プレーン構成・技術スタック・AWS 配置 |
-| 03 | `03-canonical-domain` | [`basic-design/03-canonical-domain-model.md`](./basic-design/03-canonical-domain-model.md) | 正準ドメインモデル（概念）。Party/Product/Location/Region 等のユビキタス言語 |
-| 04 | `04-retail-service` | [`basic-design/04-retail-service.md`](./basic-design/04-retail-service.md) | 小売（クロスリテーラー）サービスの基本設計 |
-| 05 | `05-manufacturer-service` | [`basic-design/05-manufacturer-service.md`](./basic-design/05-manufacturer-service.md) | メーカーサービスの基本設計（Honshu 一般化） |
-| 06 | `06-wms-service` | [`basic-design/06-wms.md`](./basic-design/06-wms.md) | WMS（倉庫管理）サービスの基本設計 |
-| 07 | `07-analytics-visualization` | [`basic-design/07-analytics-visualization.md`](./basic-design/07-analytics-visualization.md) | 分析・可視化プラットフォームの基本設計 |
-| 08 | `08-decision-support` | [`basic-design/08-decision-support-ai-agents.md`](./basic-design/08-decision-support-ai-agents.md) | 意思決定支援 / AI エージェント（バーチャルカンパニー）の基本設計 |
-| 09 | `09-back-office` | [`basic-design/09-back-office.md`](./basic-design/09-back-office.md) | バックオフィス（コントロールプレーン）の基本設計 |
-| 10 | `10-data-integration` | [`basic-design/10-data-integration-mapping.md`](./basic-design/10-data-integration-mapping.md) | データ連携とマッピングの基本設計（他社アプリ取込） |
-| 11 | `11-nfr-security-tenancy` | [`basic-design/11-nfr-security-tenancy.md`](./basic-design/11-nfr-security-tenancy.md) | 非機能 / セキュリティ / マルチテナンシーの基本設計 |
-| 12 | `12-adr` | [`basic-design/12-adr.md`](./basic-design/12-adr.md) | アーキテクチャ決定記録（ADR）。技術選定の根拠 |
+| 01 | `concept-vision` | [`basic-design/01-concept-and-vision.md`](./basic-design/01-concept-and-vision.md) | 構想と全体像。ビジョン・スコープ・ステークホルダー・提供価値 |
+| 02 | `overall-architecture` | [`basic-design/02-overall-architecture.md`](./basic-design/02-overall-architecture.md) | 全体アーキテクチャ。5 プレーン構成・技術スタック・AWS 配置 |
+| 03 | `canonical-domain-model` | [`basic-design/03-canonical-domain-model.md`](./basic-design/03-canonical-domain-model.md) | 正準ドメインモデル（概念）。Party/Product/Location/Region 等のユビキタス言語 |
+| 04 | `service-retail` | [`basic-design/04-service-retail.md`](./basic-design/04-service-retail.md) | 小売（クロスリテーラー）サービスの基本設計 |
+| 05 | `service-manufacturer` | [`basic-design/05-service-manufacturer.md`](./basic-design/05-service-manufacturer.md) | メーカーサービスの基本設計（Honshu 一般化） |
+| 06 | `service-wms` | [`basic-design/06-service-wms.md`](./basic-design/06-service-wms.md) | WMS（倉庫管理）サービスの基本設計 |
+| 07 | `service-analytics` | [`basic-design/07-service-analytics.md`](./basic-design/07-service-analytics.md) | 分析・可視化プラットフォームの基本設計 |
+| 08 | `decision-support-ai` | [`basic-design/08-service-decision-support-ai.md`](./basic-design/08-service-decision-support-ai.md) | 意思決定支援 / AI エージェント（バーチャルカンパニー）の基本設計 |
+| 09 | `service-backoffice` | [`basic-design/09-service-backoffice.md`](./basic-design/09-service-backoffice.md) | バックオフィス（コントロールプレーン）の基本設計 |
+| 10 | `data-integration-mapping` | [`basic-design/10-data-integration-and-mapping.md`](./basic-design/10-data-integration-and-mapping.md) | データ連携とマッピングの基本設計（他社アプリ取込） |
+| 11 | `nonfunctional-security-tenancy` | [`basic-design/11-nonfunctional-security-tenancy.md`](./basic-design/11-nonfunctional-security-tenancy.md) | 非機能 / セキュリティ / マルチテナンシーの基本設計 |
+| 12 | `adr` | [`basic-design/12-architecture-decision-records.md`](./basic-design/12-architecture-decision-records.md) | アーキテクチャ決定記録（ADR）。技術選定の根拠 |
 
 ### 2.3 detailed-design（詳細設計 / 8 本）
 
 | # | document_id | パス | 目的 |
 |---|-------------|------|------|
-| 20 | `20-canonical-mdm` | [`detailed-design/20-canonical-mdm.md`](./detailed-design/20-canonical-mdm.md) | Canonical / MDM / 名寄せ（マッチング/マージ/ゴールデンレコード）の詳細設計 |
-| 21 | `21-ingestion-mapping` | [`detailed-design/21-ingestion-mapping-pipeline.md`](./detailed-design/21-ingestion-mapping-pipeline.md) | 取込とマッピングパイプライン（Raw → Staging → Canonical）の詳細設計 |
-| 22 | `22-star-schema-transform` | [`detailed-design/22-star-schema-transformation.md`](./detailed-design/22-star-schema-transformation.md) | スタースキーマ変換（Canonical → dim/fact、SCD、ロード）の詳細設計 |
-| 23 | `23-ai-rag-vector` | [`detailed-design/23-ai-rag-vectorization.md`](./detailed-design/23-ai-rag-vectorization.md) | AI / RAG / ベクター化パイプラインの詳細設計 |
-| 24 | `24-ai-agents` | [`detailed-design/24-ai-agents-virtual-company.md`](./detailed-design/24-ai-agents-virtual-company.md) | AI エージェント / バーチャルカンパニー（オーケストレーション/HITL）の詳細設計 |
-| 25 | `25-api-contract` | [`detailed-design/25-api-integration-contract.md`](./detailed-design/25-api-integration-contract.md) | API / 連携コントラクト（REST/OpenAPI、取込 I/F、サービング）の詳細設計 |
-| 26 | `26-snapshot-docdb` | [`detailed-design/26-snapshot-docdb.md`](./detailed-design/26-snapshot-docdb.md) | スナップショット / DocDB（事前集計静的ファイル、読み取りモデル）の詳細設計 |
-| 27 | `27-si-customization` | [`detailed-design/27-si-customization-provisioning.md`](./detailed-design/27-si-customization-provisioning.md) | SI カスタマイズ / プロビジョニング（フィーチャーフラグ/拡張項目/テナント作成）の詳細設計 |
+| 20 | `canonical-mdm-detail` | [`detailed-design/20-canonical-mdm-and-entity-resolution.md`](./detailed-design/20-canonical-mdm-and-entity-resolution.md) | Canonical / MDM / 名寄せ（マッチング/マージ/ゴールデンレコード）の詳細設計 |
+| 21 | `ingestion-mapping-pipeline` | [`detailed-design/21-ingestion-and-mapping-pipeline.md`](./detailed-design/21-ingestion-and-mapping-pipeline.md) | 取込とマッピングパイプライン（Raw → Staging → Canonical）の詳細設計 |
+| 22 | `star-schema-transformation` | [`detailed-design/22-star-schema-transformation.md`](./detailed-design/22-star-schema-transformation.md) | スタースキーマ変換（Canonical → dim/fact、SCD、ロード）の詳細設計 |
+| 23 | `ai-rag-vectorization` | [`detailed-design/23-ai-rag-and-vectorization.md`](./detailed-design/23-ai-rag-and-vectorization.md) | AI / RAG / ベクター化パイプラインの詳細設計 |
+| 24 | `ai-agent-virtual-company` | [`detailed-design/24-ai-agent-and-virtual-company.md`](./detailed-design/24-ai-agent-and-virtual-company.md) | AI エージェント / バーチャルカンパニー（オーケストレーション/HITL）の詳細設計 |
+| 25 | `api-integration-contracts` | [`detailed-design/25-api-and-integration-contracts.md`](./detailed-design/25-api-and-integration-contracts.md) | API / 連携コントラクト（REST/OpenAPI、取込 I/F、サービング）の詳細設計 |
+| 26 | `snapshot-document-db` | [`detailed-design/26-snapshot-and-document-db.md`](./detailed-design/26-snapshot-and-document-db.md) | スナップショット / DocDB（事前集計静的ファイル、読み取りモデル）の詳細設計 |
+| 27 | `si-customization-provisioning` | [`detailed-design/27-si-customization-and-provisioning.md`](./detailed-design/27-si-customization-and-provisioning.md) | SI カスタマイズ / プロビジョニング（フィーチャーフラグ/拡張項目/テナント作成）の詳細設計 |
 
 ### 2.4 database-design（DB スキーマ設計 / 9 本）
 
 | # | document_id | パス | 目的 |
 |---|-------------|------|------|
-| 30 | `30-schema-strategy` | [`database-design/30-schema-strategy-sot.md`](./database-design/30-schema-strategy-sot.md) | スキーマ戦略と SoT。命名/DDL 規約、RLS、TZ 方針の総則 |
-| 31 | `31-retail-oltp` | [`database-design/31-retail-oltp.md`](./database-design/31-retail-oltp.md) | 小売 OLTP スキーマ（`sales_transaction`、`store`/`ec_channel`、`retail_inventory` 等） |
-| 32 | `32-manufacturer-oltp` | [`database-design/32-manufacturer-oltp.md`](./database-design/32-manufacturer-oltp.md) | メーカー OLTP スキーマ（Honshu 18 マスタ + txn に tenant_id 導入） |
-| 33 | `33-wms-oltp` | [`database-design/33-wms-oltp.md`](./database-design/33-wms-oltp.md) | WMS OLTP スキーマ（`sku_master`、bin 在庫、入出庫、荷主請求） |
-| 34 | `34-mdm-canonical` | [`database-design/34-mdm-canonical.md`](./database-design/34-mdm-canonical.md) | MDM / Canonical スキーマ（`canonical_party/product/sku/location`、`region`、各 xref） |
-| 35 | `35-star-schema-dwh` | [`database-design/35-star-schema-dwh.md`](./database-design/35-star-schema-dwh.md) | スタースキーマ DWH（全 `dim_*`/`fact_*`、Redshift DISTKEY/SORTKEY） |
-| 36 | `36-mapping-metadata` | [`database-design/36-mapping-metadata.md`](./database-design/36-mapping-metadata.md) | マッピングメタデータ（`source_*`、`mapping_rule`、`data_lineage`、`load_run`） |
-| 37 | `37-control-plane` | [`database-design/37-control-plane-backoffice.md`](./database-design/37-control-plane-backoffice.md) | コントロールプレーン / バックオフィス（`tenant`、`app_user`、`contract`、`audit_logs` 等） |
-| 38 | `38-ai-vector-knowledge` | [`database-design/38-ai-vector-knowledge.md`](./database-design/38-ai-vector-knowledge.md) | AI / ベクター / ナレッジ（`kb_*`、`agent_*`、`insight`、DocDB アイテム形状） |
+| 30 | `schema-strategy-sot` | [`database-design/30-schema-strategy-and-sot.md`](./database-design/30-schema-strategy-and-sot.md) | スキーマ戦略と SoT。命名/DDL 規約、RLS、TZ 方針の総則 |
+| 31 | `oltp-retail-schema` | [`database-design/31-oltp-retail-schema.md`](./database-design/31-oltp-retail-schema.md) | 小売 OLTP スキーマ（`sales_transaction`、`store`/`ec_channel`、`retail_inventory` 等） |
+| 32 | `oltp-manufacturer-schema` | [`database-design/32-oltp-manufacturer-schema.md`](./database-design/32-oltp-manufacturer-schema.md) | メーカー OLTP スキーマ（Honshu 18 マスタ + txn に tenant_id 導入） |
+| 33 | `oltp-wms-schema` | [`database-design/33-oltp-wms-schema.md`](./database-design/33-oltp-wms-schema.md) | WMS OLTP スキーマ（`sku_master`、bin 在庫、入出庫、荷主請求） |
+| 34 | `mdm-canonical-schema` | [`database-design/34-mdm-canonical-schema.md`](./database-design/34-mdm-canonical-schema.md) | MDM / Canonical スキーマ（`canonical_party/product/sku/location`、`region`、各 xref） |
+| 35 | `star-schema-dwh` | [`database-design/35-star-schema-dwh.md`](./database-design/35-star-schema-dwh.md) | スタースキーマ DWH（全 `dim_*`/`fact_*`、Redshift DISTKEY/SORTKEY） |
+| 36 | `mapping-metadata-schema` | [`database-design/36-mapping-metadata-schema.md`](./database-design/36-mapping-metadata-schema.md) | マッピングメタデータ（`source_*`、`mapping_rule`、`data_lineage`、`load_run`） |
+| 37 | `control-plane-backoffice-schema` | [`database-design/37-control-plane-backoffice-schema.md`](./database-design/37-control-plane-backoffice-schema.md) | コントロールプレーン / バックオフィス（`tenant`、`app_user`、`contract`、`audit_logs` 等） |
+| 38 | `ai-vector-knowledge-schema` | [`database-design/38-ai-vector-knowledge-schema.md`](./database-design/38-ai-vector-knowledge-schema.md) | AI / ベクター / ナレッジ（`kb_*`、`agent_*`、`insight`、DocDB アイテム形状） |
 
 > **合計 = 2 (overview) + 12 (basic-design) + 8 (detailed-design) + 9 (database-design) = 31 本**（README を含む）。
 
@@ -156,9 +156,10 @@ graph TD
     subgraph INT["Intelligence Plane"]
         D23["23 AI/RAG/ベクター化"]
         D24["24 AIエージェント"]
-        D25["25 API/連携コントラクト"]
         D38["38 AI/ベクター/ナレッジDB"]
     end
+
+    D25["25 API/連携コントラクト（横断）"]
 
     RM --> GL
     GL --> FND
@@ -279,11 +280,11 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> draft
-    draft --> review: "内容確定"
-    review --> draft: "指摘差戻し"
-    review --> approved: "オペレーター承認"
-    approved --> baselined: "凍結"
-    baselined --> draft: "改版着手"
+    draft --> review: 内容確定
+    review --> draft: 指摘差戻し
+    review --> approved: オペレーター承認
+    approved --> baselined: 凍結
+    baselined --> draft: 改版着手
 ```
 
 ---
@@ -307,7 +308,7 @@ stateDiagram-v2
 
 - [`00-glossary.md`](./00-glossary.md) — 用語集 / ユビキタス言語（正準エンティティ名の統一定義）
 - [`basic-design/02-overall-architecture.md`](./basic-design/02-overall-architecture.md) — 全体アーキテクチャ（5 プレーン詳細）
-- [`basic-design/11-nfr-security-tenancy.md`](./basic-design/11-nfr-security-tenancy.md) — 非機能 / セキュリティ / マルチテナンシー
-- [`basic-design/12-adr.md`](./basic-design/12-adr.md) — アーキテクチャ決定記録（技術選定の根拠）
-- [`database-design/30-schema-strategy-sot.md`](./database-design/30-schema-strategy-sot.md) — スキーマ戦略と SoT（命名/DDL 規約の総則）
+- [`basic-design/11-nonfunctional-security-tenancy.md`](./basic-design/11-nonfunctional-security-tenancy.md) — 非機能 / セキュリティ / マルチテナンシー
+- [`basic-design/12-architecture-decision-records.md`](./basic-design/12-architecture-decision-records.md) — アーキテクチャ決定記録（技術選定の根拠）
+- [`database-design/30-schema-strategy-and-sot.md`](./database-design/30-schema-strategy-and-sot.md) — スキーマ戦略と SoT（命名/DDL 規約の総則）
 - 全ドキュメントの一覧は §2 ドキュメントマップを参照

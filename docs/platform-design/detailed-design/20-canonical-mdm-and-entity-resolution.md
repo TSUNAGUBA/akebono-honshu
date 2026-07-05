@@ -5,7 +5,7 @@ category: detailed-design
 version: 0.1.0
 status: draft
 purpose: 正準データモデルの詳細・エンティティ解決(名寄せ)・ゴールデンレコード生成・地域動的粒度階層・商品正準化・MDM運用フローを実装レベルで定義する
-related: [mdm-canonical-schema, ingestion-mapping-pipeline, canonical-domain-model, star-schema-transformation]
+related: [mdm-canonical-schema, ingestion-mapping-pipeline, canonical-domain-model, star-schema-transformation, mapping-metadata, star-schema-dwh]
 ---
 
 # 詳細設計: Canonical / MDM / 名寄せ
@@ -27,7 +27,7 @@ related: [mdm-canonical-schema, ingestion-mapping-pipeline, canonical-domain-mod
 > `canonical_sku`, `product_category`, `region`, `uom`, `currency`, および `party_xref`/`product_xref`/`sku_xref`/`location_xref`）を
 > **参照するのみで再定義しない**。概念・論理モデルは [正準ドメインモデル](../basic-design/03-canonical-domain-model.md)（03）が所有し、
 > 本書はその状態遷移（03 §10.1）を実装アルゴリズムへ展開する。マッピングメタデータ（`mapping_rule`, `mapping_review`,
-> `load_run`, `data_lineage` 等）は [マッピングメタデータ](../database-design/36-mapping-metadata.md)（36）が所有する。
+> `load_run`, `data_lineage` 等）は [マッピングメタデータ](../database-design/36-mapping-metadata-schema.md)（36）が所有する。
 
 ---
 
@@ -56,7 +56,7 @@ SCIP は「自社アプリ（小売/メーカー/倉庫）の利用」と「他�
 ### 1.3 スコープ外（他ドキュメントへ委譲）
 
 - **物理 DDL・索引・RLS:** 34。本書のロジックが要求する索引（ブロッキングキー索引等）は「要求仕様」として提示し、実 DDL は 34 が確定する。
-- **取込・ステージング・項目マッピング適用（Raw→Canonical の ETL 実行基盤）:** [取込とマッピングパイプライン](../detailed-design/21-ingestion-mapping-pipeline.md)（21）と 36。本書は「名寄せがパイプラインのどのステージで起動されるか」を定義する。
+- **取込・ステージング・項目マッピング適用（Raw→Canonical の ETL 実行基盤）:** [取込とマッピングパイプライン](./21-ingestion-and-mapping-pipeline.md)（21）と 36。本書は「名寄せがパイプラインのどのステージで起動されるか」を定義する。
 - **Canonical→dim_* のスタースキーマ変換:** [スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22）。ゴールデンレコードの改定が `dim_*` の SCD2 をどう駆動するかの**契約**のみ本書で示す。
 
 ---
@@ -162,17 +162,17 @@ app-local レコードが正準実体へ解決されるまでの状態。03 §10
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Unresolved: "取込直後（xref 未登録）"
-    Unresolved --> Candidate: "ブロッキングで候補検出"
-    Candidate --> AutoResolved: "決定的一致 or 高スコア（§4.5）"
-    Candidate --> PendingReview: "曖昧帯・人的確認要"
-    Candidate --> NewCanonical: "候補なし・低スコア（新規採番）"
-    PendingReview --> Resolved: "オペレータ承認（36 mapping_review）"
-    PendingReview --> NewCanonical: "別実体と判定"
+    [*] --> Unresolved: 取込直後（xref 未登録）
+    Unresolved --> Candidate: ブロッキングで候補検出
+    Candidate --> AutoResolved: 決定的一致 or 高スコア（§4.5）
+    Candidate --> PendingReview: 曖昧帯・人的確認要
+    Candidate --> NewCanonical: 候補なし・低スコア（新規採番）
+    PendingReview --> Resolved: オペレータ承認（36 mapping_review）
+    PendingReview --> NewCanonical: 別実体と判定
     AutoResolved --> Resolved
     NewCanonical --> Resolved
-    Resolved --> Split: "誤マージ是正（xref無効化 + 再採番）"
-    Split --> Unresolved: "再名寄せへ"
+    Resolved --> Split: 誤マージ是正（xref無効化 + 再採番）
+    Split --> Unresolved: 再名寄せへ
     Resolved --> [*]
 ```
 
@@ -272,7 +272,8 @@ flowchart LR
     S --> AGG["§4.4.2 の合成スコアへ 重み合算"]
 ```
 
-- **ガードレール（ブリーフ §12）:** 埋め込み検索は**テナントスコープ厳守**。ベクター格納は 38（AI/ベクター/ナレッジ）所有の `kb_embedding`(pgvector) を名寄せ用途に流用せず、名寄せ専用の埋め込みインデックスを別管理とする（用途混在を避ける。未決事項 §10-4）。
+- **ガードレール（ブリーフ §12）:** 埋め込み検索は**テナントスコープ厳守**。RAG 用途の `kb_embedding`(pgvector) を名寄せ用途に流用せず、名寄せ専用の埋め込みインデックスを別管理とする（用途混在を避ける。共用/分離の最終決定は未決事項 §10-4）。
+- **名寄せ用埋め込みインデックスの物理所有:** 分離採用時も、名寄せ専用の埋め込み（ベクター物理格納）の**物理所有は 38（AI/ベクター/ナレッジ）**に置き（`kb_embedding` と同じ pgvector 基盤上に別テーブル/別コレクションとして仮置き。運用集約の観点。代替として 23 側で管理する選択肢も §10-4 で併記）、テーブル所有マップ（ブリーフ §14）の欠落を作らない。本書は名寄せに必要な**論理要件**（テナントスコープ、モデル ID/バージョンの追跡、コサイン類似の一信号としての利用）を提示し、物理スキーマは 38（分離時）を参照する。**34 所有の正準列（`canonical_*`）とは混線させない**（名寄せ用ベクターはゴールデン属性ではなく、正準実体の物理列に埋め込みを持たせない）。
 - **決定は数値で、生成は AI に委ねない:** LLM に「同一か否か」を**最終判定させない**。埋め込みは類似度スコアの一信号にとどめ、閾値判定（§4.5）は決定的な数値ルールで行う。ハルシネーション抑制の原則（ブリーフ §12）に従う。
 - **AI 支援の可監査性:** `match_method=2`（AI 支援）で記録し、埋め込みモデル ID・バージョンを `match_run_id` 経由で追跡する。
 
@@ -390,7 +391,7 @@ flowchart TD
     R -->|"全国・少店舗<br/>広域メーカー"| L1["既定 level=1 prefecture"]
     R -->|"地域チェーン<br/>中規模小売"| L2["既定 level=2 municipality"]
     R -->|"高密度出店<br/>大規模小売/EC"| L3["既定 level=3 mesh"]
-    L1 & L2 & L3 --> AGG["dim_region は全 level 保持<br/>クエリで level ≤ n に roll-up（35）"]
+    L1 & L2 & L3 --> AGG["region（34）は mesh まで保持<br/>DWH 反映粒度と mesh の扱いは 35/22 が確定"]
 ```
 
 | 商圏規模プロファイル | 既定分析粒度 | 判定根拠（例） |
@@ -401,7 +402,8 @@ flowchart TD
 
 - **プロファイルの保持:** テナントの既定粒度は Control Plane（37）のテナント設定 or SI カスタマイズ（27）で保持する（本書は切替ロジックの契約を定義、値の保管は 37/27）。
 - **粒度の非破壊性:** 既定粒度を下げても（prefecture へ）、mesh データを削除しない。将来の規模拡大で再度深掘りできる（CLAUDE.md 原則2/7: データ保護・下位互換）。
-- **roll-up は DWH 側:** 実際の集計 roll-up は `dim_region` の階層属性（35）とメトリクス層で行う。本書は「動的粒度を実現する階層構造」を保証する。
+- **roll-up は DWH 側:** 実際の集計 roll-up は `dim_region` の階層属性（35）とメトリクス層で行う。本書は「動的粒度を実現する階層構造」を正準側 `region`（34）で保証するにとどめる。
+- **dim_region の粒度範囲は 35 が SoT:** ブリーフ §8 のスタースキーマ・カタログでは `dim_region` は `country/prefecture/municipality`（動的粒度）と定義され、**mesh（level=3）は現時点で `dim_region` の対象外**である。したがって「正準 `region` が mesh まで保持する」ことと「`dim_region` が mesh 行を保持する」ことは同一ではない。大規模小売の mesh 粒度分析を DWH 側でどう成立させるか（`dim_region` に mesh を含めるか、別次元/別テーブルで扱うか）は **35（`dim_region` 所有）/ 22（変換契約）が確定**する。本書は「正準 `region` が mesh まで動的粒度を保持する」論理要件を提示するのみで、`dim_region` の粒度範囲を断定しない（未決事項 §10-2 の地域コード標準準拠、§10-6 の split 時 dim 再処理と連動）。
 
 ### 5.5 Region のテナント共有 vs スコープ
 
@@ -471,12 +473,12 @@ flowchart LR
 | 11桁の桁 | Honshu ソース | 正準写像先（canonical_*） | 名寄せ寄与 |
 |----------|--------------|--------------------------|-----------|
 | 1桁目（年式） | コードロジック（`planned_year_code`） | `canonical_product.season` の年次要素 | 弱（属性） |
-| 2桁目 | `product_type.item_conversion_code` | `canonical_product.product_type` | 弱 |
-| 3桁目 | `product_season.item_conversion_code` | `canonical_product.season` | 弱 |
+| 2桁目 | `product_types.item_conversion_code` | `canonical_product.product_type` | 弱 |
+| 3桁目 | `product_seasons.item_conversion_code` | `canonical_product.season` | 弱 |
 | 4-6桁目 | `product_families.sequence_no` | `canonical_product.family_code` 連番部 | 中（企画識別） |
-| 7桁目 | `supplier.item_conversion_code`（工場） | 発注側 supplier Party へ関連づけ（Product 属性にしない） | — |
-| 8-9桁目 | `color.item_conversion_code` | `canonical_sku.color` | 弱 |
-| 10-11桁目 | `size.item_conversion_code` 由来 | `canonical_sku.size` | 弱 |
+| 7桁目 | `suppliers.item_conversion_code`（工場） | 発注側 supplier Party へ関連づけ（Product 属性にしない） | — |
+| 8-9桁目 | `colors.item_conversion_code` | `canonical_sku.color` | 弱 |
+| 10-11桁目 | `sizes.item_conversion_code` 由来 | `canonical_sku.size` | 弱 |
 
 > **写像の非可逆性（03 §7.3 と整合）:** 正準 SKU から 11 桁を**一意に再構築することは保証しない**（`item_conversion_code` の逆変換を共有カーネルに持たない）。ローカル品番の SoT は 32、正準側は `sku_xref` の対応関係のみを SoT とする。決定的マッチには**正規化済み 11 桁品番そのもの**を強識別子（テナント内一意）として使い、桁分解には依存しない。
 
@@ -515,36 +517,36 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     autonumber
-    actor OP as "オペレータ（SI/データ管理者）"
-    participant CP as "Control Plane（37）"
-    participant ING as "取込パイプライン（21）"
-    participant MAP as "マッピングメタ（36）"
-    participant ER as "名寄せエンジン（本書）"
-    participant CAN as "Canonical DB（34, SoT）"
-    participant DWH as "DWH（22/35, 派生）"
+    actor OP as オペレータ（SI/データ管理者）
+    participant CP as Control Plane（37）
+    participant ING as 取込パイプライン（21）
+    participant MAP as マッピングメタ（36）
+    participant ER as 名寄せエンジン（本書）
+    participant CAN as Canonical DB（34, SoT）
+    participant DWH as DWH（22/35, 派生）
 
-    OP->>CP: "新規ソース/コネクタ登録（source_system）"
-    CP->>MAP: "source_dataset/source_field 定義"
-    OP->>MAP: "項目マッピング定義（source_field → canonical_attribute）"
-    OP->>MAP: "名寄せルール/閾値/survivorship 設定（mapping_rule）"
-    ING->>ING: "初回フルロード（Raw/Staging へ, load_run 開始）"
-    ING->>ER: "正規化済レコードを名寄せへ"
-    ER->>CAN: "既存正準をブロッキング取得（候補生成）"
-    ER->>ER: "決定的 → 確率的/AI マッチ → スコアリング"
+    OP->>CP: 新規ソース/コネクタ登録（source_system）
+    CP->>MAP: source_dataset/source_field 定義
+    OP->>MAP: 項目マッピング定義（source_field → canonical_attribute）
+    OP->>MAP: 名寄せルール/閾値/survivorship 設定（mapping_rule）
+    ING->>ING: 初回フルロード（Raw/Staging へ, load_run 開始）
+    ING->>ER: 正規化済レコードを名寄せへ
+    ER->>CAN: 既存正準をブロッキング取得（候補生成）
+    ER->>ER: 決定的 → 確率的/AI マッチ → スコアリング
     alt score ≥ T_high（自動）
-        ER->>CAN: "survivorship 適用しゴールデン UPSERT（先）"
-        ER->>MAP: "provenance/lineage 記録"
-        ER->>CAN: "xref UPSERT（解決 SoT 確定）"
+        ER->>CAN: survivorship 適用しゴールデン UPSERT（先）
+        ER->>MAP: provenance/lineage 記録
+        ER->>CAN: xref UPSERT（解決 SoT 確定）
     else T_low ≤ score < T_high（曖昧）
-        ER->>MAP: "mapping_review へキュー（PendingReview）"
-        OP->>MAP: "レビュー承認 or 別実体判定（HITL）"
-        MAP->>CAN: "承認結果でゴールデン/xref 確定"
+        ER->>MAP: mapping_review へキュー（PendingReview）
+        OP->>MAP: レビュー承認 or 別実体判定（HITL）
+        MAP->>CAN: 承認結果でゴールデン/xref 確定
     else score < T_low（新規）
-        ER->>CAN: "新規 canonical id 採番 + xref 登録"
+        ER->>CAN: 新規 canonical id 採番 + xref 登録
     end
-    CAN-->>DWH: "ゴールデン変化イベント公開（後追い・非同期）"
-    DWH->>DWH: "dim_* SCD2 反映（valid_from/to/is_current）"
-    ER-->>OP: "名寄せサマリ（自動/レビュー/新規件数・precision 指標）"
+    CAN-->>DWH: ゴールデン変化イベント公開（後追い・非同期）
+    DWH->>DWH: dim_* SCD2 反映（valid_from/to/is_current）
+    ER-->>OP: 名寄せサマリ（自動/レビュー/新規件数・precision 指標）
 ```
 
 - **書込順序の厳守（5〜9行目, 10〜12行目）:** ゴールデン（SoT）→ lineage → xref → 下流公開の順。下流公開は非同期で、失敗しても SoT はロールバックしない（非ブロッキング, 原則4）。
@@ -673,8 +675,8 @@ flowchart TD
 
 - [基本設計: 正準ドメインモデル](../basic-design/03-canonical-domain-model.md)（03） — 本書の上位。概念・論理モデル・状態遷移の出所。本書はその名寄せライフサイクル（03 §10.1）を実装展開する。
 - [データベース設計: MDM/Canonical スキーマ](../database-design/34-mdm-canonical-schema.md)（34） — 本書が扱う正準エンティティ・xref の**物理所有**。索引/RLS/制約の確定先。
-- [詳細設計: 取込とマッピングパイプライン](../detailed-design/21-ingestion-mapping-pipeline.md)（21） — Raw/Staging・項目マッピング適用・名寄せ起動ステージの実装。
-- [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata.md)（36） — `mapping_rule`/`mapping_review`/`load_run`/`data_lineage` の物理所有。名寄せルール・レビュー・来歴の記録先。
+- [詳細設計: 取込とマッピングパイプライン](./21-ingestion-and-mapping-pipeline.md)（21） — Raw/Staging・項目マッピング適用・名寄せ起動ステージの実装。
+- [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata-schema.md)（36） — `mapping_rule`/`mapping_review`/`load_run`/`data_lineage` の物理所有。名寄せルール・レビュー・来歴の記録先。
 - [詳細設計: スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22） — ゴールデン改定 → `dim_*` SCD2 反映の下流契約。
 - [データベース設計: スタースキーマ DWH](../database-design/35-star-schema-dwh.md)（35） — 適合次元・ファクトの物理所有。
 - グラウンディング: [Honshu マスタ仕様](../../../.ai-native/domain-context/industry/honshu-master-schema.md)（17/18 マスタ・11桁品番・item_conversion_code）

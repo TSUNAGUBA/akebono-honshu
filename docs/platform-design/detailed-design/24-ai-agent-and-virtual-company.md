@@ -5,7 +5,7 @@ category: detailed-design
 version: 0.1.0
 status: draft
 purpose: AIエージェント/バーチャルカンパニーの詳細アーキテクチャ（プランナー/実行/検証、マルチエージェント協調、オーケストレーション状態機械、ツール実行基盤、メモリ管理、意思決定支援ワークフロー、シミュレーション計算エンジン、ガバナンス）を実装レベルで定義する
-related: [decision-support-ai, ai-rag-vectorization, ai-vector-knowledge-schema, api-integration-contracts]
+related: [decision-support-ai, ai-rag-vectorization, ai-vector-knowledge-schema, api-integration-contracts, service-analytics, star-schema-transformation, nonfunctional-security-tenancy, architecture-decision-records, control-plane-schema]
 ---
 
 # 詳細設計: AIエージェント / バーチャルカンパニー
@@ -29,9 +29,9 @@ related: [decision-support-ai, ai-rag-vectorization, ai-vector-knowledge-schema,
 > **所有境界（ブリーフ §14）:**
 > - **物理スキーマ**（`agent` / `agent_session` / `agent_message` / `agent_memory` / `insight` / `analysis_run` の CREATE TABLE・索引・制約・`tenant_id`・RLS、および `decision_package` の DocDB アイテム形状）は
 >   [`38 AI/ベクター/ナレッジ`](../database-design/38-ai-vector-knowledge-schema.md)（document_id: `ai-vector-knowledge-schema`）が所有する。本書は **論理構造と、38 に要求する索引/アクセスパターンの根拠**を示すに留め、DDL を再定義しない。
-> - **RAG パイプライン**（チャンク化・埋め込み・ベクター検索・`kb_*`/`domain_knowledge`）は [`23 AI/RAG/ベクター化`](./23-ai-rag-vectorization.md)（document_id: `ai-rag-vectorization`）が所有する。本書の `rag_search` / `domain_lookup` ツールはその基盤を消費する。
+> - **RAG パイプライン**（チャンク化・埋め込み・ベクター検索・`kb_*`/`domain_knowledge`）は [`23 AI/RAG/ベクター化`](./23-ai-rag-and-vectorization.md)（document_id: `ai-rag-vectorization`）が所有する。本書の `rag_search` / `domain_lookup` ツールはその基盤を消費する。
 > - **メトリクス/セマンティック層・dim/fact の数値** は 07/35 が所有する。本書のエージェントは **数値を計算しない**（数値の SoT は常に DWH / メトリクス層。ブリーフ §12 ハルシネーション抑制）。
-> - **API コントラクトの正**は [`25 API/連携コントラクト`](./25-api-integration-contracts.md)（document_id: `api-integration-contracts`）が所有する。本書は内部実行フローの観点でエンドポイントを参照する。
+> - **API コントラクトの正**は [`25 API/連携コントラクト`](./25-api-and-integration-contracts.md)（document_id: `api-integration-contracts`）が所有する。本書は内部実行フローの観点でエンドポイントを参照する。
 
 ---
 
@@ -92,7 +92,7 @@ flowchart TD
 
 | パラメータ | 内容 | 由来 / 参照 |
 |-----------|------|-----------|
-| `role` | 部門ロール識別子（`planner`/`sales`/`procurement`/`production`/`inventory`/`logistics`/`executive`/`analytics`/`knowledge`/`simulation`） | 08 §2.2、SMALLINT+CHECK（ブリーフ §9） |
+| `role` | 部門ロール識別子（`planning`/`sales`/`procurement`/`production`/`inventory`/`logistics`/`executive`/`analytics`/`knowledge`/`simulation`）。※企画部門ロールは §2.1 のアーキ構成要素 `Planner` との語彙衝突を避けるため `planning` とする（08 §2.2 の `planner` からリネーム） | 08 §2.2、SMALLINT+CHECK（ブリーフ §9） |
 | `system_prompt_template` | システムプロンプト構成（§6.1）。役割・制約・出力契約 | 本書 §6 |
 | `tool_allowlist` | 呼び出し可能ツールの集合（read/write 区別、§4.1） | 本書 §4 |
 | `autonomy_level` | 自律レベル L0-L3（テナント×部門×アクション種別、既定 L1） | 08 §5.2、Control Plane(37) で制御 |
@@ -126,10 +126,10 @@ flowchart TD
         RG["ナレッジ（rag_search/domain_lookup）"]
         SM["シミュレーション（simulate）"]
     end
-    D1 -.利用.-> SM
-    D1 -.利用.-> AN
-    D2 -.利用.-> AN
-    D3 -.利用.-> RG
+    D1 -.->|"利用"| SM
+    D1 -.->|"利用"| AN
+    D2 -.->|"利用"| AN
+    D3 -.->|"利用"| RG
     BB -->|"ファンイン"| EX
     EX -->|"統合・トレードオフ・選択肢構成"| PKG["意思決定パッケージ<br/>（選択肢+推奨+反対意見+根拠）"]
     PKG --> HITL["オペレーター HITL（§5/08）"]
@@ -257,7 +257,7 @@ flowchart TD
 
 ### 4.1 ツールレジストリとツール契約
 
-エージェントは **ツール（関数）呼び出し**を通じてのみ外部システムに作用する（08 §4.1）。ツールカタログの一覧・種別・接続先・所有は **08 §4.1 が所有**する。本書は各ツールの **入出力契約（スキーマ）とランタイム挙動**を定義する。全ツールは JSON Schema で入出力を定義し、Executor が実行前後で検証する（スキーマ違反は AI-002 として拒否）。
+エージェントは **ツール（関数）呼び出し**を通じてのみ外部システムに作用する（08 §4.1）。ツールカタログの一覧・種別・接続先・所有は **08 §4.1 が所有**する。本書は各ツールの **入出力契約（スキーマ）とランタイム挙動**を定義する。全ツールは JSON Schema で入出力を定義し、Executor が実行前後で検証する（スキーマ違反は AI-305（WARNING）として拒否。AI-002 はスキーマ以外のバリデーション専用であり本用途では使わない、§9）。
 
 | ツール | 種別 | 主要入力（`tenant_id` は呼び出し側注入・非入力） | 主要出力 | ランタイム制約 |
 |--------|------|-----------------------------------------------|---------|--------------|
@@ -284,7 +284,7 @@ sequenceDiagram
     PL->>EX: "ツール呼び出し（名前+引数）"
     EX->>PO: "allowlist 照合（役割×ツール, §2.2）"
     PO-->>EX: "許可 / 拒否（AI-303 権限昇格試行）"
-    EX->>EX: "入力スキーマ検証（NG→AI-002）"
+    EX->>EX: "入力スキーマ検証（NG→AI-305）"
     EX->>TN: "tenant_id を強制注入（引数から受け取らない）"
     alt 読み取り系
         EX->>TL: "実行（RLS/ベクターフィルタ適用）"
@@ -360,7 +360,7 @@ flowchart TD
 1. **優先度付き詰め込み:** システムプロンプト（役割・制約・出力契約）→ ツール仕様 → 直近会話 → 長期メモリ（ベクター関連検索の上位）→ RAG 根拠、の優先順で詰める。予算超過分は低優先から要約/切り詰め。
 2. **要約による圧縮:** 会話が長くなると古い往復を逐次要約（rolling summary）し、`agent_session` の要約フィールドへ退避。原文は `agent_message`（SoT）に残す（要約は派生・再生成可能）。
 3. **数値はメモリに埋めない:** 変動数値（在庫・売上）は長期メモリ/RAG に埋め込まず、常にツールでライブ取得（陳腐化・矛盾回避。08 §6.2）。メモリが担うのは「解釈・慣行・過去判断の文脈」。
-4. **トークン計量:** 各 LLM 呼び出しの入出力トークンを `usage_metering`（37）に加算し、コスト上限（§8.4）と連動。オーバーフローは AI-401。
+4. **トークン計量と超過の振り分け:** 各 LLM 呼び出しの入出力トークンを `usage_metering`（37）に加算し、コスト上限（§8.4）と連動。**トークン予算（エンタイトルメント連動の累計予算）の超過は AI-401**（ステップ/予算上限）として打ち切り・エスカレーション。一方、**単一呼び出しでコンテキストウィンドウ（モデルの最大コンテキスト長）が要約後も収まらないケースは AI-404**（WARNING）とし、要約強化・スコープ縮小・部分結果提示で対処する（§9）。両者を混同せず、予算超過（AI-401）とコンテキスト窓超過（AI-404）を明確に区別する。
 
 > **長期メモリのベクター検索:** `agent_memory` はテキスト事実に加え埋め込み（Bedrock, 23 のパイプライン）を併設し、現課題に関連する過去判断を意味検索で想起する。テナント×部門スコープを検索フィルタで強制（クロステナント/クロス部門の想起を構造的に禁止, §7）。埋め込みは派生であり、原文（memory レコード）が SoT（ブリーフ §5）。
 
@@ -548,7 +548,7 @@ sequenceDiagram
 ## 11. 関連ドキュメント
 
 - [`08 意思決定支援 / AIエージェント`](../basic-design/08-service-decision-support-ai.md)（document_id: `decision-support-ai`） — 本書の**基本設計**。サービス責務・部門編成・意思決定支援ワークフロー・HITL/ガバナンス方針・ドメイン知識活用方針・**エラーレジストリの正（§11）**を所有。
-- [`23 AI/RAG/ベクター化`](./23-ai-rag-vectorization.md)（document_id: `ai-rag-vectorization`） — RAG パイプライン（チャンク化・埋め込み・ベクター検索）。本書の `rag_search`/`domain_lookup` および長期メモリ埋め込みの基盤。
+- [`23 AI/RAG/ベクター化`](./23-ai-rag-and-vectorization.md)（document_id: `ai-rag-vectorization`） — RAG パイプライン（チャンク化・埋め込み・ベクター検索）。本書の `rag_search`/`domain_lookup` および長期メモリ埋め込みの基盤。
 - [`38 AI/ベクター/ナレッジ`](../database-design/38-ai-vector-knowledge-schema.md)（document_id: `ai-vector-knowledge-schema`） — `agent`/`agent_session`/`agent_message`/`agent_memory`/`insight`/`analysis_run` の**物理スキーマ**、および `decision_package`（DocDB アイテム形状）を所有。本書はこれらを論理参照する。
-- [`25 API/連携コントラクト`](./25-api-integration-contracts.md)（document_id: `api-integration-contracts`） — エージェントセッション・意思決定パッケージ・承認/却下/差し戻し・`app_action` 経由の業務 API コントラクトの正。
-- 参考: [`07 分析・可視化`](../basic-design/07-service-analytics.md)（数値の SoT = メトリクス/DWH）、[`22 スタースキーマ変換`](./22-star-schema-transformation.md)（決定論計算の共通化余地）、[`11 非機能/セキュリティ/テナンシー`](../basic-design/11-nonfunctional-security-tenancy.md)（テナント境界・監査・可用性）、[`12 ADR`](../basic-design/12-architecture-decision-records.md)（オーケストレーション基盤・予測モデルの最終決定）、[`37 コントロールプレーン`](../database-design/37-control-plane-schema.md)（権限・エンタイトルメント・`usage_metering`・`audit_logs`・キルスイッチ）。
+- [`25 API/連携コントラクト`](./25-api-and-integration-contracts.md)（document_id: `api-integration-contracts`） — エージェントセッション・意思決定パッケージ・承認/却下/差し戻し・`app_action` 経由の業務 API コントラクトの正。
+- 参考: [`07 分析・可視化`](../basic-design/07-service-analytics.md)（数値の SoT = メトリクス/DWH）、[`22 スタースキーマ変換`](./22-star-schema-transformation.md)（決定論計算の共通化余地）、[`11 非機能/セキュリティ/テナンシー`](../basic-design/11-nonfunctional-security-tenancy.md)（テナント境界・監査・可用性）、[`12 ADR`](../basic-design/12-architecture-decision-records.md)（オーケストレーション基盤・予測モデルの最終決定）、[`37 コントロールプレーン`](../database-design/37-control-plane-backoffice-schema.md)（権限・エンタイトルメント・`usage_metering`・`audit_logs`・キルスイッチ）。

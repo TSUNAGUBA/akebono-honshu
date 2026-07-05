@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: 契約・稼働設定・請求・エンタイトルメントを担うバックオフィス（コントロールプレーン）の基本設計を定義する
-related: [control-plane-backoffice-schema, si-customization-provisioning, nonfunctional-security-tenancy, data-integration-mapping]
+related: [control-plane-backoffice-schema, si-customization-provisioning, nonfunctional-security-tenancy, data-integration-mapping, service-wms, mapping-metadata-schema, ai-vector-knowledge, overall-architecture]
 ---
 
 # 基本設計: バックオフィス（コントロールプレーン）
@@ -19,7 +19,7 @@ related: [control-plane-backoffice-schema, si-customization-provisioning, nonfun
 バックオフィス自身の稼働データ（契約・請求・使用量）は SCIP が **自社の分析対象** としても利用するため、
 Data Plane への**連携対象**でもある（§7 で契約・請求メトリクスの供給を扱う）。さらに、SI 事業として
 **このバックオフィスをクライアント（例: 複数店舗を束ねる小売本部、複数荷主を抱える倉庫事業者）へ再提供**する
-自己サービス化の可能性も検討範囲に含める（§8）。
+自己サービス化の可能性も検討範囲に含める（§9）。
 
 > **本ドキュメントの所有範囲（owns）:** バックオフィス / コントロールプレーンの **機能・ライフサイクル・稼働設定・課金モデル・エンタイトルメントの基本設計** の権威的記述。
 > **物理スキーマ（CREATE TABLE / 索引 / 制約 / `tenant_id` / RLS / 監査列）は本書では定義しない。**
@@ -80,15 +80,15 @@ graph TD
 |--------|------|--------------|
 | 契約・プラン・エンタイトルメント・使用量計測・**SCIP がテナント（倉庫事業者/メーカー等）へ課す請求** | **本書（機能）+ 37（物理）** | SCIP → テナントの B2B 課金 |
 | テナント/組織/ユーザ/権限ロールの業務情報 | **本書（機能）+ 37（物理）** | SoT=RDS。認証情報（UID/Email/PW）は Firebase（§5） |
-| フィーチャーフラグ・稼働設定（テーマ/拡張項目の有効化） | **本書（制御モデル）** | 拡張項目の**物理適用**と SI カスタマイズ詳細は [`27 SI カスタマイズ/プロビジョニング`](../detailed-design/27-si-customization-provisioning.md) |
-| コネクタ設定・マッピングメタデータ・ドメインナレッジ登録の**運用起点** | **本書（登録オペレーションの入口）** | 実体はそれぞれ [`10 データ連携`](./10-data-integration-mapping.md) / [`21 取込パイプライン`](../detailed-design/21-ingestion-mapping-pipeline.md) / [`36 マッピングメタデータ`](../database-design/36-mapping-metadata-schema.md) / [`38 AI/ナレッジ`](../database-design/38-ai-vector-knowledge.md) |
-| **荷主（shipper）への請求** | **所有しない** | 倉庫テナントが自社の荷主へ課す B2B 請求は WMS の業務機能。[`06 WMS`](./06-service-wms.md) 所有 / `shipper_billing`（33）。本書の SCIP 課金とは**別レイヤ**（§7.4 で対比） |
+| フィーチャーフラグ・稼働設定（テーマ/拡張項目の有効化） | **本書（制御モデル）** | 拡張項目の**物理適用**と SI カスタマイズ詳細は [`27 SI カスタマイズ/プロビジョニング`](../detailed-design/27-si-customization-and-provisioning.md) |
+| コネクタ設定・マッピングメタデータ・ドメインナレッジ登録の**運用起点** | **本書（登録オペレーションの入口）** | 実体はそれぞれ [`10 データ連携`](./10-data-integration-and-mapping.md) / [`21 取込パイプライン`](../detailed-design/21-ingestion-and-mapping-pipeline.md) / [`36 マッピングメタデータ`](../database-design/36-mapping-metadata-schema.md) / [`38 AI/ナレッジ`](../database-design/38-ai-vector-knowledge-schema.md) |
+| **荷主（shipper）への請求** | **所有しない** | 倉庫テナントが自社の荷主へ課す B2B 請求は WMS の業務機能。[`06 WMS`](./06-service-wms.md) 所有 / `shipper_billing`（33）。本書の SCIP 課金とは**別レイヤ**（§6.4 で対比） |
 | RLS・機微値マスク・体感性能の非機能詳細 | 参照 | [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md) |
 
 > **課金の二層性（重要）:** SCIP プラットフォームには請求が **2 階層**存在する。
-> (a) **SCIP → テナント**（本書 §7）＝プラットフォーム利用料。SaaS のサブスクリプション + 使用量課金。
+> (a) **SCIP → テナント**（本書 §6）＝プラットフォーム利用料。SaaS のサブスクリプション + 使用量課金。
 > (b) **倉庫テナント → 荷主**（WMS §5, 33 所有）＝倉庫の業務としての保管料・入出庫料請求。
-> 両者は**同一の請求という語だが別ドメイン・別 SoT・別テーブル**である。混同しない（§7.4）。
+> 両者は**同一の請求という語だが別ドメイン・別 SoT・別テーブル**である。混同しない（§6.4）。
 
 ---
 
@@ -102,7 +102,6 @@ erDiagram
     TENANT ||--o{ APP_USER : "所属ユーザ"
     TENANT ||--|| CONTRACT : "契約（1 有効契約）"
     CONTRACT }o--|| PLAN : "契約プラン"
-    PLAN ||--o{ PLAN_FEATURE : "プラン包含機能"
     TENANT ||--o{ SUBSCRIPTION : "課金サブスク"
     SUBSCRIPTION }o--|| PLAN : "対象プラン"
     TENANT ||--o{ ENTITLEMENT : "有効化された権利"
@@ -125,7 +124,7 @@ erDiagram
 | AppUser（ユーザ） | 業務ユーザ。Firebase UID で認証情報と紐付く | RDS（業務情報）/ Firebase（認証） | `app_user` |
 | Role / Permission | 権限ロールと権限。RBAC | RDS | `role` / `permission` |
 | Contract（契約） | テナントと SCIP の約款。開始/終了/自動更新/解約条項 | RDS | `contract` |
-| Plan（プラン） | 提供メニュー（例: Standard/Pro/Enterprise）。包含機能・定額・従量単価 | RDS | `plan` |
+| Plan（プラン） | 提供メニュー（例: Standard/Pro/Enterprise）。**包含機能は `plan` の属性**（`plan.features` JSONB、または個別権利は `entitlement` で表現）として保持し、独立した中間テーブルは設けない。定額・従量単価も保持 | RDS | `plan` |
 | Entitlement（エンタイトルメント） | 「このテナントは機能 X を使える」という**解決済みの権利**。プラン + 個別付与の合成結果 | RDS | `entitlement` |
 | Subscription（サブスク） | 課金の継続契約。請求周期・課金開始日・状態 | RDS | `subscription` |
 | FeatureFlag / TenantFeature | 機能フラグ定義とテナント別 ON/OFF（稼働設定） | RDS | `feature_flag` / `tenant_feature` |
@@ -137,7 +136,13 @@ erDiagram
 
 > **マルチテナントにおける自己参照:** バックオフィス自身のテーブルの多くは `tenant_id` を持つ（テナントスコープ）。ただし
 > `tenant` / `plan` / `feature_flag` / `permission` のような**プラットフォームグローバルなマスタ**はテナント横断で共有し、
-> `tenant.id` を持たない（または `plan` はグローバル定義 + `tenant_feature` でテナント別上書き）。この境界は 37 が物理で確定する（§10 未決事項 1）。
+> `tenant.id` を持たない（または `plan` はグローバル定義 + `tenant_feature` でテナント別上書き）。この境界は 37 が物理で確定する（§12 未決事項 1）。
+
+> **多対多の中間テーブルの扱い:** 上図の `APP_USER }o--o{ ROLE`（ロール割当）と `ROLE }o--o{ PERMISSION`（権限）は、
+> 物理では中間テーブル `user_role` / `role_permission` を要する。これらは RBAC の解決に必要な物理テーブルであり、
+> **37（コントロールプレーン）が所有する前提**とする（ブリーフ §14 の 37 所有マップに準じて物理は 37 が確定）。
+> 本書はこれらを論理レベルの関連として示すに留め、物理定義（列・制約）は 37 に委ねる。プラン包含機能も同様に
+> 独立テーブル化せず `plan` の属性（`plan.features` JSONB / `entitlement`）として表現し、所有テーブル集合を増やさない。
 
 ---
 
@@ -214,7 +219,7 @@ sequenceDiagram
 
 - API はリクエストの Firebase ID Token から `tenant_id` クレームを解決し、**全 DB セッションで `SET app.tenant_id`** を張る。RLS が `tenant_id = current_setting('app.tenant_id')::bigint` を全テーブルに強制する（ブリーフ §6、詳細は 11）。
 - 任意の `X-Tenant-Id` ヘッダはクレームと突合し、不一致は **403（TEN-402）**。
-- 運営オペレーター（TSUNAGUBA）はテナント横断アクセスが必要なため、**プラットフォーム管理ロール**を別途定義し、RLS バイパスは監査ログ必須の特権経路に限定する（§10 未決事項 4）。
+- 運営オペレーター（TSUNAGUBA）はテナント横断アクセスが必要なため、**プラットフォーム管理ロール**を別途定義し、RLS バイパスは監査ログ必須の特権経路に限定する（§12 未決事項 4）。
 
 ### 4.3 権限モデル（RBAC）
 
@@ -267,7 +272,7 @@ sequenceDiagram
     APP->>ENTAPI: "許可時は使用量を計上（§7.1 メータリング）"
 ```
 
-- **SI 設定としてのフィーチャーフラグ:** 「共通化できる部分は最大限共通化、固有事情のみカスタマイズ」（ブリーフ §2）の実装手段。有効機能・オプション・拡張項目（`attributes` JSONB / 型付き拡張テーブル）を**コード分岐でなくデータ駆動**で切り替える。物理適用と拡張項目のスキーマ制御は [`27 SI カスタマイズ/プロビジョニング`](../detailed-design/27-si-customization-provisioning.md) が担う。
+- **SI 設定としてのフィーチャーフラグ:** 「共通化できる部分は最大限共通化、固有事情のみカスタマイズ」（ブリーフ §2）の実装手段。有効機能・オプション・拡張項目（`attributes` JSONB / 型付き拡張テーブル）を**コード分岐でなくデータ駆動**で切り替える。物理適用と拡張項目のスキーマ制御は [`27 SI カスタマイズ/プロビジョニング`](../detailed-design/27-si-customization-and-provisioning.md) が担う。
 - **地域粒度の動的制御:** 分析軸の地域粒度（都道府県〜市区町村〜メッシュ）はテナントの商圏規模に応じて `tenant_feature` で制御する（ブリーフ §2 / §7）。この値は分析（07）と DWH（35）の集計粒度に伝播する。
 - **下位互換（原則 7）:** プラン/エンタイトルメント定義を変更する際、既存テナントの `tenant_feature` を破壊しない。プラン改定は新バージョンとして追加し、既存契約は移行するまで旧プランを維持する。
 
@@ -320,11 +325,11 @@ sequenceDiagram
 ```
 
 - **確定保護（原則 2）:** 発行済み `invoice` は再締めで上書きしない。修正が必要な場合は**訂正明細（クレジット/追加）**を新規に追記する（WMS 荷主請求の締め処理と同じ原則, 06 §5.4 と整合）。
-- **帳票技術:** 継承実装の ClosedXML（xlsx）を踏襲。対外文書としての請求書 PDF 化は WMS と共通の未確定論点（PDF ライブラリ未確定, 06 §9 と共有 → §10 未決事項 3）。
+- **帳票技術:** 継承実装の ClosedXML（xlsx）を踏襲。対外文書としての請求書 PDF 化は WMS と共通の未確定論点（PDF ライブラリ未確定, 06 §9 と共有 → §12 未決事項 3）。
 
 ### 6.4 WMS 荷主請求との違い / 連携
 
-| 観点 | SCIP → テナント請求（本書 §7 = 課金 `invoice`） | 倉庫テナント → 荷主請求（WMS `shipper_billing`, 33 所有） |
+| 観点 | SCIP → テナント請求（本書 §6 = 課金 `invoice`） | 倉庫テナント → 荷主請求（WMS `shipper_billing`, 33 所有） |
 |------|-------------------------------------------------|----------------------------------------------------------|
 | 主体 → 客体 | TSUNAGUBA → 倉庫/メーカー/小売テナント | 倉庫事業者テナント → その荷主（shipper） |
 | ドメイン | プラットフォーム利用料（SaaS 課金） | 倉庫業務（保管料/入出庫料/付帯作業料） |
@@ -383,9 +388,9 @@ stateDiagram-v2
 
 | 登録対象 | バックオフィスの役割 | 実体の所有 |
 |---------|--------------------|-----------|
-| コネクタ設定（外部システム接続） | `connector` / `connector_config` の登録・有効化・資格情報参照（Secrets Manager 経由） | 取込動作は [`10 データ連携`](./10-data-integration-mapping.md) / [`21 取込パイプライン`](../detailed-design/21-ingestion-mapping-pipeline.md) |
+| コネクタ設定（外部システム接続） | `connector` / `connector_config` の登録・有効化・資格情報参照（Secrets Manager 経由） | 取込動作は [`10 データ連携`](./10-data-integration-and-mapping.md) / [`21 取込パイプライン`](../detailed-design/21-ingestion-and-mapping-pipeline.md) |
 | マッピングメタデータ（項目対応） | 登録タスクの起票・担当割当・レビュー状態の管理 | メタデータ実体は [`36 マッピングメタデータ`](../database-design/36-mapping-metadata-schema.md)（`mapping_rule` 等） |
-| ドメインナレッジ登録 | ナレッジ登録ジョブの起票・テナント帰属の設定 | 実体は [`38 AI/ベクター/ナレッジ`](../database-design/38-ai-vector-knowledge.md)（`kb_document` / `domain_knowledge`） |
+| ドメインナレッジ登録 | ナレッジ登録ジョブの起票・テナント帰属の設定 | 実体は [`38 AI/ベクター/ナレッジ`](../database-design/38-ai-vector-knowledge-schema.md)（`kb_document` / `domain_knowledge`） |
 
 > **資格情報:** コネクタの接続シークレット（API キー・DB 認証）は **Secrets Manager + KMS** が SoT。`connector_config` には**参照（ARN/キー名）のみ**を保持し、値を持たない（ブリーフ §5 / 技術スタック §3.4）。
 
@@ -404,7 +409,7 @@ stateDiagram-v2
 
 - **設計上の担保:** 全テーブルの `tenant_id` + RLS（ブリーフ §6）により、セルフサービス開放時もテナント境界は**アプリのバグに依存せず DB が強制**する。UI の権限だけに頼らない。
 - **レスポンシブ（CLAUDE.md 原則 8）:** テナント管理者ポータル・運営コンソールは Web UI を持つため、**モバイル表示前提のレスポンシブ**を組み込む。契約一覧・請求一覧・使用量はモバイルでカード型に再構成する。
-- **L3 階層テナント**は現時点で未確定（親子テナント・課金ロールアップの設計が必要）。§10 未決事項 2 で扱う。
+- **L3 階層テナント**は現時点で未確定（親子テナント・課金ロールアップの設計が必要）。§12 未決事項 2 で扱う。
 
 ---
 
@@ -469,10 +474,10 @@ stateDiagram-v2
 ## 関連ドキュメント
 
 - [データベース設計: コントロールプレーン/バックオフィス スキーマ](../database-design/37-control-plane-backoffice-schema.md)（37, `control-plane-backoffice-schema`） — 本書で論理記述した全テーブル（`tenant`/`contract`/`plan`/`entitlement`/`invoice` 等）の**物理所有**（CREATE TABLE / `tenant_id` / RLS / 索引 / 監査列）。
-- [詳細設計: SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-provisioning.md)（27, `si-customization-provisioning`） — フィーチャーフラグ・拡張項目・テーマの**物理適用**とプロビジョニングの実装詳細。本書 §5/§8 の委譲先。
+- [詳細設計: SI カスタマイズ/プロビジョニング](../detailed-design/27-si-customization-and-provisioning.md)（27, `si-customization-provisioning`） — フィーチャーフラグ・拡張項目・テーマの**物理適用**とプロビジョニングの実装詳細。本書 §5/§8 の委譲先。
 - [基本設計: 非機能/セキュリティ/テナンシー](./11-nonfunctional-security-tenancy.md)（11, `nonfunctional-security-tenancy`） — RLS・テナント境界・機微値・特権経路・体感性能の非機能詳細。本書 §4.2 の詳細。
-- [基本設計: データ連携とマッピング](./10-data-integration-mapping.md)（10, `data-integration-mapping`） — コネクタ・取込・項目マッピングの業務設計。本書 §8.2 のコネクタ/マッピング登録の実体。
+- [基本設計: データ連携とマッピング](./10-data-integration-and-mapping.md)（10, `data-integration-mapping`） — コネクタ・取込・項目マッピングの業務設計。本書 §8.2 のコネクタ/マッピング登録の実体。
 - [基本設計: WMS](./06-service-wms.md)（06, `service-wms`） — 荷主請求（`shipper_billing`）の設計。本書 §6.4 で SCIP 課金と対比・連携する相手。
-- [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata-schema.md)（36） / [データベース設計: AI/ベクター/ナレッジ](../database-design/38-ai-vector-knowledge.md)（38） — マッピングメタデータ / ドメインナレッジ登録の実体（§8.2）。
+- [データベース設計: マッピングメタデータ](../database-design/36-mapping-metadata-schema.md)（36） / [データベース設計: AI/ベクター/ナレッジ](../database-design/38-ai-vector-knowledge-schema.md)（38） — マッピングメタデータ / ドメインナレッジ登録の実体（§8.2）。
 - [基本設計: 全体アーキテクチャ](./02-overall-architecture.md)（02） — プレーン構成における Control Plane の配置。
 - [Phase 4 技術スタック確定](../../../.ai-native/outputs/phase4/tech-stack-decision.md) — 認証（Firebase）・権限 SoT（RDS）・課金基盤の継承技術根拠。

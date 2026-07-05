@@ -11,6 +11,9 @@ related:
   - si-customization-provisioning
   - nonfunctional-security-tenancy
   - mdm-canonical-schema
+  - star-schema-transformation
+  - star-schema-dwh
+  - ai-vector-knowledge-schema
 ---
 
 # DBスキーマ設計: コントロールプレーン / バックオフィス
@@ -298,7 +301,7 @@ erDiagram
 | **グローバルカタログ（全テナント共通のメタ）** | `permission`, `role_permission`, `plan`, `entitlement`, `plan_entitlement`, `feature_flag`, `connector` | 無 | RLS なし。読取は全テナント可、書込はプラットフォーム管理ロールのみ |
 | **テナントスコープ** | `organization`, `app_user`, `role`(*), `app_user_role`, `contract`, `subscription`, `usage_metering`, `invoice`, `invoice_line`, `tenant_feature`, `connector_config`, `provisioning_task`, `audit_logs` | 有 `tenant_id BIGINT NOT NULL` | [30 §4.2](./30-schema-strategy-and-sot.md) の RLS ポリシーを適用 |
 
-(*) `role` は **システムロール（`tenant_id IS NULL`）+ テナント固有カスタムロール（`tenant_id` 有）**の混在。RLS は「`tenant_id IS NULL OR tenant_id = current_setting('app.tenant_id')::bigint」でシステムロールとの併存を許す（§10.2）。
+(*) `role` は **システムロール（`tenant_id IS NULL`）+ テナント固有カスタムロール（`tenant_id` 有）**の混在。RLS は「`tenant_id IS NULL OR tenant_id = current_setting('app.tenant_id')::bigint`」でシステムロールとの併存を許す（§10.2）。
 
 **RLS の起点（重要）:** 全ての業務スキーマの `tenant_id` は本ドキュメントの `tenant(id)` を参照する。RLS が効くための `app.tenant_id` セッション変数は、API が Firebase Custom Claims の `tenant_id`（本 `tenant.id` のキャッシュ）から解決してセットする（§2.3）。すなわち **`tenant` テーブルがマルチテナンシー全体の根**である。
 
@@ -348,6 +351,51 @@ COMMENT ON COLUMN tenant.db_connection_ref IS 'Silo 時の接続情報の Secret
 
 > **命名の注記:** ブリーフ §9・[30 §3.1](./30-schema-strategy-and-sot.md) の規約に従い、共通/正準エンティティは **単数形テーブル名**（`tenant`, `organization`, `app_user`, `role`, `permission`）を用いる。継承実装の `users` テーブルは本プラットフォームでは `app_user` に一般化する（`user` は PostgreSQL 予約語のため接頭辞 `app_` を付す）。継承実装からの移行対応表は 32 メーカー OLTP と本ドキュメント §12 に記す。
 
+### 5.1.1 予約共有テナント（`PLATFORM_SHARED` / `tenant.id = 0`）— 全プラットフォームの確定・シード源
+
+**本サブセクションが予約共有テナントの確定・シードを権威的に所有する。** 他ドキュメントはこの確定値を参照するのみで再定義しない（[22 §3.2](./../detailed-design/22-star-schema-transformation.md)・[35 DWH](./35-star-schema-dwh.md)・[38 §3.1](./38-ai-vector-knowledge-schema.md) の各記述が本節へ確定を委譲している）。
+
+**確定した予約値（プラットフォーム定数 / 全ドキュメント共通の単一値）:**
+
+| 項目 | 確定値 | 用途 |
+|------|:------:|------|
+| **予約共有テナント `id`** | **`0`**（`PLATFORM_SHARED`） | テナント横断で内容が共通の共有参照データ専用の sentinel。実テナントは `1` 起点（BIGSERIAL 採番）で衝突しない |
+
+この `tenant.id = 0` が、以下すべての FK/共有判定の**唯一の参照先**である。
+
+- [38](./38-ai-vector-knowledge-schema.md) の共有ナレッジ（`kb_document.tenant_id = 0`、`knowledge_scope=1 / is_shared=TRUE`）の FK 参照先。`ai.platform_shared_tenant_id()`（38 §3.1）は**本節が確定した値 `0` を返す**（38 側の暫定注記は本節の確定により解消。値の変更が生じた場合は本節を唯一の変更点とし、38 の関数戻り値はこれに追随する）。
+- [22 §3.2](./../detailed-design/22-star-schema-transformation.md)・[35](./35-star-schema-dwh.md) の共有ディメンション（`dim_date`・`dim_region` 等、`tenant_id = 0`）および予約メンバー行の FK/整合の参照先。
+
+> **予約テナント行の DDL/シード（idempotent・BIGSERIAL 非干渉）:** `tenant.id` は `BIGSERIAL PRIMARY KEY`（採番は `1` 起点、§5.1）であり、既定の採番では `0` は生成されない。予約行は **`id = 0` を明示指定して INSERT** する。明示 INSERT はシーケンスを前進させないため、後続の実テナント採番（Honshu=1 等）と衝突しない。テナント作成・共有ナレッジ投入・共有ディメンション生成の**いずれよりも先**に、Control Plane スキーマ初期化（マイグレーション）の一部として自動実行し、手動ステップを残さない（CLAUDE.md 原則 1）。
+
+```sql
+-- 予約共有テナント(PLATFORM_SHARED / id=0)を固定シードする。
+-- 共有ナレッジ(38: kb_document.tenant_id=0)・共有ディメンション(22/35: dim_* の tenant_id=0)の FK 参照先。
+-- BIGSERIAL 採番は 1 起点。id=0 の明示 INSERT はシーケンスを前進させないため実テナント採番と衝突しない。
+-- ON CONFLICT で冪等(再実行しても既存の予約行を破壊しない / CLAUDE.md 原則 2)。
+INSERT INTO tenant (id, code, name, kind, status, isolation_mode, attributes)
+VALUES (
+    0,                                            -- 予約 id(全ドキュメント共通の確定値)
+    'PLATFORM_SHARED',                            -- 予約テナントコード(グローバル一意)
+    'プラットフォーム共有(予約テナント)',           -- 表示名
+    3,                                            -- kind=3(Mixed。特定業種に属さない共有枠)
+    1,                                            -- status=1(Active。共有参照データを常時提供)
+    0,                                            -- isolation_mode=0(Pooled。共有 DB 上に存在)
+    '{"reserved": true, "purpose": "platform_shared"}'::jsonb  -- 予約フラグ(運用ガードの判定に使用)
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- 念のためシーケンスに触れない(setval しない)。既定 last_value は 1(is_called=FALSE)のままとし、
+-- 最初の実テナント採番が id=1(Honshu)となることを保証する。id=0 の明示 INSERT はこれを乱さない。
+```
+
+**運用上のガード（予約テナントの保護）:**
+
+- 予約行（`id = 0`）は通常のプロビジョニング/停止/削除フローの対象外とする。`tenant.status` 遷移・`is_deleted` 化・`DELETE` はアプリ層で拒否し、`TEN-004`（予約テナントの改変/削除禁止）を返す（下位互換・データ保護 / CLAUDE.md 原則 7）。
+- RLS（§10.1 `tenant_self`）により、一般テナントセッションからは `id = 0` 行は**不可視**（`0 = app.tenant_id` は自テナントでない限り偽）。ただし FK 検証はシステム権限で RLS を迂回するため、共有ナレッジ/共有ディメンションへの `tenant_id = 0` 投入は参照先が存在し FK 違反を起こさない。共有データの**読取可視化**（テナントに共有ナレッジ/共有次元を見せる）は各所有ドキュメント（38 §10 の共有読取ポリシー等）が RLS 述語で定義し、本節はあくまで参照先行（sentinel 行の先行登録）を担保する。
+
+> **命名/確定の統一（22 の直書き `tenant_id=0` と 38 の関数参照の齟齬解消）:** 予約値は本節が `0` に確定する。DDL・シード・マイグレーション等の静的コンテキストでは確定値 `0` の直書きを許容する（22 の共有ディメンション DDL 等）。一方、アプリ/クエリ/RLS 述語では [38 §3.1](./38-ai-vector-knowledge-schema.md) の `ai.platform_shared_tenant_id()` を参照して直書きを避ける（将来の値変更に単一箇所で追随するため）。両者は「同一の確定値 `0` を指す」点で整合しており、38 の関数戻り値は本節の確定値と常に一致させる。
+
 ### 5.2 organization（組織 / owns・自己参照階層）
 
 ```sql
@@ -370,6 +418,8 @@ CREATE TABLE organization (
     CONSTRAINT chk_organization_noself CHECK (parent_organization_id IS NULL OR parent_organization_id <> id)
 );
 
+-- code は全行対象の恒久一意(is_deleted を条件に含めない)。組織コードは監査/参照整合の観点で恒久予約し、
+-- 論理削除後の再利用は許容しない(app_user.email と同方針。意図的な非統一は §13 論点参照)。
 ALTER TABLE organization
     ADD CONSTRAINT uq_organization_tenant_code UNIQUE (tenant_id, code);
 
@@ -408,11 +458,15 @@ CREATE TABLE app_user (
 );
 
 -- firebase_uid は認証 SoT のグローバル一意 ID に対応するためプラットフォーム全体で一意
+-- 【論理削除との整合(設計判断)】firebase_uid / email は全行対象の恒久一意(is_deleted を条件に含めない)。
+--   認証SoT(Firebase)の UID/Email との一意対応と監査追跡性(削除済ユーザの再利用による同一性の取り違え防止)を
+--   優先し、論理削除後もキーを恒久予約する。一方 employee_no は業務上の再割当(退職者の社員番号再利用)を許容するため
+--   WHERE is_deleted=FALSE の部分一意とする。この非統一は意図的である(§13 論点参照)。
 ALTER TABLE app_user ADD CONSTRAINT uq_app_user_firebase_uid UNIQUE (firebase_uid);
--- email / employee_no はテナントスコープ一意(同一メールが別テナントに存在しうる想定は §13 で論点化)
+-- email はテナントスコープ一意かつ全行対象(恒久予約)。同一メールが別テナントに存在しうる想定は §13 で論点化
 ALTER TABLE app_user ADD CONSTRAINT uq_app_user_tenant_email UNIQUE (tenant_id, email);
 
--- employee_no はテナント内で NULL 以外一意(部分一意索引)
+-- employee_no はテナント内で NULL 以外一意(部分一意索引)。論理削除済は対象外=社員番号の再割当を許容
 CREATE UNIQUE INDEX uq_app_user_tenant_employee_no
     ON app_user (tenant_id, employee_no)
     WHERE employee_no IS NOT NULL AND is_deleted = FALSE;
@@ -948,14 +1002,21 @@ CREATE TRIGGER trg_audit_logs_no_delete BEFORE DELETE ON audit_logs
 CREATE OR REPLACE FUNCTION ensure_audit_logs_partition(p_month DATE)
 RETURNS void AS $$
 DECLARE
-    v_start DATE := date_trunc('month', p_month);
-    v_end   DATE := (date_trunc('month', p_month) + INTERVAL '1 month');
+    v_start DATE := date_trunc('month', p_month)::date;
+    v_end   DATE := (date_trunc('month', p_month) + INTERVAL '1 month')::date;
     v_name  TEXT := 'audit_logs_' || to_char(v_start, 'YYYY_MM');
+    -- 重要: 境界は UTC 固定。静的パーティション(FROM '...+00' 明示)と計算方式を一致させる。
+    -- v_start::timestamptz はセッションの TimeZone に依存し、DBレベル Asia/Tokyo(ブリーフ §4/§9)前提の
+    -- pg_cron セッションでは '2026-09-01'::timestamptz が 2026-08-31 15:00Z となり、UTC基準の隣接
+    -- パーティションと overlap して CREATE ... PARTITION OF が失敗する(またはデータ誤ルーティング)。
+    -- そのため UTC 境界(+00)を文字列で明示構築する。
+    v_start_ts TEXT := to_char(v_start, 'YYYY-MM-DD') || ' 00:00:00+00';
+    v_end_ts   TEXT := to_char(v_end,   'YYYY-MM-DD') || ' 00:00:00+00';
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = v_name) THEN
         EXECUTE format(
             'CREATE TABLE %I PARTITION OF audit_logs FOR VALUES FROM (%L) TO (%L)',
-            v_name, v_start::timestamptz, v_end::timestamptz);
+            v_name, v_start_ts, v_end_ts);
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -988,7 +1049,7 @@ $$ LANGUAGE plpgsql;
 
 ## 10. RLS ポリシー（テナントスコープ確定版）
 
-[30 §4.2](./30-schema-strategy-and-sot.md) の共通ポリシーを本ドメインの各テーブルへ適用する。標準形（`organization`, `app_user`, `app_user_role`, `contract`, `subscription`, `usage_metering`, `invoice`, `invoice_line`, `tenant_feature`, `connector_config`, `provisioning_task`）は下記。
+[30 §4.2](./30-schema-strategy-and-sot.md) の共通ポリシーを本ドメインの各テーブルへ適用する。標準形（`organization`, `app_user`, `app_user_role`, `contract`, `subscription`, `usage_metering`, `invoice`, `invoice_line`, `tenant_feature`, `connector_config`, `provisioning_task`, および `audit_logs`）は下記。`tenant`（§10.1）・`role`（§10.2）・`audit_logs`（§10.4、`tenant_id` NULL 行の扱いが特殊）は個別サブセクションで定義する。§4 分類表・§11 サマリで「RLS ○」とした全テーブルが本節に実 DDL を持つ（○表記と DDL の一致）。
 
 ```sql
 -- 標準テナントスコープテーブル(app_user を例に。他も同型)
@@ -1029,6 +1090,30 @@ CREATE POLICY role_visibility ON role
 GRANT SELECT ON permission, plan, entitlement, plan_entitlement, feature_flag, connector, role_permission TO scip_app;
 -- INSERT/UPDATE/DELETE は付与しない(PlatformAdmin のみ)
 ```
+
+### 10.4 audit_logs テーブルの RLS（テナントスコープ + NULL 行のプラットフォーム分離）
+
+`audit_logs` は §4 分類表・§11 サマリで「テナントスコープ・RLS ○」としているため、他のテナントスコープテーブルと同様に RLS を有効化する。ただし `audit_logs.tenant_id` は **NULL 許容**（`actor_type=2(PlatformAdmin)` のプラットフォーム横断操作）であり、標準の等値ポリシーでは NULL 行が誰にも可視化されない点を意図的な設計として明示する。
+
+```sql
+-- 監査ログ。テナントスコープ行(tenant_id 有)は自テナントのみ可視。
+-- tenant_id IS NULL のプラットフォーム横断行(actor_type=2)は等値比較が UNKNOWN となり一般ロールには不可視。
+-- これらは BYPASSRLS ロール(scip_platform_admin)経由でのみ参照する(§4 プラットフォーム管理コンテキスト)。
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs FORCE  ROW LEVEL SECURITY;
+CREATE POLICY audit_logs_tenant_isolation ON audit_logs
+    USING      (tenant_id = current_setting('app.tenant_id')::bigint)
+    WITH CHECK (tenant_id = current_setting('app.tenant_id')::bigint);
+```
+
+**NULL 行（プラットフォーム横断監査）の可視性設計:**
+
+- 一般テナントロール（`scip_app`）: `tenant_id = app.tenant_id` を満たす自テナント行のみ SELECT 可能。`tenant_id IS NULL` 行は等値比較が UNKNOWN 判定となり **可視化されない**（テナントに他テナント/プラットフォーム運営の監査を見せない fail-closed）。
+- プラットフォーム運営（`scip_platform_admin`, `BYPASSRLS`）: RLS を迂回し全行（NULL 行含む）を参照でき、この参照自体を `audit_logs` に `actor_type=2` で記録する（§4 / §9）。
+- INSERT: 一般ロールは `WITH CHECK` により自テナントの `tenant_id` を持つ行のみ追記可能。`tenant_id IS NULL` のプラットフォーム操作ログの追記は `BYPASSRLS` 経路で行う。
+- RLS は親テーブルへの POLICY が各月次パーティションに継承される（§8）。append-only（UPDATE/DELETE 禁止, §8.1）と併用する。
+
+> **○表記との一致:** 本サブセクションにより、§4 分類表（`audit_logs` = テナントスコープ・RLS ○）および §11 索引・制約サマリ（`audit_logs` = RLS ○）の宣言に対応する実 DDL が本節に揃う。
 
 > **fail-closed（[30 §4.2](./30-schema-strategy-and-sot.md)）:** `current_setting('app.tenant_id')` 未設定時は型変換で例外となり全行漏洩を防ぐ。アプリ層で全クエリ前の `SET LOCAL app.tenant_id` を強制する。ETL/バッチ横断は `scip_platform_admin`（`BYPASSRLS`）で行い、利用を監査ログに残す。
 
@@ -1075,6 +1160,8 @@ GRANT SELECT ON permission, plan, entitlement, plan_entitlement, feature_flag, c
 | U3 | `audit_logs` TZ/構造 | `TIMESTAMP`(JST-naive), 単純列 | `TIMESTAMPTZ`(UTC), `tenant_id`/`trace_id`/`changes`, 月次パーティション | 既存行は `occurred_at AT TIME ZONE 'Asia/Tokyo'` で UTC 化。既定テナント付与 |
 | U4 | `result` 意味 | 0=Success/1=Failure | 0=Success/1=Failure/2=Denied | 値互換(拡張のみ)。下位互換維持 |
 
+> **予約共有テナントの先行シード（§5.1.1）:** 上記の既定テナント付与（Honshu=1）に**先立ち**、予約共有テナント（`id=0` / `PLATFORM_SHARED`）をスキーマ初期化時にシードする。`id=0` の明示 INSERT は BIGSERIAL 採番（1 起点）を乱さないため、最初の実テナントは従来どおり `id=1`（Honshu）となる。予約行が先に存在することで、共有ナレッジ（38）・共有ディメンション（22/35）の `tenant_id=0` 投入が FK 違反を起こさない。
+
 移行は EF Core Migration + バックフィルパッチで行い、既存行を壊さない（NULL 許容追加 → バックフィル → NOT NULL 化 / CLAUDE.md 原則 7）。パッチ手順と検証はオペレーターに提示する。
 
 ---
@@ -1086,6 +1173,7 @@ GRANT SELECT ON permission, plan, entitlement, plan_entitlement, feature_flag, c
 | `TEN-001` | テナントが存在しない/無効 | 404/403 | `status` が Suspended/Terminated は 403(fail-closed) |
 | `TEN-002` | テナントコード重複 | 409 | `uq_tenant_code` 違反 |
 | `TEN-003` | テナント境界違反(他テナント資源アクセス) | 403 | RLS/アプリ層で検知。監査記録 |
+| `TEN-004` | 予約テナントの改変/削除禁止 | 409 | `id=0`(PLATFORM_SHARED)の status 遷移/論理削除/DELETE を拒否(§5.1.1) |
 | `TEN-010` | ユーザが存在しない/無効 | 404/403 | `app_user.status` 参照 |
 | `TEN-011` | firebase_uid 重複/未紐付け | 409/422 | `uq_app_user_firebase_uid` |
 | `TEN-012` | ロールのテナント不整合 | 422 | `app_user_role` のロールが他テナントカスタムロール(§5.6) |
@@ -1113,6 +1201,7 @@ GRANT SELECT ON permission, plan, entitlement, plan_entitlement, feature_flag, c
 4. **監査 `changes` JSONB のサイズ肥大:** 大きな before/after を全件保持するとパーティションが肥大。差分のみ/しきい値超は S3 参照に切替、等のポリシーが要る（26 スナップショット/DocDB と整合）。
 5. **role_permission の RLS 非適用:** カスタムロールの権限構成が他テナントに漏れないよう、`role_permission` はアプリ層でロールのテナントを検証している。将来テナント数が増えたら `role_permission` にも `tenant_id` 冗長列 + RLS を検討（現状は結合コスト回避で非保持）。
 6. **Silo テナントの Control Plane 配置:** Silo（DB 分離）テナントでも `tenant`/`contract`/`invoice` 等のコントロールプレーンは共有 Control Plane RDS に集約する想定。高分離要件（データ主権）でコントロールプレーンまで分離する需要があるか要確認。
+7. **論理削除運用における一意制約の統一方針（意図的な非統一）:** 同一テーブル内で一意制約の論理削除考慮が非統一である。`app_user.firebase_uid`/`app_user.email`/`organization.code` は **全行対象の恒久一意**（`is_deleted` を条件に含めない＝論理削除後もキーを恒久予約）、`app_user.employee_no` は **`WHERE is_deleted=FALSE` の部分一意**（削除済の値の再利用を許容）である。これは「認証 SoT（Firebase）との一意対応・監査追跡性（削除済ユーザ/組織と同一メール・同一コードでの再作成による同一性の取り違え防止）を優先して恒久予約する」意図的な設計判断であり、employee_no は業務上の再割当（退職者の社員番号再利用）を許容するため部分索引とした。**選択肢A**（現状維持＝email/code は恒久予約、employee_no は再利用可。監査上安全だがソフト削除済ユーザと同一メールでの再招待は不可）、**選択肢B**（email/code も `WHERE is_deleted=FALSE` の部分索引に揃え再利用を許容。運用は柔軟だが削除済との突合・監査が複雑化）。PoC は A（恒久予約）、メール再利用による再招待要件が顕在化したら B を再評価。
 
 ---
 
@@ -1123,4 +1212,7 @@ GRANT SELECT ON permission, plan, entitlement, plan_entitlement, feature_flag, c
 - [09 バックオフィス（basic-design）](./../basic-design/09-service-backoffice.md) — 契約/課金/エンタイトルメントの業務フロー・画面・API
 - [27 SI カスタマイズ / プロビジョニング（detailed-design）](./../detailed-design/27-si-customization-and-provisioning.md) — `feature_flag`/`connector`/`provisioning_task` の運用詳細
 - [11 非機能 / セキュリティ / テナンシー（basic-design）](./../basic-design/11-nonfunctional-security-tenancy.md) — RLS/監査/機微値マスキングの非機能要件
+- [22 スタースキーマ変換（detailed-design）](./../detailed-design/22-star-schema-transformation.md) — 共有ディメンションの `tenant_id=0` 割当（本 §5.1.1 の予約テナントを参照）
+- [35 スタースキーマ DWH](./35-star-schema-dwh.md) — 共有次元/予約メンバーの物理 DDL（`tenant_id=0` sentinel）
+- [38 AI/ベクター/ナレッジ](./38-ai-vector-knowledge-schema.md) — 共有ナレッジの `tenant_id=0`・`ai.platform_shared_tenant_id()`（本 §5.1.1 が確定値 `0` を供給）
 - ブリーフ §5（SoT マップ）・§6（マルチテナンシー）・§9（DDL 規約）・§10（エラーコード）・§14（テーブル所有マップ）

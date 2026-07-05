@@ -5,7 +5,7 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: SCIP プラットフォームの構想・事業ドメイン・提供価値・差別化・スコープ・ロードマップを定義する
-related: [overall-architecture, canonical-domain-model, service-analytics]
+related: [overall-architecture, canonical-domain-model, service-analytics, nonfunctional-security-tenancy, star-schema-dwh, data-integration-mapping]
 ---
 
 # 基本設計: 構想と全体像
@@ -17,7 +17,7 @@ related: [overall-architecture, canonical-domain-model, service-analytics]
 > 位置づけ: 本書は構想・ビジョン・スコープ・ロードマップを**権威的に所有**する。アーキテクチャの具体は
 > [全体アーキテクチャ](./02-overall-architecture.md)、共通エンティティの定義は
 > [正準ドメインモデル](./03-canonical-domain-model.md)、分析基盤の詳細は
-> [分析・可視化サービス](./07-analytics-visualization.md) が所有する。本書はそれらを参照し、再定義しない。
+> [分析・可視化サービス](./07-service-analytics.md) が所有する。本書はそれらを参照し、再定義しない。
 
 ---
 
@@ -64,7 +64,7 @@ graph TD
 ```
 
 - **共通データ基盤**: 業種横断の正準エンティティ（Party/Product/Location/Region 等）とスタースキーマ。詳細は [正準ドメインモデル](./03-canonical-domain-model.md)。
-- **分析・可視化**: 統一軸での集計・比較・トレンド分析。詳細は [分析・可視化サービス](./07-analytics-visualization.md)。
+- **分析・可視化**: 統一軸での集計・比較・トレンド分析。詳細は [分析・可視化サービス](./07-service-analytics.md)。
 - **意思決定支援**: 分析結果を起点に、AIエージェント群（バーチャルカンパニー）が意思決定を支援する。
 
 ---
@@ -164,7 +164,7 @@ graph TD
   これにより「分析に載せるための後付け変換」がほぼ不要になり、連携難易度が構造的に低い。
 - **他社アプリ = マッピング連携**: 他社アプリは任意のスキーマを持つため、取込 → 人的な項目マッピング → 名寄せ →
   正準モデルへの正規化 → スタースキーマ化、という経路で吸収する。この経路の設計は
-  [データ連携とマッピング](./10-data-integration-mapping.md) が所有する。
+  [データ連携とマッピング](./10-data-integration-and-mapping.md) が所有する。
 
 > 重要: 自社アプリ経路と他社アプリ経路は**最終的に同一のスタースキーマ**に合流する。
 > 分析・AI 機能は合流地点（DWH + セマンティック層）に対して構築されるため、データ源が自社か他社かを意識しない。
@@ -362,7 +362,7 @@ timeline
 
 | ID | リスク | 影響 | 緩和策 |
 |----|-------|------|-------|
-| R-1 | 他社アプリのデータ品質・マッピングコストが想定を超える | 連携難易度の低さ（差別化①）が損なわれる | マッピング資産の蓄積・再利用、DQ ルール（データ品質検証）、人的レビューの記録化（[マッピング設計](./10-data-integration-mapping.md)） |
+| R-1 | 他社アプリのデータ品質・マッピングコストが想定を超える | 連携難易度の低さ（差別化①）が損なわれる | マッピング資産の蓄積・再利用、DQ ルール（データ品質検証）、人的レビューの記録化（[マッピング設計](./10-data-integration-and-mapping.md)） |
 | R-2 | 正準モデルが特定業種（履物メーカー）に引きずられ汎用性を欠く | 小売/倉庫展開時に破綻・大改修 | 業種横断の正準モデルを先に固め、Honshu はその一実装として写像（[正準ドメインモデル](./03-canonical-domain-model.md)） |
 | R-3 | 実ユーザ知見がメーカーに偏り、小売/倉庫のペルソナ・要件が仮説のまま | 誤った機能への投資 | 段階拡張で各業種の実ユーザヒアリングを先行実施（→ D-1） |
 | R-4 | Honshu 実装の技術的負債（tenant_id 不在・JST-naive TS・日本語VARCHARステータス）の移行難度 | 移行遅延・データ不整合 | 差分を明示設計し下位互換パッチを用意（ブリーフ §6/§9、原則7 データ保護） |
@@ -434,9 +434,9 @@ timeline
 
 - [全体アーキテクチャ](./02-overall-architecture.md) — 5プレーン論理アーキテクチャ、データフロー、SoT マップの具体（`overall-architecture`）
 - [正準ドメインモデル](./03-canonical-domain-model.md) — Party/Product/Location/Region 等の共通エンティティ定義（`canonical-domain-model`）
-- [分析・可視化サービス](./07-analytics-visualization.md) — 商品×地域×販売先の分析機能、メトリクス/セマンティック層（`service-analytics`）
+- [分析・可視化サービス](./07-service-analytics.md) — 商品×地域×販売先の分析機能、メトリクス/セマンティック層（`service-analytics`）
 - [非機能・セキュリティ・テナンシー](./11-nonfunctional-security-tenancy.md) — マルチテナンシー方式・RLS・非機能要件
-- [データ連携とマッピング](./10-data-integration-mapping.md) — 他社アプリ取込・項目マッピング・名寄せ
+- [データ連携とマッピング](./10-data-integration-and-mapping.md) — 他社アプリ取込・項目マッピング・名寄せ
 - [Phase 1 真の課題](../../../.ai-native/outputs/phase1/true-problem.md) — リファレンス実装 Honshu が解いた原点課題
 - [プロジェクトスポンサーペルソナ](../../../.ai-native/domain-context/persona/project-sponsor-persona.md) — 業務知見の代理提供者と委任境界
 - [技術スタック決定](../../../.ai-native/outputs/phase4/tech-stack-decision.md) — 継承技術スタックの根拠

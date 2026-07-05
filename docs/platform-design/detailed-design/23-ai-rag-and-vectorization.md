@@ -5,7 +5,7 @@ category: detailed-design
 version: 0.1.0
 status: draft
 purpose: 埋め込み・ベクター化・RAG取得・集計/分類AI・インサイト生成・ドメイン知識活用の詳細実装ロジックを、実装者が着手できる具体度で定義する
-related: [ai-vector-knowledge-schema, service-analytics, decision-support-ai, ai-agent-virtual-company]
+related: [ai-vector-knowledge-schema, service-analytics, decision-support-ai, ai-agent-virtual-company, ingestion-and-mapping-pipeline, control-plane-backoffice]
 ---
 
 # 詳細設計: AI / RAG / ベクター化
@@ -24,7 +24,7 @@ related: [ai-vector-knowledge-schema, service-analytics, decision-support-ai, ai
 > 以下は **参照するが再定義しない**:
 > - **物理スキーマ**（`kb_document` / `kb_chunk` / `kb_embedding`(pgvector) / `domain_knowledge` / `insight` / `analysis_run` の CREATE TABLE・列・制約・`tenant_id`・RLS、および DocDB(DynamoDB) アイテム形状）は
 >   [`38 AI/ベクター/ナレッジスキーマ`](../database-design/38-ai-vector-knowledge-schema.md) が所有。本書はベクターインデックスの**設計仕様（索引 DDL パターン・パラメータ）を提示**するが、テーブル本体の DDL は 38 が権威。
-> - **エージェント編成・意思決定支援ワークフロー・HITL** は [`08 意思決定支援/AIエージェント`](../basic-design/08-service-decision-support-ai.md)、詳細実装は [`24 AIエージェント/バーチャルカンパニー`](./24-ai-agent-virtual-company.md) が所有。本書はエージェントに**根拠検索（`rag_search`/`domain_lookup`）を供給する基盤**に徹する。
+> - **エージェント編成・意思決定支援ワークフロー・HITL** は [`08 意思決定支援/AIエージェント`](../basic-design/08-service-decision-support-ai.md)、詳細実装は [`24 AIエージェント/バーチャルカンパニー`](./24-ai-agent-and-virtual-company.md) が所有。本書はエージェントに**根拠検索（`rag_search`/`domain_lookup`）を供給する基盤**に徹する。
 > - **メトリクス/セマンティック層・集計・異常検知の本体**は [`07 分析・可視化`](../basic-design/07-service-analytics.md)、物理 dim/fact は [`35 スタースキーマ DWH`](../database-design/35-star-schema-dwh.md) が所有。**数値はここから取得し、LLM に生成させない**（§8）。
 > - **原文の取込パイプライン（コネクタ・Raw ランディング）** は [`21 取込 & 項目マッピング`](./21-ingestion-and-mapping-pipeline.md) が所有。本書は **KB 原文が取込まれた後の「ベクター化」以降**を主担当とする。
 
@@ -87,11 +87,11 @@ flowchart LR
     D1 --> DOC
     D2 --> DOC
     D3 --> DOC
-    VEC -.読取.-> RET
+    VEC -. "読取" .-> RET
     GEN -->|"数値はここから取得<br/>LLM生成禁止（§8）"| MET
     GEN -.-> DWH
     GEN --> OUT["回答 + 根拠引用<br/>insight / analysis_run（38）"]
-    GEN -.根拠として利用.-> AG["エージェント（08/24）<br/>rag_search / domain_lookup"]
+    GEN -. "根拠として利用" .-> AG["エージェント（08/24）<br/>rag_search / domain_lookup"]
 ```
 
 - **インジェストとサービングの分離理由:** 埋め込み生成は高コスト・高レイテンシ（Bedrock API 呼び出し）であり、サービング要求ごとに実行すると SLA を満たせない。原文更新イベントでのみインジェストを走らせ、サービングは索引済みベクターの近傍探索に徹する。
@@ -155,8 +155,9 @@ flowchart TD
 
 埋め込みは `kb_embedding`（38 所有）へ格納する。本書は**格納の論理契約**を定義する（列の権威定義は 38）。
 
-- 各行は `(tenant_id, chunk_id, embedding vector(1024), embedding_model, embedding_version, knowledge_scope, is_shared, effective_from, effective_to, is_deleted)` を持つ想定（列の正は 38）。
-- **upsert 冪等:** `(chunk_id, embedding_version)` を一意キーとし、同一チャンク×同一モデル版の再格納は上書き（重複行を作らない）。
+- 各行は `(tenant_id, chunk_id, collection, embedding vector(1024), embedding_model, embedding_version, knowledge_scope, is_shared, effective_from, effective_to, is_deleted)` を持つ想定（列の正は 38）。
+- **`collection`（NOT NULL、論理名前空間識別子）:** 用途分離の要であり、§4.4 の用途別コレクション、§4.5 の一貫性ルール（`embedding_version` × `collection` × `tenant_id`）、§5.3 の必須フィルタが機能上依存する。**本書がベクター検索の設計仕様として `collection` の存在を要求する**。その所在（`kb_embedding` に列として保持するか、`kb_chunk` から継承するか）と権威的な列定義・型・制約は **38 が定める**（未確定なら 38 側の設計判断とする）。いずれの所在でも近傍探索時に `collection` で絞り込めることを 38 に要求する。
+- **upsert 冪等:** `(chunk_id, embedding_version)` を一意キーとし、同一チャンク×同一モデル版の再格納は上書き（重複行を作らない）。`collection` はチャンクの用途で一意に定まるため、この一意キーと矛盾しない（同一チャンクは単一 collection に属する）。
 - **論理削除:** 原文失効・チャンク再分割時は `is_deleted` で無効化し、検索から除外。物理削除は再インデックス時にまとめる（VACUUM 負荷平準化）。
 
 ---
@@ -255,13 +256,13 @@ flowchart TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Green: "現行版 v_cur で検索提供中"
-    Green --> Building: "新版 v_new を並行構築<br/>（原文→再チャンク→再エンベッド→索引）"
-    Building --> Validating: "recall/レイテンシ/コストを新旧比較"
-    Validating --> Switching: "検索を v_new へ切替（フラグ）"
-    Validating --> Green: "劣化検出→破棄（v_cur 継続）"
-    Switching --> Draining: "v_cur を保持（ロールバック余地）"
-    Draining --> [*]: "安定確認後 v_cur を物理削除・VACUUM"
+    [*] --> Green: 現行版 v_cur で検索提供中
+    Green --> Building: 新版 v_new を並行構築（原文→再チャンク→再エンベッド→索引）
+    Building --> Validating: recall・レイテンシ・コストを新旧比較
+    Validating --> Switching: 検索を v_new へ切替（フラグ）
+    Validating --> Green: 劣化検出→破棄（v_cur 継続）
+    Switching --> Draining: v_cur を保持（ロールバック余地）
+    Draining --> [*]: 安定確認後 v_cur を物理削除・VACUUM
 ```
 
 - **冪等・非破壊:** 再構築は原文から冪等に生成でき、旧版を残したまま新版を構築するため、失敗しても現行検索は無傷（CLAUDE.md 原則2/4）。
@@ -343,7 +344,7 @@ graph TD
     EMB --> IDX["ベクター索引（§4）"]
     IDX --> RAG["RAG取得（§5, テナント境界厳守）"]
     RAG --> USE["集計/分類/インサイトAI（§7）<br/>エージェント（08/24）"]
-    USE -.承認済み意思決定を匿名化・構造化.-> LOOP["decision_history collection<br/>（学習ループ・再蓄積）"]
+    USE -. "承認済み意思決定を匿名化・構造化" .-> LOOP["decision_history collection<br/>（学習ループ・再蓄積）"]
     LOOP -.-> CLIENT
 ```
 
@@ -569,5 +570,5 @@ flowchart TD
 - [`38 AI/ベクター/ナレッジスキーマ`](../database-design/38-ai-vector-knowledge-schema.md)（document_id: ai-vector-knowledge-schema） — `kb_document`/`kb_chunk`/`kb_embedding`(pgvector)/`domain_knowledge`/`insight`/`analysis_run` の**物理スキーマ・列・制約・`tenant_id`・RLS**、および DocDB アイテム形状を**所有**。本書のベクターインデックス設計仕様（§4）を実装する。
 - [`07 分析・可視化サービス`](../basic-design/07-service-analytics.md)（document_id: service-analytics） — メトリクス/セマンティック層・集計・異常検知の本体。**数値の SoT**。本書の集計 AI/インサイトはここから数値を取得。
 - [`08 意思決定支援/AIエージェント`](../basic-design/08-service-decision-support-ai.md)（document_id: decision-support-ai） — 本書の `rag_search`/`domain_lookup` を消費する意思決定支援サービス。AI エラーコードの共通/エージェント帯（AI-0xx/1xx-6xx）を登録。
-- [`24 AIエージェント/バーチャルカンパニー`](./24-ai-agent-virtual-company.md)（document_id: ai-agent-virtual-company） — エージェントのオーケストレーション・ツール実行基盤・シミュレーション計算エンジンを所有。本書は根拠検索基盤を供給。
-- 参考: [`21 取込 & 項目マッピング`](./21-ingestion-and-mapping-pipeline.md)（原文取込）、[`22 スタースキーマ変換`](./22-star-schema-transformation.md)、[`11 非機能/セキュリティ/テナンシー`](../basic-design/11-nonfunctional-security-tenancy.md)、[`12 ADR`](../basic-design/12-architecture-decision-records.md)、[`37 コントロールプレーン`](../database-design/37-control-plane-backoffice.md)（`usage_metering`/`audit_logs`）。
+- [`24 AIエージェント/バーチャルカンパニー`](./24-ai-agent-and-virtual-company.md)（document_id: ai-agent-virtual-company） — エージェントのオーケストレーション・ツール実行基盤・シミュレーション計算エンジンを所有。本書は根拠検索基盤を供給。
+- 参考: [`21 取込 & 項目マッピング`](./21-ingestion-and-mapping-pipeline.md)（原文取込）、[`22 スタースキーマ変換`](./22-star-schema-transformation.md)、[`11 非機能/セキュリティ/テナンシー`](../basic-design/11-nonfunctional-security-tenancy.md)、[`12 ADR`](../basic-design/12-architecture-decision-records.md)、[`37 コントロールプレーン`](../database-design/37-control-plane-backoffice-schema.md)（`usage_metering`/`audit_logs`）。

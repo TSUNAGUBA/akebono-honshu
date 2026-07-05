@@ -5,7 +5,7 @@ category: database-design
 version: 0.1.0
 status: draft
 purpose: スタースキーマ DWH（Redshift Serverless）のディメンション/ファクトの物理スキーマ（CREATE TABLE・制約・サロゲート/SCD2列・DISTKEY/SORTKEY/圧縮・テナント分離）を権威的に定義する
-related: [service-analytics, star-schema-transformation, mdm-canonical-schema, schema-strategy-sot]
+related: [service-analytics, star-schema-transformation, mdm-canonical-schema, schema-strategy-sot, snapshot-document-db]
 ---
 
 # DBスキーマ設計: スタースキーマ DWH
@@ -79,7 +79,7 @@ erDiagram
     dim_currency    ||--o{ fact_sales : "currency_key"
     dim_promotion   ||--o{ fact_sales : "promotion_key"
     dim_employee    ||--o{ fact_sales : "employee_key"
-    dim_tenant      ||--o{ fact_sales : "tenant_key"
+    dim_tenant      ||--o{ fact_sales : "tenant_id 対 tenant_bk（自然キー結合）"
 
     dim_date        ||--o{ fact_inventory_snapshot : "date_key"
     dim_product     ||--o{ fact_inventory_snapshot : "product_key"
@@ -111,26 +111,31 @@ erDiagram
     dim_region      ||--o{ dim_customer : "region_key"
     dim_party       ||--o{ dim_customer : "包摂候補"
     dim_party       ||--o{ dim_supplier : "包摂候補"
+    dim_party       ||--o{ fact_shipment : "carrier（将来・dim_party採用時のみ）"
 ```
 
 - `dim_party` は `dim_customer`/`dim_supplier` を包摂する**選択肢**として併記する（ブリーフ §8）。初期スコープは役割特化次元（customer/supplier）を主とし、Party 統合次元は横断分析要件が確定した段階で採用する（§12-5）。
+- `fact_shipment.carrier_party_key`（運送事業者軸）は `dim_party` の carrier ロール解決に依存するが、初期スコープでは `dim_party` を投入せず **0=Not Applicable 固定 + degenerate な `carrier_no`** で表現する（`dim_party` 採用まで carrier 次元解決は保留。§4.7 / §12-5）。上図の carrier リレーションは将来採用時の参照を破線的に示す（初期は非解決）。
 - `dim_region` は `dim_location` / `dim_customer` の **outrigger（アウトリガー次元）**として参照される（地域階層を正規化保持し、roll-up をクエリで実施）。
 
 ### 2.2 バスマトリクス（適合次元 × ファクト）
 
 Kimball のバスマトリクスで、どのファクトがどの適合次元を参照するかを一覧化する（`R` = 役割複数の date）。
 
-| ファクト＼次元 | date | product | location | region | customer | supplier | channel | currency | uom | promotion | employee | tenant |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| fact_sales | R | ● | ● | ○ | ● | | ● | ● | ○ | ● | ● | ● |
-| fact_inventory_snapshot | ● | ● | ● | ○ | | | | ● | ○ | | | ● |
-| fact_inventory_movement | ● | ● | ● | ○ | | ● | | | ○ | | ● | ● |
-| fact_purchase_order | R | ● | ● | | | ● | | ● | ○ | | ● | ● |
-| fact_production | R | ● | ○ | | | ● | | | ○ | | ● | ● |
-| fact_shipment | R | ● | ● | ○ | ● | | | | ○ | | ● | ● |
-| fact_billing | R | ○ | ● | | ● | | | ● | ○ | | ● | ● |
+| ファクト＼次元 | date | product | location | region | customer | supplier | channel | currency | uom | promotion | employee | party | tenant |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| fact_sales | R | ● | ● | ○ | ● | | ● | ● | ○ | ● | ● | | ● |
+| fact_inventory_snapshot | ● | ● | ● | ○ | | | | ● | ○ | | | | ● |
+| fact_inventory_movement | ● | ● | ● | ○ | | ● | | | ○ | | ● | | ● |
+| fact_purchase_order | R | ● | ● | | | ● | | ● | ○ | | ● | | ● |
+| fact_production | R | ● | ○ | | | ● | | | ○ | | ● | | ● |
+| fact_shipment | R | ● | ● | ○ | ● | | | | ○ | | ● | △ | ● |
+| fact_billing | R | ○ | ● | | ● | | | ● | ○ | | ● | | ● |
 
-凡例: ● = 直接参照（FK 列）、○ = outrigger または任意参照、R = 役割複数（role-playing、§8.5）、空白 = 非参照。
+凡例: ● = 直接参照（FK 列）、○ = outrigger または任意参照、△ = 将来参照（`dim_party` 採用時のみ有効。初期は 0=N/A 固定 + degenerate `carrier_no`）、R = 役割複数（role-playing、§8.5）、空白 = 非参照。
+
+- `party` 列は `fact_shipment.carrier_party_key`（運送事業者=carrier ロール）に対応する。初期スコープでは `dim_party` を投入せず carrier 次元解決を保留するため △（将来参照）とし、当面は degenerate な `carrier_no` で表現する（§4.7 / §5.6 / §12-5）。
+- `fact_inventory_snapshot` の `currency`（●）は在庫評価額 `on_hand_value` の通貨帰属に対応（§5.2 に `currency_key` を保持）。`fact_billing` の `employee`（●）は請求担当者に対応（§5.7 に `employee_key` を保持）。
 
 ---
 
@@ -193,7 +198,7 @@ Kimball のバスマトリクスで、どのファクトがどの適合次元を
 
 ### 4.1 dim_date（暦・SCD1・事前生成・共有）
 
-暦は普遍的（テナント非依存）のため **`tenant_id` を持たず `DISTSTYLE ALL`（全ノード複製）で全ファクトへブロードキャスト結合を回避**する。これはブリーフ §8「全 dim は tenant_id を持つ」の**意図的な精緻化**であり、兄弟ドキュメント 34 が `currency`/`uom`/標準 `region` をテナント共有としている判断と整合する（テナント固有の会計期/祝日は §12-2 で別機構に委譲）。
+暦は普遍的（テナント非依存）のため **`tenant_id` を持たず `DISTSTYLE ALL`（全ノード複製）で全ファクトへブロードキャスト結合を回避**する。これはブリーフ §8「全 dim/fact は tenant_id を持つ」に対する**明示的な逸脱**である。**共有次元の物理スキーマ（`tenant_id` 列の有無・NULL 許容）はブリーフ §14 により本書 35 が所有する物理決定であり、本書はこれを (B) 非保持/NULL 方式で確定する**（`dim_date`/`dim_currency`/`dim_uom` は列なし、`dim_region` は `tenant_id NULL`=共有）。これにより **[スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22）§3.2/§3.5 が採る共有テナント sentinel `tenant_id=0`（NOT NULL）方式は本物理決定に置換される**（22 側の追随修正を要する。§12-9）。兄弟ドキュメント 34 が `currency`/`uom`/標準 `region` をテナント共有（`NULL`=共有）とする判断とは整合する。ただしブリーフ §8「全 dim tenant_id」原則の但し書き正式化（30/34 側）はオペレーター確認・上流正式化を要する事項として **§12-9 に論点化**する（テナント固有の会計期/祝日は §12-2 で別機構に委譲）。同様に `dim_currency`/`dim_uom`/標準 `dim_region` も共有次元として `tenant_id` 非保持/NULL とする（§4.10/§4.11/§4.2）。
 
 ```sql
 CREATE TABLE dim_date (
@@ -426,6 +431,8 @@ COMMENT ON COLUMN dim_supplier.supplier_type IS '区分 1=supplier(仕入先)/2=
 
 `customer`/`supplier` を包摂する**選択肢**（ブリーフ §8）。1 社が複数ロールを持つ Party モデル（34）を単一次元で表現する。初期スコープでは役割特化次元を主とし、本次元は横断分析要件確定後に採用する（§12-5）。
 
+> **carrier（運送事業者）ロールの初期スコープ解決:** `fact_shipment.carrier_party_key` は本次元の carrier ロールを解決先とするが、初期スコープでは役割特化次元（customer/supplier）を主とする方針上、carrier 専用の役割特化次元（`dim_carrier` 等）も本次元も投入しない。したがって **carrier 次元解決は `dim_party` 採用まで保留**し、初期は `carrier_party_key = 0`（Not Applicable）固定 + degenerate な `fact_shipment.carrier_no` で carrier 分析軸を表現する（§5.6）。`dim_party` を先行採用する場合は carrier ロースに限り本次元を投入して解決する（§12-5）。
+
 ```sql
 CREATE TABLE dim_party (
     party_key         BIGINT       IDENTITY(1,1) NOT NULL ENCODE az64, -- サロゲートPK
@@ -461,9 +468,9 @@ COMMENT ON TABLE dim_party IS '汎用取引先ディメンション（Partyモ�
 ```sql
 CREATE TABLE dim_channel (
     channel_key       BIGINT       IDENTITY(1,1) NOT NULL ENCODE az64, -- サロゲートPK
-    channel_bk        VARCHAR(64)  NOT NULL ENCODE zstd,        -- 業務自然キー（チャネルコード）
+    channel_bk        VARCHAR(64)  NOT NULL ENCODE zstd,        -- 業務自然キー = ソースの不変元コード（名寄せ・突合の基準。変更しない）
     tenant_id         BIGINT       NOT NULL ENCODE az64,        -- テナント
-    channel_code      VARCHAR(64)  NOT NULL ENCODE zstd,        -- チャネルコード
+    channel_code      VARCHAR(64)  NOT NULL ENCODE zstd,        -- 表示用正規化チャネルコード（表記統一・BI 表示用。改称時は上書き）
     channel_name      VARCHAR(128) NOT NULL ENCODE zstd,        -- チャネル名称
     channel_type      SMALLINT     NOT NULL ENCODE bytedict,    -- 区分 1=store/2=ec/3=wholesale
     load_run_id       BIGINT       NULL ENCODE az64,            -- 生成ラン
@@ -473,12 +480,16 @@ DISTSTYLE ALL
 SORTKEY (tenant_id, channel_code);
 
 COMMENT ON TABLE  dim_channel            IS 'チャネルディメンション。店舗/EC/卸。SCD1（履歴分析価値が低いため単純上書き）';
+COMMENT ON COLUMN dim_channel.channel_bk   IS '業務自然キー = ソースの不変元チャネルコード。名寄せ・突合の基準で改称後も不変（SCD1 上書き対象外）';
+COMMENT ON COLUMN dim_channel.channel_code IS '表示用正規化チャネルコード。表記統一/改称を反映する現行表示値（SCD1 で上書き）。channel_bk とは役割が異なり、通常は元コード=表示コードだが分離を許容する';
 COMMENT ON COLUMN dim_channel.channel_type IS '区分 1=store(店舗)/2=ec(EC)/3=wholesale(卸)';
 ```
 
 ### 4.9 dim_tenant（テナント・SCD1）
 
 `*_bk = tenant.id`（37 所有の `tenant` を参照）。DWH 上でテナント属性（業種/プラン/地域）を分析軸にするための次元。ファクトの `tenant_id` は本次元の `tenant_bk` に一致する。
+
+> **サロゲート `tenant_key` はファクト結合に使われない:** 全ファクト（および tenant スコープ次元）は `tenant_key` 列を**持たず**、業務自然キー `tenant_id`（= `dim_tenant.tenant_bk`）で結合する。これは `tenant_id` が RLS・DISTKEY/SORTKEY 枝刈りの起点（§8.4）であり、全行に自然キーを持たせる方が物理最適化と一致するためである。サロゲート `tenant_key` は dim-to-dim 参照（例: 他次元の `home_region_key` 経由の分析軸連結）や BI ツールでの一意識別のみに用いる。§2.1 ER 図の `dim_tenant`—`fact_sales` リレーションも `tenant_id → tenant_bk` の自然キー結合であり、`tenant_key` FK は存在しない。
 
 ```sql
 CREATE TABLE dim_tenant (
@@ -677,10 +688,11 @@ CREATE TABLE fact_inventory_snapshot (
     date_key          INTEGER      NOT NULL ENCODE az64,        -- 在庫締め日（dim_date）
     product_key       BIGINT       NOT NULL ENCODE az64,        -- 商品SKU（dim_product）
     location_key      BIGINT       NOT NULL ENCODE az64,        -- 拠点（dim_location）
+    currency_key      BIGINT       NOT NULL DEFAULT 0 ENCODE az64, -- 評価額の通貨（dim_currency）。on_hand_value の通貨帰属
     uom_key           BIGINT       NOT NULL DEFAULT 0 ENCODE az64, -- 数量単位（dim_uom）
     -- measures（半加法: 拠点/商品では加算可、時間軸は不可）
     on_hand_qty       NUMERIC(14,4) NOT NULL DEFAULT 0 ENCODE az64, -- 実在庫数量
-    on_hand_value     NUMERIC(16,2) NOT NULL DEFAULT 0 ENCODE az64, -- 実在庫金額（評価額）
+    on_hand_value     NUMERIC(16,2) NOT NULL DEFAULT 0 ENCODE az64, -- 実在庫金額（評価額、currency_key の通貨建て）
     allocated_qty     NUMERIC(14,4) NOT NULL DEFAULT 0 ENCODE az64, -- 引当済数量
     available_qty     NUMERIC(14,4) NOT NULL DEFAULT 0 ENCODE az64, -- 有効在庫数量（on_hand-allocated）
     in_transit_qty    NUMERIC(14,4) NOT NULL DEFAULT 0 ENCODE az64, -- 輸送中数量
@@ -694,6 +706,7 @@ COMPOUND SORTKEY (tenant_id, date_key, location_key);
 
 COMMENT ON TABLE  fact_inventory_snapshot IS '在庫スナップショットファクト。周期スナップショット。グレイン=SKU×拠点×日付。半加法（時間軸SUM禁止）';
 COMMENT ON COLUMN fact_inventory_snapshot.available_qty IS '有効在庫=on_hand_qty-allocated_qty。半加法メジャー。日付軸ではSUMせず最新値/平均を取る';
+COMMENT ON COLUMN fact_inventory_snapshot.currency_key IS '評価額 on_hand_value の通貨（dim_currency）。マルチ通貨テナントで評価額の通貨を特定。単一通貨テナントは基軸通貨キーで固定';
 ```
 
 - **密度**（在庫 0 SKU も行を作るか）は未決（22 §12-3 / 本書 §12-6）。締め日基準で全 SKU×拠点を再計測する周期スナップショット。
@@ -820,12 +833,13 @@ CREATE TABLE fact_shipment (
     product_key            BIGINT      NOT NULL ENCODE az64,     -- 商品SKU（dim_product）
     from_location_key      BIGINT      NOT NULL ENCODE az64,     -- 出荷元倉庫（dim_location）
     consignee_customer_key BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 荷受人（dim_customer）
-    carrier_party_key      BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 運送事業者（dim_party role=carrier・任意）
+    carrier_party_key      BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 運送事業者（dim_party role=carrier）。初期スコープは 0=N/A 固定・将来 dim_party 採用時に解決（§4.7/§12-5）
     employee_key           BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 出荷作業担当者
     uom_key                BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 数量単位
     shipment_no            VARCHAR(64) NULL ENCODE zstd,         -- 出荷番号（degenerate）
     shipment_line_no       INTEGER     NULL ENCODE az64,         -- 明細番号（degenerate）
     shipping_document_no   VARCHAR(64) NULL ENCODE zstd,         -- 出荷帳票番号（degenerate）
+    carrier_no             VARCHAR(64) NULL ENCODE zstd,         -- 運送事業者コード/伝票（degenerate）。初期スコープの carrier 分析軸（dim_party 未投入のため次元化せず保持）
     -- measures（全加法）
     shipped_qty            NUMERIC(14,4) NOT NULL DEFAULT 0 ENCODE az64, -- 出荷数量
     shipment_weight        NUMERIC(14,4) NOT NULL DEFAULT 0 ENCODE az64, -- 出荷重量(kg)
@@ -840,6 +854,7 @@ DISTSTYLE KEY DISTKEY (product_key)
 COMPOUND SORTKEY (tenant_id, ship_date_key, from_location_key);
 
 COMMENT ON TABLE fact_shipment IS '出荷ファクト（WMS outbound）。トランザクション。グレイン=出荷明細1行。荷姿/重量/個口を付与。全加法。WMS shipment 由来';
+COMMENT ON COLUMN fact_shipment.carrier_party_key IS '運送事業者（dim_party role=carrier）。初期スコープは dim_party 未投入のため 0=Not Applicable 固定、carrier 分析軸は degenerate な carrier_no で代替。dim_party 採用時に本キーで解決（§4.7/§12-5）';
 ```
 
 ### 5.7 fact_billing（荷主請求/請求・トランザクション・全加法）
@@ -856,6 +871,7 @@ CREATE TABLE fact_billing (
     product_key           BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 対象商品（明細が商品紐付く場合。役務請求は 0=N/A）
     location_key          BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 対象拠点（倉庫）
     currency_key          BIGINT      NOT NULL ENCODE az64,      -- 通貨
+    employee_key          BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 請求担当者（dim_employee、未割当は 0=N/A）
     uom_key               BIGINT      NOT NULL DEFAULT 0 ENCODE az64, -- 数量単位
     invoice_no            VARCHAR(64) NULL ENCODE zstd,          -- 請求書番号（degenerate）
     invoice_line_no       INTEGER     NULL ENCODE az64,          -- 明細番号（degenerate）
@@ -1124,16 +1140,18 @@ CREATE VIEW dim_ship_date     AS SELECT * FROM dim_date;
 
 ブリーフ §10（`DOMAIN-NNN`）。本書は**物理スキーマ側で検出/表現するもの**を列挙する。変換ロジック起因の `ANL-001`〜`ANL-010` は 22 が主所有し、本書はその書込先の列・制約を提供する。
 
+> **接頭辞について（ブリーフ §10 レジストリ整合）:** ブリーフ §10 の登録済みドメイン接頭辞に `DWH` は**存在しない**。DWH 固有の物理エラー（DISTKEY/SORTKEY 未設定・圧縮不整合・予約メンバー欠落・採番衝突）は**未登録接頭辞を新設せず、分析ドメイン `ANL` の連番（`ANL-020`〜）に寄せる**。これらは分析基盤（DWH）の物理レイヤで発生し所有は 35 だが、コード体系上は分析ドメインに属する。将来 DWH を独立ドメインとして扱う必要が生じた場合は、勝手な新設ではなくレジストリ SoT（30 / 共通ドキュメント）へ `DWH` を正式登録したうえで移行する。
+
 | コード | 意味 | 発生する物理箇所 | 主所有 |
 |--------|------|-----------------|--------|
 | ANL-001 | ファクトのサロゲート解決失敗（予約メンバー -1 送り） | ファクト FK 列（§3.2/§5） | 22（参照） |
 | ANL-003 | 一意グレイン違反（degenerate + 自然キー重複） | ファクトの一意グレイン検証（§10.2） | 22（参照） |
 | ANL-004 | 半加法メジャーの不正集計（在庫の時間軸 SUM 等） | `fact_inventory_snapshot`/集約 MV（§6.2） | 22/07 |
 | ANL-005 | 適合次元の粒度不一致（fact 間で dim 粒度が食い違う） | 適合次元 DDL（§2/§4） | 22/35 |
-| DWH-001 | DISTKEY/SORTKEY 未設定または不整合（ブロードキャスト多発） | 物理 DDL（§8.2） | 35 |
-| DWH-002 | 圧縮エンコード不整合（ストレージ/スキャン非効率） | ENCODE 定義（§8.3） | 35 |
-| DWH-003 | 予約メンバー未投入（-1/0 欠落で早期到着ファクトが FK 違反相当） | 次元シード（§3.2） | 35 |
-| DWH-004 | サロゲート採番衝突（IDENTITY と予約メンバー値の重複） | IDENTITY seed / EXPLICIT_IDS（§3.2） | 35 |
+| ANL-020 | DISTKEY/SORTKEY 未設定または不整合（ブロードキャスト多発） | 物理 DDL（§8.2） | 35 |
+| ANL-021 | 圧縮エンコード不整合（ストレージ/スキャン非効率） | ENCODE 定義（§8.3） | 35 |
+| ANL-022 | 予約メンバー未投入（-1/0 欠落で早期到着ファクトが FK 違反相当） | 次元シード（§3.2） | 35 |
+| ANL-023 | サロゲート採番衝突（IDENTITY と予約メンバー値の重複） | IDENTITY seed / EXPLICIT_IDS（§3.2） | 35 |
 | CMN-001 | テナントスコープ違反（RLS 由来・tenant_id 不整合） | 全 fact/dim の RLS（§8.4） | 11/37（参照） |
 | MAP-003 | 誤マージ split（canonical id 再採番 → fact の dim FK 付け替え） | dim メンバー再生成 + fact 再処理（22 §7.2） | 20（参照） |
 
@@ -1151,6 +1169,7 @@ CREATE VIEW dim_ship_date     AS SELECT * FROM dim_date;
 | 6 | `fact_inventory_snapshot` の密度（在庫 0 SKU も行を作るか） | 密=欠品分析容易だがストレージ増／疎=軽量だが 0 在庫可視化に補完要（§5.2） | 35（22 §12-3 と連動） |
 | 7 | factless fact（promotion_coverage / assortment_plan）の導入是非 | 施策未消化・欠品分析の価値 vs 追加ロード/ストレージ。07 の分析要件確定後（§6.3） | 35 / 07 |
 | 8 | Redshift RLS のセッションコンテキスト束縛方式 | `current_setting('app.tenant_id')` 相当が Redshift Serverless で機能するか、DB ロール⇄テナントのマッピング表方式か。PoC で実証（§8.4） | 35 / 11（セキュリティ最終署名） |
+| 9 | 共有次元（`dim_date`/`dim_currency`/`dim_uom`/標準 `dim_region`）の `tenant_id` 物理表現（22 との整合） | 本書 §4.1 は暦/通貨/単位/標準地域を `tenant_id` 非保持（`dim_region` は `NULL`=共有）・`DISTSTYLE ALL` の共有次元とする。これは**ブリーフ §8「全 dim/fact は tenant_id を持つ」に対する明示的な逸脱**であり、かつ **[スタースキーマ変換](../detailed-design/22-star-schema-transformation.md)（22）§3.2（採番表 178-179 行）/§3.2 末尾（187 行）/§3.5 が採る「共有テナント sentinel `tenant_id=0`（NOT NULL）」方式・および 22 の「NULL tenant_id は採用しない」断定と正面から矛盾する**（22 の変換は 35 に存在しない `tenant_id` 列へ 0 を書こうとし、かつ 22 が否定した NULL 方式を 35 が採るため、そのままでは ELT ロードが破綻する）。34 の共有マスタ判断（`currency`/`uom`/標準 `region` のテナント共有・`NULL`=共有）とは整合する。**解決（本書の決定・SoT）:** 共有次元の**物理スキーマ（`tenant_id` 列の有無・NULL 許容）はブリーフ §14 により本書 35 が所有・SoT** であるため、本書は **(B) 非保持/NULL 方式に一本化する**（`dim_date`/`dim_currency`/`dim_uom` は列なし、`dim_region` は `tenant_id NULL`=共有）。**22 §3.2/§3.5/§187 の sentinel `tenant_id=0` 記述および NULL 否定の根拠は本物理決定に置換され、22 側の追随修正（sentinel=0 前提の採番表・共有次元段落の撤回、共有参照の `*_bk` を `tenant_id` 非依存に修正）を要する。** 残る論点は「ブリーフ §8『全 dim tenant_id』原則の但し書き正式化」のみ: (a) ブリーフ §8 に「共有マスタ由来次元は tenant 非スコープ」但し書きを 30/34 側で正式化し本書はそれを参照（推奨）、(b) 逸脱として本項でオペレーター確認を得たうえで維持。トレードオフ = 共有次元に `tenant_id` を強制すると全テナント複製で冗長・ブロードキャスト増、非保持だと RLS 除外行（§8.4）のセキュリティ署名（11）が必要 | 35（物理 SoT・決定）/ 22（追随修正）/ 30 / 34 / 11（ブリーフ §8 の但し書き正式化） |
 
 ---
 
@@ -1160,4 +1179,4 @@ CREATE VIEW dim_ship_date     AS SELECT * FROM dim_date;
 - [DBスキーマ設計: MDM / Canonical](./34-mdm-canonical-schema.md)（34） — `*_bk` を供給する正準エンティティ（`canonical_sku`/`canonical_product`/`canonical_location`/`canonical_party`/`region`/`product_category`/`currency`/`uom`）と DWH 対応契約（34 §11）の所有元。
 - [DBスキーマ設計: スキーマ戦略と SoT](./30-schema-strategy-and-sot.md)（30） — 命名/DDL/テナンシー/共通列の横断規約。本書の DWH 固有逸脱（サロゲート PK・SCD2・Redshift 制約非強制）の基準。
 - [基本設計: 分析・可視化サービス](../basic-design/07-service-analytics.md)（07） — メトリクス/セマンティック層・加法性制約の消費者。本書のファクト加法性区分（§6.2）と集約方針（§6.4）を利用する。
-- [詳細設計: スナップショット / DocDB](../detailed-design/26-snapshot-document-db.md)（26） — 集約スナップショット静的ファイルの生成・版管理・CDN 配信。本書の集約テーブル方針（§6.4）の下流。
+- [詳細設計: スナップショット / DocDB](../detailed-design/26-snapshot-and-document-db.md)（26） — 集約スナップショット静的ファイルの生成・版管理・CDN 配信。本書の集約テーブル方針（§6.4）の下流。

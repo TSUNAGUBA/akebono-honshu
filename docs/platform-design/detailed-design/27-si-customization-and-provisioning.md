@@ -33,7 +33,7 @@ Honshu 固有だった要素（11 桁品番構成・18 マスタ・履物特有�
 | 区分 | 本書の扱い |
 |------|-----------|
 | **owns（権威的定義）** | 共通化 vs カスタマイズの**レイヤ戦略**、カスタマイズ**手段カタログ**とその選択基準、テナントプロビジョニングの**ライフサイクル / 状態遷移 / オーケストレーション手順**、拡張がスタースキーマへ波及する**設計パターン**、カスタマイズの**下位互換・データ保護ルール**、共通コア汚染防止と**アップグレード可能性のガバナンス** |
-| **参照（再定義しない）** | 設定・プロビジョニングの**物理スキーマ**（`feature_flag`/`tenant_feature`/`connector`/`connector_config`/`provisioning_task`/`plan`/`entitlement` 等は [37 コントロールプレーン/バックオフィス](../database-design/) が所有）、マッピングメタデータの物理スキーマ（`mapping_rule`/`source_field` 等は [36 マッピング](../database-design/) が所有）、DocDB / スナップショットの物理設計（[26 スナップショット/DocDB](./26-snapshot-and-document-db.md) が所有）、DWH の `dim_*`/`fact_*`（[35 DWH](../database-design/) が所有）、各 OLTP の DDL（[31/32/33](../database-design/) が所有）、バックオフィスの業務フロー（[09 バックオフィス](../basic-design/09-service-backoffice.md) が所有） |
+| **参照（再定義しない）** | 設定・プロビジョニングの**物理スキーマ**（`feature_flag`/`tenant_feature`/`connector`/`connector_config`/`provisioning_task`/`plan`/`entitlement` 等は [37 コントロールプレーン/バックオフィス](../database-design/37-control-plane-backoffice-schema.md) が所有）、マッピングメタデータの物理スキーマ（`mapping_rule`/`source_field` 等は [36 マッピング](../database-design/36-mapping-metadata-schema.md) が所有）、DocDB / スナップショットの物理設計（[26 スナップショット/DocDB](./26-snapshot-and-document-db.md) が所有）、DWH の `dim_*`/`fact_*`（[35 DWH](../database-design/35-star-schema-dwh.md) が所有）、各 OLTP の DDL（[31 小売](../database-design/31-oltp-retail-schema.md)/[32 メーカー](../database-design/32-oltp-manufacturer-schema.md)/[33 WMS](../database-design/33-oltp-wms-schema.md) が所有）、バックオフィスの業務フロー（[09 バックオフィス](../basic-design/09-service-backoffice.md) が所有） |
 
 > **SoT 宣言（本書が扱う「カスタマイズ設定」の Source of Truth）:**
 > カスタマイズ設定は**それ自体が独立したデータ種別**であり、以下のとおり複数の SoT に分散する。
@@ -49,7 +49,7 @@ Honshu 固有だった要素（11 桁品番構成・18 マスタ・履物特有�
 > | テナント拡張属性（構造化された固有項目の値） | 拡張テーブル（各 OLTP）／ DynamoDB（柔軟属性） | 各 OLTP 所有 [31/32/33] ／ [26] |
 > | UI/UX テーマ設定 | RDS Control Plane（`tenant_feature` の一種）／ DocDB | [37] ／ [26] |
 > | レポート / 帳票テンプレート定義 | RDS メタデータ + S3（テンプレート本体） | [37] / オブジェクトは S3 |
-> | 独自分析軸（オプションディメンション）の定義 | RDS メタデータ + DWH 実体（`dim_*_ext` 等） | [37]（定義）／ [35]（実体） |
+> | 独自分析軸（オプションディメンション）の定義 | RDS メタデータ + DWH 実体（`dim_*_ext` 等） | 定義は暫定 [37]（未決 #1、確定は [37]/[36] 調整時）／ 実体は [35] |
 >
 > **原則（ブリーフ §5）:** 設定の SoT（Control Plane / メタデータ DB）への書込を**先行**し、
 > それを反映する派生（Custom Claims・DWH 拡張列・DocDB 読み取りモデル・スナップショット）は**後追い**で更新する。
@@ -96,11 +96,11 @@ graph TD
 | **L1 共通コア** | 正準ドメインモデル（Party/Product/Location/Region）、共通 DDL 規約、スタースキーマの適合次元、API 契約、RLS 境界 | **不可侵**（プラットフォーム全体で単一）| プラットフォーム開発チームのみ | コアリリース（全テナント一斉、後方互換必須）|
 | **L2 設定** | フィーチャーフラグ、プラン / エンタイトルメント、項目マッピング、コネクタ、UI 表示設定の一部 | 設定値のみ可変（構造は不変）| オペレーター / SI 担当 | Control Plane の設定 CRUD（[37]）|
 | **L3 データ拡張** | テナント固有の追加項目（型付き拡張テーブル・`attributes JSONB`・DocDB 柔軟属性）| 追加のみ（既存列は不変）| SI 担当（登録は要ガバナンス）| 拡張定義登録 → 拡張テーブル / DocDB へ格納 |
-| **L4 分析拡張** | 独自分析軸（オプションディメンション）、カスタムメトリクス定義、テナント固有の集計軸 | 追加のみ | SI 担当 / 分析担当 | メトリクス定義登録 → DWH 拡張（§5）|
+| **L4 分析拡張** | 独自分析軸（オプションディメンション）、カスタムメトリクス定義、テナント固有の集計軸 | 追加のみ | SI 担当 / 分析担当 | メトリクス定義登録 → DWH 拡張（§4）|
 | **L5 提示** | UI/UX テーマ（配色・ロゴ・レイアウト）、帳票 / レポートテンプレート、ダッシュボード構成 | 高可変 | オペレーター / エンドユーザー（一部）| テーマ設定 / テンプレート編集 |
 
 **設計上の含意:**
-- **L1 は絶対に触らない。** クライアント固有の要望は必ず L2〜L5 のいずれかへ写像する。写像できない要望は「共通コアの変更提案」として §7 のガバナンスプロセスに乗せ、全テナント共通の後方互換な機能追加として扱う。
+- **L1 は絶対に触らない。** クライアント固有の要望は必ず L2〜L5 のいずれかへ写像する。写像できない要望は「共通コアの変更提案」として §6 のガバナンスプロセスに乗せ、全テナント共通の後方互換な機能追加として扱う。
 - **上位レイヤは下位レイヤに依存してよいが、逆は不可。** L3 の拡張項目が L1 のエンティティに `tenant_id` + FK でぶら下がるのは可。L1 のテーブルが特定テナントの拡張列を持つことは不可。
 - **カスタマイズの「重さ」は L5 → L2 → L3 → L4 の順で軽い。** UI テーマ変更は即時・低リスク、独自分析軸追加は DWH 変換への波及があり最も重い。SI はまず軽いレイヤで要望を満たせないかを検討する。
 
@@ -115,7 +115,7 @@ flowchart TD
     B -->|"NO 単一テナント固有"| G["カスタマイズで吸収"]
     C -->|"YES"| D["設定レイヤ L2 で対応<br/>フィーチャーフラグ/マッピング"]
     C -->|"NO"| E{"後方互換な<br/>コア拡張が可能か？"}
-    E -->|"YES"| F["共通コア拡張提案<br/>§7 ガバナンスへ"]
+    E -->|"YES"| F["共通コア拡張提案<br/>§6 ガバナンスへ"]
     E -->|"NO 破壊的"| G
     G --> H{"どの拡張手段が<br/>最適か？"}
     H --> I["L3 データ拡張"]
@@ -229,8 +229,10 @@ CREATE TABLE product_ext (
 ```
 
 **拡張定義の登録（メタデータ）:** どのテナントがどの拡張項目を持つか（項目名・型・分析軸か否か・表示ラベル）は
-**Control Plane の拡張定義レジストリ（[37]）**に登録する。この定義が UI の動的フォーム生成・DWH 取込マッピング・dq_rule の源泉となる。
-拡張テーブルの**実データ**は各 OLTP が SoT、**拡張の定義**は Control Plane が SoT。
+**拡張定義レジストリ**に登録する。この定義が UI の動的フォーム生成・DWH 取込マッピング・dq_rule の源泉となる。
+拡張テーブルの**実データ**は各 OLTP が SoT、**拡張の定義**はメタデータ側の SoT が保持する。
+なお拡張定義レジストリの物理配置（[37] Control Plane へ集約するか、[36] メタデータ DB 寄りにするか）は
+**暫定的に [37] に集約する扱い（未決事項 #1）**であり、ブリーフ §14 の [37] 所有テーブル一覧には未掲載の暫定判断である。確定は [37]/[36] 調整時に行う。
 
 ### 2.5 C4: マッピング設定（L2）
 
@@ -238,7 +240,7 @@ CREATE TABLE product_ext (
 
 - **物理実現:** [36 マッピング] が所有する `source_field` → `canonical_attribute` の `mapping_rule` と `transform_expression`。SI 担当が人的にマッピングを解決し `mapping_review` に記録する（ブリーフ §14）。
 - **本書での位置づけ:** マッピングは**「他社データを共通化に取り込む」カスタマイズ手段**。自社アプリは最初からスタースキーマ連携前提のスキーマなのでマッピングは最小、他社アプリは項目マッピングを介する（ブリーフ §2/§8）。
-- **詳細:** マッピングパイプラインの内部処理は [21 取込&マッピングパイプライン](./21-ingestion-and-mapping-pipeline.md)、物理スキーマは [36] が所有。本書は「テナントプロビジョニングの一工程としてのマッピング設定」（§4）として扱う。
+- **詳細:** マッピングパイプラインの内部処理は [21 取込&マッピングパイプライン](./21-ingestion-and-mapping-pipeline.md)、物理スキーマは [36] が所有。本書は「テナントプロビジョニングの一工程としてのマッピング設定」（§3）として扱う。
 - **エラー:** 未解決マッピング `MAP-###`、変換式エラー `ETL-###`。未解決項目があっても取込全体は止めず、解決済み項目まで処理し未解決を報告（グレースフルデグラデーション、原則 4）。
 
 ### 2.6 C5: レポート / 帳票テンプレート（L5）
@@ -253,13 +255,13 @@ CREATE TABLE product_ext (
 ### 2.7 C6: 独自分析軸（L4）
 
 **目的:** テナント固有の分析軸（例: 履物なら「用途区分」、小売なら「フランチャイズ / 直営区分」）を、
-共通の適合次元を壊さずに分析へ追加する。詳細な波及設計は §5 で述べる。
+共通の適合次元を壊さずに分析へ追加する。詳細な波及設計は §4 で述べる。
 
 - **物理実現（[35] 所有の設計に従う）:** 適合次元（`dim_product` 等）は**共有・不変**とし、テナント固有軸は次のいずれかで表現する。
   - **拡張ディメンション `dim_*_ext`**（適合次元にサロゲートキーで 1:1 連結する拡張属性群）、
   - **ジャンク次元**（複数の低カーディナリティフラグを束ねる）、
   - **ブリッジテーブル**（多対多の軸）。
-- **設定 SoT:** 分析軸の**定義**（軸名・粒度・所属ファクト・集計方法）は Control Plane のメトリクス / 次元定義レジストリ（[37]）、**実体**は DWH（[35]）。定義先行 → 実体構築の順序（SoT 先行）。
+- **設定 SoT:** 分析軸の**定義**（軸名・粒度・所属ファクト・集計方法）はメトリクス / 次元定義レジストリ（暫定 [37]、未決 #1。ブリーフ §5 の SoT マップでは「メトリクス / セマンティック定義 = メタデータ DB(RDS)」であり配置は [37]/[36] 調整時に確定）、**実体**は DWH（[35]）。定義先行 → 実体構築の順序（SoT 先行）。
 - **アップグレード影響:** 加算的。適合次元の列・キーは不変のため、独自軸追加が他テナント / コア分析を壊さない。
 
 ---
@@ -273,22 +275,22 @@ CREATE TABLE product_ext (
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Contracted: "契約締結（プラン確定）"
-    Contracted --> Initializing: "初期化開始"
-    Initializing --> MasterLoading: "テナント/組織/RLS 初期化完了"
-    MasterLoading --> MappingSetup: "マスタ投入完了"
-    MappingSetup --> Validating: "マッピング/拡張/テーマ設定完了"
-    Validating --> Active: "検証パス（受入完了）"
-    Validating --> MappingSetup: "検証差戻し（設定修正）"
+    [*] --> Contracted: 契約締結（プラン確定）
+    Contracted --> Initializing: 初期化開始
+    Initializing --> MasterLoading: テナント/組織/RLS 初期化完了
+    MasterLoading --> MappingSetup: マスタ投入完了
+    MappingSetup --> Validating: マッピング/拡張/テーマ設定完了
+    Validating --> Active: 検証パス（受入完了）
+    Validating --> MappingSetup: 検証差戻し（設定修正）
 
-    Active --> Reconfiguring: "設定変更（フラグ/拡張/軸 追加）"
-    Reconfiguring --> Active: "変更適用完了"
+    Active --> Reconfiguring: 設定変更（フラグ/拡張/軸 追加）
+    Reconfiguring --> Active: 変更適用完了
 
-    Active --> Suspended: "契約停止/未払い"
-    Suspended --> Active: "契約再開"
-    Suspended --> Offboarding: "解約確定"
-    Active --> Offboarding: "解約確定"
-    Offboarding --> Archived: "データエクスポート/退避完了"
+    Active --> Suspended: 契約停止/未払い
+    Suspended --> Active: 契約再開
+    Suspended --> Offboarding: 解約確定
+    Active --> Offboarding: 解約確定
+    Offboarding --> Archived: データエクスポート/退避完了
     Archived --> [*]
 
     note right of Initializing
@@ -418,7 +420,7 @@ flowchart LR
 **設計ルール（[35] の適合次元設計に従属）:**
 - 適合次元（`dim_product`/`dim_location`/`dim_region`/`dim_date` など）には**テナント固有列を足さない**。固有属性は必ず `dim_*_ext` へ隔離する。これにより、あるテナントの拡張が他テナントのクエリ / スキーマに影響しない。
 - ファクトは `tenant_id`（Redshift DISTKEY / パーティション、ブリーフ §6/§8）でテナント分離。テナント固有軸を使わないクエリは拡張次元を JOIN しないため、コストゼロ。
-- 独自分析軸の**取込は取込パイプライン（[21/22]）**が担い、拡張定義レジストリ（[37]）の定義に従って `dim_*_ext` 列へ写像する。定義先行 → 実体構築（SoT 先行）。
+- 独自分析軸の**取込は取込パイプライン（[21/22]）**が担い、拡張定義レジストリ（暫定 [37]、未決 #1）の定義に従って `dim_*_ext` 列へ写像する。定義先行 → 実体構築（SoT 先行）。
 
 ### 4.3 地域粒度の動的切替との整合
 
@@ -440,7 +442,7 @@ flowchart LR
 | フィーチャーフラグの**新設** | 可 | 既定 OFF。既存テナント挙動不変 |
 | 独自分析軸の**追加** | 可 | `dim_*_ext` / ジャンク次元で隔離。適合次元不変 |
 | 拡張項目の**型変更 / 削除** | 原則不可 | やむを得ない場合はデータ更新パッチ生成 + オペレーター説明（原則 7）|
-| 適合次元 / コア DDL の**破壊的変更** | 不可 | §7 ガバナンスで後方互換な代替を設計 |
+| 適合次元 / コア DDL の**破壊的変更** | 不可 | §6 ガバナンスで後方互換な代替を設計 |
 
 ### 5.2 コアリリース時の既存テナント保護
 
@@ -482,7 +484,7 @@ flowchart TD
     style G fill:#2e6e5e,color:#fff
 ```
 
-- **全拡張はレジストリ登録必須:** 拡張テーブル・JSONB キー・独自軸・フラグは Control Plane の**拡張定義レジストリ（[37]）**に登録する。野良拡張（登録なしのスキーマ変更）を禁止し、棚卸し・影響分析を可能にする。
+- **全拡張はレジストリ登録必須:** 拡張テーブル・JSONB キー・独自軸・フラグは**拡張定義レジストリ（暫定 [37]、未決 #1）**に登録する。野良拡張（登録なしのスキーマ変更）を禁止し、棚卸し・影響分析を可能にする。
 - **命名 / 名前空間検査:** 登録時にコア列名・他拡張との衝突を検査。衝突は差戻し。
 
 ### 6.3 共通化への昇格（Promotion）プロセス
@@ -557,7 +559,7 @@ flowchart TD
 ## 10. 関連ドキュメント
 
 - [09 バックオフィス（サービス）](../basic-design/09-service-backoffice.md) — 契約 / 稼働設定 / 課金 / エンタイトルメントの業務フロー（`service-backoffice`）
-- [37 コントロールプレーン / バックオフィス スキーマ](../database-design/) — `feature_flag`/`tenant_feature`/`connector`/`provisioning_task`/`plan`/`entitlement` 等の物理スキーマ（`control-plane-backoffice-schema`）
+- [37 コントロールプレーン / バックオフィス スキーマ](../database-design/37-control-plane-backoffice-schema.md) — `feature_flag`/`tenant_feature`/`connector`/`provisioning_task`/`plan`/`entitlement` 等の物理スキーマ（`control-plane-backoffice-schema`）
 - [26 スナップショット / DocDB](./26-snapshot-and-document-db.md) — DocDB（DynamoDB）のテナント拡張属性・読み取りモデルの物理設計（`snapshot-document-db`）
 - [10 データ連携とマッピング](../basic-design/10-data-integration-and-mapping.md) — マッピング設定（C4）の全体像（`data-integration-mapping`）
 - [21 取込 & マッピングパイプライン](./21-ingestion-and-mapping-pipeline.md) — マッピング / 拡張取込の内部処理

@@ -77,8 +77,8 @@ erDiagram
     RETAIL_LOCATION ||--o{ RETAIL_INVENTORY : "拠点別在庫"
     RETAIL_LOCATION ||--o{ RETAIL_INVENTORY_MOVEMENT : "移動拠点"
     SALES_TRANSACTION ||--|{ SALES_TRANSACTION_LINE : "明細"
-    RETAIL_CUSTOMER ||--o{ SALES_TRANSACTION : "販売先"
-    PROMOTION ||--o{ SALES_TRANSACTION_LINE : "値引適用"
+    RETAIL_CUSTOMER |o--o{ SALES_TRANSACTION : "販売先(任意/匿名POSはNULL)"
+    PROMOTION |o--o{ SALES_TRANSACTION_LINE : "値引適用(任意)"
     RETAIL_INVENTORY ||--o{ RETAIL_INVENTORY_MOVEMENT : "在庫更新"
 
     RETAIL_PRODUCT_FAMILY {
@@ -179,16 +179,16 @@ erDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Draft: "EC カート/保留"
-    Draft --> Ordered: "受注確定"
-    Ordered --> Allocated: "在庫引当"
-    Allocated --> Shipped: "出荷"
-    Shipped --> Completed: "検収/売上確定"
-    Draft --> Confirmed: "POS 即時確定"
-    Confirmed --> Completed: "レジ完了"
-    Ordered --> Cancelled: "キャンセル"
-    Allocated --> Cancelled: "キャンセル"
-    Completed --> Returned: "返品"
+    [*] --> Draft: EC カート/保留
+    Draft --> Ordered: 受注確定
+    Ordered --> Allocated: 在庫引当
+    Allocated --> Shipped: 出荷
+    Shipped --> Completed: 検収/売上確定
+    Draft --> Confirmed: POS 即時確定
+    Confirmed --> Completed: レジ完了
+    Ordered --> Cancelled: キャンセル
+    Allocated --> Cancelled: キャンセル
+    Completed --> Returned: 返品
     Cancelled --> [*]
     Returned --> [*]
     Completed --> [*]
@@ -582,8 +582,9 @@ CREATE TABLE sales_transaction_line (
     CONSTRAINT chk_sales_line_discount     CHECK (discount_amount >= 0)
 );
 
+-- 一意制約は先頭に tenant_id を含める（ブリーフ §6/§9 の規約統一。親 FK でテナントスコープは担保されるが本書の全 UNIQUE と表記をそろえる）
 ALTER TABLE sales_transaction_line
-    ADD CONSTRAINT uq_sales_line_txn_no UNIQUE (sales_transaction_id, line_no);
+    ADD CONSTRAINT uq_sales_line_txn_no UNIQUE (tenant_id, sales_transaction_id, line_no);
 
 CREATE INDEX idx_sales_line_tenant_txn
     ON sales_transaction_line (tenant_id, sales_transaction_id);
@@ -722,6 +723,62 @@ END $$;
 - `FORCE ROW LEVEL SECURITY` でテーブル所有ロールにも RLS を適用。ETL 横断ロールのみ `BYPASSRLS` を限定付与し利用を監査（11 非機能 / 30 §4.2）。
 - **共通トリガ:** `updated_at` は 30 §5.1 の `set_updated_at()` を各テーブル（`retail_inventory_movement` を除く追記専用以外）に `trg_<table>_set_updated_at` として適用する。
 
+### 7.1 ヘッダ金額キャッシュの再計算トリガ（SoT→キャッシュ同期パス）
+
+`sales_transaction.header_gross_amount` / `header_net_amount` は **明細（`sales_transaction_line`, SoT）の集計キャッシュ**である（[5.1](#51-sales_transaction--商取引ヘッダ)）。SoT である明細の変更（INSERT / UPDATE / DELETE）を契機に、ヘッダ金額を `SUM(gross_amount)` / `SUM(net_amount)` から**再計算**するトリガを定義し、キャッシュのドリフトを DB レベルで防ぐ（ブリーフ §5「SoT→キャッシュの同期パスを欠落なく設計」/ CLAUDE.md 原則6・原則2）。集計は現在値からの全再計算（`SUM`）であり**冪等**。差分加算方式は再実行でドリフトするため採らない。
+
+```sql
+-- 明細(SoT)→ヘッダ金額キャッシュの冪等再計算。対象ヘッダを SUM から丸ごと再集計する
+CREATE OR REPLACE FUNCTION trg_fn_sales_transaction_line_rollup()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_txn_id BIGINT;
+BEGIN
+    -- INSERT/UPDATE は NEW、DELETE は OLD の親ヘッダを対象にする
+    v_txn_id := COALESCE(NEW.sales_transaction_id, OLD.sales_transaction_id);
+
+    -- UPDATE で親ヘッダが付け替えられた場合は旧ヘッダも再集計（両ヘッダの整合を保つ）
+    IF (TG_OP = 'UPDATE'
+        AND NEW.sales_transaction_id IS DISTINCT FROM OLD.sales_transaction_id) THEN
+        UPDATE sales_transaction h
+        SET header_gross_amount = COALESCE(agg.g, 0),
+            header_net_amount   = COALESCE(agg.n, 0)
+        FROM (
+            SELECT SUM(l.gross_amount) AS g, SUM(l.net_amount) AS n
+            FROM sales_transaction_line l
+            WHERE l.sales_transaction_id = OLD.sales_transaction_id
+        ) agg
+        WHERE h.id = OLD.sales_transaction_id;
+    END IF;
+
+    -- 対象ヘッダを SUM から全再計算（明細が全消滅した場合は 0）。
+    -- ヘッダ自体が CASCADE 削除済みなら該当行なしで no-op（安全）。
+    UPDATE sales_transaction h
+    SET header_gross_amount = COALESCE(agg.g, 0),
+        header_net_amount   = COALESCE(agg.n, 0)
+    FROM (
+        SELECT SUM(l.gross_amount) AS g, SUM(l.net_amount) AS n
+        FROM sales_transaction_line l
+        WHERE l.sales_transaction_id = v_txn_id
+    ) agg
+    WHERE h.id = v_txn_id;
+
+    RETURN NULL; -- AFTER トリガ。戻り値は無視される
+END;
+$$ LANGUAGE plpgsql;
+
+-- 明細の INSERT/UPDATE/DELETE 後にヘッダ金額を再計算（行単位 AFTER）
+DROP TRIGGER IF EXISTS trg_sales_transaction_line_rollup ON sales_transaction_line;
+CREATE TRIGGER trg_sales_transaction_line_rollup
+    AFTER INSERT OR UPDATE OR DELETE ON sales_transaction_line
+    FOR EACH ROW EXECUTE FUNCTION trg_fn_sales_transaction_line_rollup();
+```
+
+- **CASCADE 削除の扱い:** ヘッダ削除時は明細が `ON DELETE CASCADE`（[5.2](#52-sales_transaction_line--商取引明細fact_sales-源泉)）で先に消えるが、その際ヘッダ行は既に削除対象のため上記 `UPDATE ... WHERE h.id = v_txn_id` は該当行なしの no-op となり安全（ドリフトも例外も生じない）。
+- **RLS 整合:** トリガはトランザクション内で実行され、`app.tenant_id` が張られた同一セッションで動くため、再集計対象は自テナント行に限定される（§7 の RLS と整合）。
+- **アプリ側の責務:** アプリはヘッダ金額を直接書かない（DB がキャッシュを保証）。バルク取込や移行で `sales_transaction_line` を一括投入した後の**手動再同期**が必要な場合は、同一ロジック（`UPDATE sales_transaction h SET (header_gross_amount, header_net_amount) = (SELECT SUM(gross_amount), SUM(net_amount) FROM sales_transaction_line l WHERE l.sales_transaction_id = h.id)`）を全ヘッダに適用すれば冪等に回復できる。
+- **代替案（未決事項 R-7, §12）:** キャッシュを廃し明細集計ビュー/オンデマンド集計に切替える選択肢を残す。トレードオフはヘッダ一覧のクエリコスト（都度集計）とキャッシュ整合コストの比較。
+
 ---
 
 ## 8. スタースキーマ連携（写像設計）
@@ -842,6 +899,7 @@ flowchart LR
 | R-4 | 小売固有の属性マスタ（brand/category/season 等）を持つか、canonical/dim に委ねるか | 自前マスタ=CRUD/整合を握れるが 34 と二重。denormalized 列+xref=軽量だが整合はアプリ依存 | **denormalized 列 + `attributes JSONB` + category_bk xref**（本書 §4.1）。重い属性マスタリングは 34 に委譲。大規模テナントで自前マスタ要否を再評価 |
 | R-5 | 在庫引当の SoT 境界（チャネル論理在庫 vs WMS 実在庫） | 本サービス在庫で引当=単純。WMS(06/33) と同期引当=オムニチャネル整合だが分散在庫 SoT が複雑 | 暫定: チャネル論理在庫で引当（04 §12-2）。オムニチャネルは 06/33 と分散在庫 SoT を協議 |
 | R-6 | `promotion` 適用ロジックの保持先 | DB（priority + attributes 条件）=一元化だが表現力に限界。アプリ=柔軟だが監査性低下 | 暫定: 単純割引は DB、複雑バンドルは attributes + アプリ評価。値引結果は明細 `discount_amount` に確定保存 |
+| R-7 | ヘッダ金額（`header_gross_amount`/`header_net_amount`）をキャッシュ列で保持するか、明細集計ビュー/オンデマンド集計にするか | キャッシュ列=ヘッダ一覧/CDC 供給が軽いが再計算トリガの保守が要る。集計ビュー=常に整合だがヘッダ一覧で都度集計コスト | 暫定: **キャッシュ列 + 冪等再計算トリガ**（§7.1）。大量明細テナントで一覧クエリ負荷を計測し、ビュー化/マテビュー化を再評価 |
 
 ---
 

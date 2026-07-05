@@ -5,24 +5,24 @@ category: basic-design
 version: 0.1.0
 status: draft
 purpose: AIエージェントによる意思決定支援とバーチャルカンパニー化の基本設計を定義する
-related: [ai-agent-virtual-company, ai-rag-vectorization, service-analytics, nonfunctional-security-tenancy]
+related: [ai-agent-virtual-company, ai-rag-vectorization, service-analytics, nonfunctional-security-tenancy, ai-vector-knowledge-schema, api-integration-contracts, control-plane-backoffice-schema, snapshot-document-db]
 ---
 
 # 基本設計: 意思決定支援 / AIエージェント / バーチャルカンパニー
 
 本書は **SCIP（Supply Chain Intelligence Platform、コード名）** の **Intelligence Plane（AI層、ブリーフ §3）** が提供する
-**意思決定支援サービス**の基本設計を定義する。分析・可視化サービス（[`07`](./07-analytics-visualization.md)）が「事実を可視化する」のに対し、
+**意思決定支援サービス**の基本設計を定義する。分析・可視化サービス（[`07`](./07-service-analytics.md)）が「事実を可視化する」のに対し、
 本サービスは **「事実から次の一手を提案し、人間の承認を得て実行に橋渡しする」** ことを責務とする。
 その実現手段が **バーチャルカンパニー化** — 企画・営業・調達・生産・在庫・物流・経営といった部門ロールを担う **AIエージェント群** の編成である。
 
 > **本ドキュメントの所有範囲（owns）:** 意思決定支援 / AIエージェントサービスの**機能・エージェント編成・意思決定支援ワークフロー・ツール利用方針・HITL とガバナンス・ドメイン知識活用方針**の権威的記述（基本設計レベル）。
-> **詳細アーキテクチャ（オーケストレーション実装・メモリ管理・ツール実行基盤・プロンプト設計・状態機械の実装詳細）は [`24 AIエージェント/バーチャルカンパニー`](../detailed-design/24-ai-agent-virtual-company.md) が所有。**
+> **詳細アーキテクチャ（オーケストレーション実装・メモリ管理・ツール実行基盤・プロンプト設計・状態機械の実装詳細）は [`24 AIエージェント/バーチャルカンパニー`](../detailed-design/24-ai-agent-and-virtual-company.md) が所有。**
 > **物理スキーマ（`agent` / `agent_session` / `agent_message` / `agent_memory` / `insight` / `analysis_run` / DocDB アイテム形状の CREATE TABLE・索引・制約・`tenant_id`・RLS）は [`38 AI/ベクター/ナレッジ`](../database-design/38-ai-vector-knowledge-schema.md) が所有。**
 > 本書はエンティティを**論理レベル**で記述するに留め、`kb_*` / `domain_knowledge` / `dim_*` / `fact_*` / `tenant` / `app_user` 等の共通テーブルは所有ドキュメントの定義を参照し、再定義しない。
 
 - **位置づけ:** ブリーフ §2 サービスポートフォリオの「横断 / 意思決定支援 + AIエージェント（バーチャルカンパニー化）」に対応する。
 - **土台:** ブリーフ §12（AI/RAG/エージェント規約）を実装方針の起点とし、LLM は **Amazon Bedrock 上の Anthropic Claude モデル群**（ブリーフ §4）、
-  埋め込み・ベクター検索は [`23 AI/RAG/ベクター化`](../detailed-design/23-ai-rag-vectorization.md) の RAG パイプラインに委譲する。数値は必ず DWH / メトリクス層（07/35）から取得し、LLM に生成させない。
+  埋め込み・ベクター検索は [`23 AI/RAG/ベクター化`](../detailed-design/23-ai-rag-and-vectorization.md) の RAG パイプラインに委譲する。数値は必ず DWH / メトリクス層（07/35）から取得し、LLM に生成させない。
 
 ---
 
@@ -67,7 +67,7 @@ graph LR
 | エージェント定義（役割・ツール権限・自律レベル・プロンプト構成） | **本サービスが SoT** | AI DB（`agent`、38 所有） | テナントごとに編成をカスタム可能 |
 | エージェントセッション / メッセージ / ツール実行ログ | **本サービスが SoT（append-only）** | AI DB（`agent_session`/`agent_message`、38 所有） | 監査・再現性の源泉 |
 | エージェントメモリ（短期=会話文脈 / 長期=学習事実） | **本サービスが SoT** | AI DB（`agent_memory`、38 所有） | 長期メモリはテナントスコープ |
-| 意思決定パッケージ（課題・選択肢・推奨・承認履歴） | **本サービスが SoT** | AI DocDB アイテム形状（`decision_package`、38 所有・§3.5） | ネスト構造が大きいため DocDB(DynamoDB) 読み取りモデルで保持（ブリーフ §5）。確定承認・機微操作は `audit_logs`(37) にも二重記録 |
+| 意思決定パッケージ（課題・選択肢・推奨・承認履歴） | **本サービスが SoT** | AI DocDB アイテム形状（`decision_package`、38 所有・§3.5） | ネスト構造が大きいため DocDB(DynamoDB) を採用。ただし DWH 由来の派生「読み取りモデル」ではなく、本サービス権威の append-only な SoT アイテム（ブリーフ §5 の柔軟属性/非構造の SoT 用途）。確定承認・機微操作は `audit_logs`(37) にも二重記録 |
 | インサイト（生成された気づき） | **本サービスが SoT**（生成メタ）だが**数値は派生** | AI DB（`insight`、38 所有） | 数値の根拠は DWH を参照 |
 | 分析実行ログ（analysis_run） | **本サービスが SoT** | AI DB（`analysis_run`、38 所有） | どのメトリクス/RAG を使ったか |
 | メトリクス値・集計値・dim/fact | **参照のみ**（数値の SoT は DWH） | Redshift / メトリクス層（07/35 所有） | 数値はここから取得、LLM 生成禁止 |
@@ -227,11 +227,11 @@ stateDiagram-v2
 | 価格/値引シミュレーション | 弾力性推定・在庫・粗利目標 | 同上 | 想定販売数・粗利影響 |
 
 > **試算の位置づけ:** シミュレーションは**意思決定支援**であり、断定ではない。結果には前提条件・信頼区間/感度・免責を明示する（推測を断定で書かない、ブリーフ §0）。
-> シミュレーション計算エンジンの実装詳細は [`24`](../detailed-design/24-ai-agent-virtual-company.md) が所有。
+> シミュレーション計算エンジンの実装詳細は [`24`](../detailed-design/24-ai-agent-and-virtual-company.md) が所有。
 
 ### 3.5 意思決定パッケージ（成果物モデル・論理定義）
 
-ワークフローの全過程を束ねる中核成果物。**本サービスが SoT**。ネストの深い構造（options[]/evidence[]/simulations[]/approvals[]）を持つため、物理形状は **DocDB(DynamoDB) アイテム（読み取りモデル）** として [`38`](../database-design/38-ai-vector-knowledge-schema.md) が所有する（ブリーフ §5 の DocDB 用途区分）。論理的な構成要素は以下。
+ワークフローの全過程を束ねる中核成果物。**本サービスが SoT**。ネストの深い構造（options[]/evidence[]/simulations[]/approvals[]）を持つため、物理形状は **DocDB(DynamoDB) アイテム** として [`38`](../database-design/38-ai-vector-knowledge-schema.md) が所有する。これは DWH 由来の派生「読み取りモデル」ではなく、ブリーフ §5 の DocDB 用途区分のうち**柔軟属性/非構造の SoT 用途**にあたる **append-only の権威アイテム**であり、SoT 宣言（§1.3）と整合する。論理的な構成要素は以下。
 
 | 要素 | 内容 | 由来 |
 |------|------|------|
@@ -271,8 +271,8 @@ flowchart TD
     B -->|"読み取り系"| C["テナントスコープ強制<br/>（tenant_id 注入）"]
     B -->|"書き込み系"| D{"自律レベル判定<br/>（§5.2）"}
     C --> E["実行 → 結果を根拠として記録"]
-    D -->|"L2以上 かつ 低リスク"| F["ポリシー内自動実行"]
-    D -->|"HITL必須"| G["意思決定パッケージへ提案登録<br/>（未実行）"]
+    D -->|"L3 かつ 低リスク（ポリシー内）"| F["ポリシー内自動実行"]
+    D -->|"L2以下（HITL必須）"| G["意思決定パッケージへ提案登録<br/>（未実行）"]
     G --> H["オペレーター承認待ち（§5）"]
     H -->|"承認"| I["業務API呼び出し<br/>（Idempotency-Key付与）"]
     H -->|"却下"| J["却下記録・実行しない"]
@@ -371,7 +371,7 @@ graph TD
 - **意思決定の再蓄積:** 承認された意思決定パッケージは、匿名化・構造化のうえクライアント固有ナレッジへ戻し、以降の類似課題の根拠に再利用する（学習ループ）。**個人情報・機微情報の再蓄積前マスキングを必須**とする。
 - **数値はナレッジに載せない:** 変動する数値（在庫・売上）は RAG に埋め込まず、常に DWH/メトリクスからライブ取得する（陳腐化・矛盾回避）。ナレッジは「解釈・慣行・ルール・過去判断の文脈」を担う。
 
-> **所有境界:** ドメイン知識の取込パイプライン（チャンク化・埋め込み・ベクター格納）の実装は [`23`](../detailed-design/23-ai-rag-vectorization.md)、
+> **所有境界:** ドメイン知識の取込パイプライン（チャンク化・埋め込み・ベクター格納）の実装は [`23`](../detailed-design/23-ai-rag-and-vectorization.md)、
 > 物理スキーマ（`kb_document`/`kb_chunk`/`kb_embedding`/`domain_knowledge`）は [`38`](../database-design/38-ai-vector-knowledge-schema.md) が所有。本書は活用方針のみ。
 
 ---
@@ -387,7 +387,7 @@ graph TD
 | 手続き記憶（ツール手順） | 定型タスクの実行手順・成功パターン | テナント × 部門 | 永続（改善で更新） |
 
 > **メモリの整合性（CLAUDE.md 原則2）:** 長期メモリの更新は SoT（`agent_memory`）先行 → キャッシュ後追い。再実行でメモリ・セッションログが巻き戻らないよう append-only を基本とし、
-> 誤学習の訂正は「打ち消しレコード追加」で行い履歴を破壊しない。詳細な状態機械・要約タイミングは [`24`](../detailed-design/24-ai-agent-virtual-company.md) が所有。
+> 誤学習の訂正は「打ち消しレコード追加」で行い履歴を破壊しない。詳細な状態機械・要約タイミングは [`24`](../detailed-design/24-ai-agent-and-virtual-company.md) が所有。
 
 ---
 
@@ -436,7 +436,7 @@ graph TD
 
 ## 9. API 概要（サービング）
 
-REST + JSON、`/api/v1`、Firebase Bearer、tenant クレーム解決、RFC 7807 Problem Details、`{data, meta}` エンベロープ、ページング（ブリーフ §11）に準拠する。詳細コントラクトは [`25 API/連携コントラクト`](../detailed-design/25-api-integration-contract.md) が所有。
+REST + JSON、`/api/v1`、Firebase Bearer、tenant クレーム解決、RFC 7807 Problem Details、`{data, meta}` エンベロープ、ページング（ブリーフ §11）に準拠する。詳細コントラクトは [`25 API/連携コントラクト`](../detailed-design/25-api-and-integration-contracts.md) が所有。
 
 | エンドポイント（例） | メソッド | 責務 | 備考 |
 |--------------------|----------|------|------|
@@ -455,7 +455,7 @@ REST + JSON、`/api/v1`、Firebase Bearer、tenant クレーム解決、RFC 7807
 
 ## 10. 非機能・テナンシー観点（サマリ）
 
-詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md) が所有。本サービス固有の要点のみ記す。
+詳細は [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md) が所有。本サービス固有の要点のみ記す。
 
 - **テナント境界:** 全ツール・メモリ・RAG は `tenant_id` スコープ強制（呼び出し側注入 + RLS + ベクター検索フィルタ）。クロステナント参照は構造的に不可（§5.3）。
 - **データ境界:** LLM は国内リージョン（ap-northeast-1）の Bedrock を使用（ブリーフ §4）。機微生値をプロンプトに載せず、マスク方針を継承。
@@ -516,9 +516,9 @@ REST + JSON、`/api/v1`、Firebase Bearer、tenant クレーム解決、RFC 7807
 
 ## 13. 関連ドキュメント
 
-- [`24 AIエージェント/バーチャルカンパニー`](../detailed-design/24-ai-agent-virtual-company.md)（document_id: ai-agent-virtual-company） — 本書の**詳細アーキテクチャを所有**（オーケストレーション実装・状態機械・メモリ管理・ツール実行基盤・プロンプト設計・シミュレーション計算エンジン）。
-- [`23 AI/RAG/ベクター化`](../detailed-design/23-ai-rag-vectorization.md)（document_id: ai-rag-vectorization） — RAG パイプライン（チャンク化・埋め込み・ベクター検索）の詳細。本書の `rag_search`/`domain_lookup` ツールの基盤。
-- [`07 分析・可視化サービス`](./07-analytics-visualization.md)（document_id: service-analytics） — メトリクス/セマンティック層・集計・異常検知の本体。本書は数値をここから取得（数値の SoT）。
-- [`11 非機能/セキュリティ/テナンシー`](./11-nfr-security-tenancy.md)（document_id: nonfunctional-security-tenancy） — テナント境界・機微データ・監査・可用性の権威的定義。
+- [`24 AIエージェント/バーチャルカンパニー`](../detailed-design/24-ai-agent-and-virtual-company.md)（document_id: ai-agent-virtual-company） — 本書の**詳細アーキテクチャを所有**（オーケストレーション実装・状態機械・メモリ管理・ツール実行基盤・プロンプト設計・シミュレーション計算エンジン）。
+- [`23 AI/RAG/ベクター化`](../detailed-design/23-ai-rag-and-vectorization.md)（document_id: ai-rag-vectorization） — RAG パイプライン（チャンク化・埋め込み・ベクター検索）の詳細。本書の `rag_search`/`domain_lookup` ツールの基盤。
+- [`07 分析・可視化サービス`](./07-service-analytics.md)（document_id: service-analytics） — メトリクス/セマンティック層・集計・異常検知の本体。本書は数値をここから取得（数値の SoT）。
+- [`11 非機能/セキュリティ/テナンシー`](./11-nonfunctional-security-tenancy.md)（document_id: nonfunctional-security-tenancy） — テナント境界・機微データ・監査・可用性の権威的定義。
 - [`38 AI/ベクター/ナレッジ`](../database-design/38-ai-vector-knowledge-schema.md)（document_id: ai-vector-knowledge-schema） — `agent`/`agent_session`/`agent_message`/`agent_memory`/`insight`/`analysis_run`/`kb_*`/`domain_knowledge` の**物理スキーマ**、および `decision_package`（DocDB アイテム形状）を**所有**。
-- 参考: [`02 全体アーキテクチャ`](./02-overall-architecture.md)、[`03 正準ドメインモデル`](./03-canonical-domain-model.md)、[`25 API/連携コントラクト`](../detailed-design/25-api-integration-contract.md)、[`26 スナップショット/DocDB`](../detailed-design/26-snapshot-docdb.md)、[`37 コントロールプレーン`](../database-design/37-control-plane-schema.md)。
+- 参考: [`02 全体アーキテクチャ`](./02-overall-architecture.md)、[`03 正準ドメインモデル`](./03-canonical-domain-model.md)、[`25 API/連携コントラクト`](../detailed-design/25-api-and-integration-contracts.md)、[`26 スナップショット/DocDB`](../detailed-design/26-snapshot-and-document-db.md)、[`37 コントロールプレーン`](../database-design/37-control-plane-backoffice-schema.md)。

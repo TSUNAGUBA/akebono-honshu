@@ -5,7 +5,7 @@ category: detailed-design
 version: 0.1.0
 status: draft
 purpose: 事前集計スナップショット静的ファイル(S3/CDN)とドキュメントDB(DynamoDB)の用途・キー設計・整合性戦略・スナップショットvsインタラクティブクエリの判断基準を実装レベルで定義する
-related: [star-schema-transformation, service-analytics, ai-vector-knowledge-schema, si-customization-provisioning, star-schema-dwh]
+related: [star-schema-transformation, service-analytics, ai-vector-knowledge-schema, si-customization-provisioning, star-schema-dwh, api-integration-contract, ai-agent-virtual-company]
 ---
 
 # 詳細設計: スナップショット静的ファイル & ドキュメントDB
@@ -151,7 +151,7 @@ s3://scip-snapshots-<env>/
 ```
 
 - **パスは版ごとに一意**（`as_of` + `gen`）。よって S3/CloudFront では**長期 immutable キャッシュ**（`Cache-Control: public, max-age=31536000, immutable`）を付与できる。
-- **上書きしないため、無効化（invalidation）はパス切替で行う**（§2.6）。「最新はどれか」は**カタログ（DocDB）のポインタ**が唯一の真実であり、S3 は履歴を保持する。
+- **上書きしないため、無効化（invalidation）はパス切替で行う**（§2.6）。「最新はどれか」を**実行時に参照する現在版の権威**は**カタログ（DocDB）のポインタ**である。ただしこのカタログは**派生**であり、恒久的な復元可能 SoT は**S3 manifest 集合**（§2.4）にある。カタログ喪失時は manifest 再スキャンで再構築できる（§10）。S3 は全世代の履歴を保持する。
 - **世代の保持期間:** 直近 N 世代（既定 3）+ 締め断面（月次確定）は長期保持。古い世代は S3 ライフサイクルで Glacier IR → 失効（未決 §11-2）。
 
 ### 2.4 マニフェスト（manifest.json）
@@ -165,7 +165,7 @@ s3://scip-snapshots-<env>/
   "domain": "sales",
   "grain": ["product_key", "month"],
   "measures": ["net_amount", "qty", "margin_amount"],
-  "additivity": { "net_amount": "additive", "on_hand_qty": "semi_additive_time" },
+  "additivity": { "net_amount": "additive", "qty": "additive", "margin_amount": "additive" },
   "as_of": "2026-07-01T00:00:00Z",
   "generation": 7,
   "source_load_run_id": 88213,
@@ -182,6 +182,32 @@ s3://scip-snapshots-<env>/
 
 - `source_load_run_id` で **22 の `load_run` / `data_lineage`** に紐づく（リネージ追跡・再生成再現性）。
 - `status`（`building` → `ready` → `superseded` → `retired`）は生成の状態機械（§2.5）。カタログの `current_gen` は `ready` になって初めて切替える（half-written を配信しない）。
+- **`additivity` のキーは当該 `measures` と一致させる**（欠落・余分を作らない）。上例は売上スナップショット（`sales_by_product_top50`）なので全メジャーが加法（`additive`）。
+
+半加法メジャー（`semi_additive_time`）は在庫ドメインの別スナップショットで現れる。例として `fact_inventory_snapshot`（35/§8）由来の締め在庫断面（grain = `[product_key, location_key, date]`）の manifest を示す。
+
+```json
+{
+  "snapshot_key": "inventory_on_hand_by_location",
+  "tenant_id": 1024,
+  "domain": "inventory",
+  "grain": ["product_key", "location_key", "date"],
+  "measures": ["on_hand_qty", "on_hand_value", "available_qty"],
+  "additivity": {
+    "on_hand_qty": "semi_additive_time",
+    "on_hand_value": "semi_additive_time",
+    "available_qty": "semi_additive_time"
+  },
+  "as_of": "2026-07-01T00:00:00Z",
+  "generation": 3,
+  "source_load_run_id": 88250,
+  "format": "parquet",
+  "schema_version": "1.0.0",
+  "status": "ready"
+}
+```
+
+> 在庫残高メジャーは「拠点・商品では合計可、日付では合計不可（`semi_additive_time`）」（§2.2・22 §5.1・`ANL-013`）。この加法性区分をカタログ／UI に必ず伝達し、日付軸 SUM を防ぐ。
 
 ### 2.5 生成ジョブと状態機械
 
@@ -189,18 +215,18 @@ s3://scip-snapshots-<env>/
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Building: "ファクトロード成功イベント（22）"
-    Building --> Uploaded: "S3 へ part + manifest 書込（status=building）"
-    Uploaded --> Validated: "件数/合計/checksum 照合（22 の整合性検証と連動）"
-    Validated --> Ready: "manifest.status=ready + カタログ current_gen 切替"
+    [*] --> Building: ファクトロード成功イベント（22）
+    Building --> Uploaded: S3 へ part + manifest 書込（status=building）
+    Uploaded --> Validated: 件数/合計/checksum 照合（22 の整合性検証と連動）
+    Validated --> Ready: manifest.status=ready + カタログ current_gen 切替
     Ready --> [*]
-    Building --> Failed: "生成/UNLOAD 失敗"
-    Uploaded --> Failed: "検証不一致"
-    Failed --> Building: "リトライ（冪等: 同 as_of は gen+1 で再試行）"
-    Failed --> Degraded: "上限リトライ超過 → 旧 gen を配信継続 + アラート"
-    Degraded --> Building: "手動再生成（再同期パス）"
-    Ready --> Superseded: "後続 gen が Ready 化"
-    Superseded --> Retired: "保持世代数超過 → ライフサイクル失効"
+    Building --> Failed: 生成/UNLOAD 失敗
+    Uploaded --> Failed: 検証不一致
+    Failed --> Building: リトライ（冪等: 同 as_of は gen+1 で再試行）
+    Failed --> Degraded: 上限リトライ超過 → 旧 gen を配信継続 + アラート
+    Degraded --> Building: 手動再生成（再同期パス）
+    Ready --> Superseded: 後続 gen が Ready 化
+    Superseded --> Retired: 保持世代数超過 → ライフサイクル失効
 ```
 
 **冪等性（原則2・API §Idempotency）:** 同一 `(tenant_id, snapshot_key, as_of)` の再生成要求は**新しい `gen` を採番**して実行し、
@@ -267,7 +293,7 @@ flowchart TD
 
 - **土台はスナップショット、深掘りは対話クエリ**: ダッシュボード初期ロードはスナップショットで即描画（体感 200ms 以下）。ユーザーが特定セルをドリルダウンしたら、その時だけメトリクス層 → DWH の対話クエリを非同期実行し、スケルトン + 完了時プッシュで補償（4.1）。
 - **鮮度表示（原則: 誤解を招かない）:** スナップショット由来の数値には `as_of`（例「2026-07-01 02:14 時点」）を UI に併記する（U-2 出力の直感性）。最新でないことを隠さない。
-- **フォールバック:** カタログに `ready` 版が無い/生成 Degraded の場合、UI は対話クエリにフォールバック（非ブロッキング, `ANL-011`）。逆に DWH が高負荷/障害時は直近スナップショットで縮退表示。
+- **フォールバック:** カタログに `ready` 版が無い（未生成）の場合は対話クエリへフォールバック（非ブロッキング, `ANL-010`）。生成が Degraded（上限リトライ超過で旧版を継続配信中）の場合は旧版を配信しつつ対話クエリで補完（`ANL-011`）。逆に DWH が高負荷/障害時は直近スナップショットで縮退表示。
 
 ---
 
@@ -281,7 +307,7 @@ review-standards 2.2 の I/F 6視点①（技術スタック制約: RDB / ドキ
 |------|-----------------|----------|----------------|
 | テナント拡張属性（型付き列に載らない可変オプション項目） | スキーマレスな柔軟属性。テナント毎に形が違う | **一部 SoT**（拡張値の一次格納。§5） | 27（登録メタ）/ 本書（保存形状方針）/ 38（確定形状） |
 | 読み取りモデル（read model / 単一取得用の非正規化ビュー） | RDS/DWH の JOIN 結果を単一 GET で返す非正規化投影 | 派生 | 本書（キー設計）/ 38 |
-| スナップショットカタログ（現在版ポインタ・メタ索引） | 高頻度・低レイテンシの KVS 参照。§2 と直結 | 派生（S3 manifest から復元可） | 本書 |
+| スナップショットカタログ（現在版ポインタ・メタ索引） | 高頻度・低レイテンシの KVS 参照。§2 と直結。**配信時の権威ある高速索引** | 派生（S3 manifest から再スキャンで再構築可能） | 本書 |
 | エージェントセッション/短期状態（実行中のカウンタ・作業状態） | 低レイテンシ更新・TTL 自動失効。24 のループ制御 | 派生（SoT は `agent_message` 等 RDS, 38） | 38（`agent_session` は RDS が SoT）/ 本書（DocDB キャッシュ形状） |
 | 意思決定パッケージ（`decision_package`） | 段階的に部分更新される半構造ドキュメント | DocDB アイテム（24/38 が定義） | **38 が所有** |
 | セッション/一時トークン・冪等キー記録 | TTL 付き揮発データ。高頻度 read/write | 揮発（SoT なし） | 本書 |
@@ -483,7 +509,7 @@ review-standards 4.1（UI 体感）の数値基準にスナップショット/Do
 | ドリルダウン/アドホック | 100ms 超は非同期 | メトリクス層 → DWH 対話クエリ + スケルトン + 完了時プッシュ |
 | エージェント状態参照 | 低レイテンシ | DynamoDB GetItem。ElastiCache 併用（24） |
 
-- **体感補償（4.1）:** スナップショット未ヒット/生成中は、スケルトン表示 + 対話クエリフォールバック（`ANL-011`）。「画面が止まる」体験を排除。
+- **体感補償（4.1）:** スナップショット未ヒット（`ready` 版なし）/生成中は、スケルトン表示 + 対話クエリフォールバック（`ANL-010`）。生成 Degraded で旧版を配信中の場合は旧版描画 + 補完クエリ（`ANL-011`）。いずれも「画面が止まる」体験を排除。
 - **コスト最適化（4.3）:** スナップショットは DWH スキャン回数を削減し、Redshift Serverless の RPU 課金を抑える。頻出集計を静的化することで「同一集計を毎表示で再計算」を回避。
 - **キャッシュ階層:** ①CloudFront（静的ファイル）→ ②DocDB カタログ（版ポインタ, 短TTL）→ ③ElastiCache（メトリクス結果, 24/07）→ ④DWH（最終ソース）。上位でヒットするほど速い・安い。
 
@@ -561,5 +587,5 @@ review-standards 4.1（UI 体感）の数値基準にスナップショット/Do
 - [`38 AI/ベクター/ナレッジ スキーマ`](../database-design/38-ai-vector-knowledge-schema.md)（document_id: `ai-vector-knowledge-schema`） — DocDB アイテムの**物理形状**（`decision_package` 等）、`agent_session`/`agent_message` の SoT を所有。本書は用途・キー方針を提示し物理は参照。
 - [`27 SIカスタマイズ/プロビジョニング`](./27-si-customization-and-provisioning.md)（document_id: `si-customization-provisioning`） — テナント拡張スキーマ・フィーチャーフラグの登録メタを所有。拡張属性の SoT 選択（§6.2）を決定。
 - [`35 スタースキーマ DWH`](../database-design/35-star-schema-dwh.md)（document_id: `star-schema-dwh`） — `dim_*`/`fact_*` 物理。スナップショットの上流 SoT。
-- [`25 API/連携コントラクト`](./25-api-and-integration-contract.md)（document_id: `api-integration-contract`） — スナップショット取得・メトリクスクエリのサービングAPI 契約。
+- [`25 API/連携コントラクト`](./25-api-and-integration-contracts.md)（document_id: `api-integration-contract`） — スナップショット取得・メトリクスクエリのサービングAPI 契約。
 - [`24 AIエージェント/バーチャルカンパニー`](./24-ai-agent-and-virtual-company.md)（document_id: `ai-agent-virtual-company`） — エージェント短期状態/セッションの DocDB 利用側。

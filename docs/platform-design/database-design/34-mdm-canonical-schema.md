@@ -11,6 +11,7 @@ related:
   - star-schema-dwh
   - mapping-metadata-schema
   - schema-strategy-sot
+  - oltp-manufacturer-schema
 ---
 
 # DBスキーマ設計: MDM / Canonical
@@ -26,7 +27,7 @@ related:
 > `product_category`, `region`, `region_adjacency`, `uom`, `currency`, および
 > `party_xref` / `product_xref` / `sku_xref` / `location_xref`。
 > **所有しない範囲（参照のみ）:** `tenant`・`app_user`（[37 コントロールプレーン](./37-control-plane-backoffice-schema.md)所有）、
-> 名寄せルール/レビュー/来歴 `mapping_rule` / `mapping_review` / `load_run` / `data_lineage`（[36 マッピングメタデータ](./36-mapping-metadata.md)所有）、
+> 名寄せルール/レビュー/来歴 `mapping_rule` / `mapping_review` / `load_run` / `data_lineage`（[36 マッピングメタデータ](./36-mapping-metadata-schema.md)所有）、
 > `dim_*` / `fact_*`（[35 DWH](./35-star-schema-dwh.md)所有）、各 OLTP のローカルエンティティ（[31](./31-oltp-retail-schema.md)/[32](./32-oltp-manufacturer-schema.md)/[33](./33-oltp-wms-schema.md)）。
 > **名寄せロジック（正規化・ブロッキング・スコアリング・survivorship・運用フロー）は
 > [20 Canonical/MDM/名寄せ詳細](../detailed-design/20-canonical-mdm-and-entity-resolution.md)が所有**する。本書はそのロジックが要求する
@@ -111,19 +112,19 @@ erDiagram
     TENANT ||--o{ CANONICAL_PARTY : "所有(37)"
     CANONICAL_PARTY ||--o{ PARTY_ROLE : "複数ロール(多対多)"
     CANONICAL_PARTY ||--o{ PARTY_XREF : "1正準に複数ソースID"
-    CANONICAL_PARTY ||--o{ CANONICAL_LOCATION : "運営主体(任意)"
+    CANONICAL_PARTY |o--o{ CANONICAL_LOCATION : "運営主体(任意・party_id NULL可)"
     CANONICAL_LOCATION ||--o{ LOCATION_XREF : "クロスウォーク"
-    REGION ||--o{ CANONICAL_LOCATION : "所在地域"
-    REGION ||--o{ CANONICAL_PARTY : "本社所在地域"
-    REGION ||--o{ REGION : "親子(自己参照)"
+    REGION |o--o{ CANONICAL_LOCATION : "所在地域(region_id NULL可)"
+    REGION |o--o{ CANONICAL_PARTY : "本社所在地域(region_id NULL可)"
+    REGION |o--o{ REGION : "親子(自己参照・country は親なし)"
     REGION ||--o{ REGION_ADJACENCY : "隣接"
-    PRODUCT_CATEGORY ||--o{ PRODUCT_CATEGORY : "親子(自己参照)"
-    PRODUCT_CATEGORY ||--o{ CANONICAL_PRODUCT : "分類"
+    PRODUCT_CATEGORY |o--o{ PRODUCT_CATEGORY : "親子(自己参照・ルートは親なし)"
+    PRODUCT_CATEGORY |o--o{ CANONICAL_PRODUCT : "分類(product_category_id NULL可)"
     CANONICAL_PRODUCT ||--o{ CANONICAL_SKU : "企画に複数SKU"
     CANONICAL_PRODUCT ||--o{ PRODUCT_XREF : "クロスウォーク"
     CANONICAL_SKU ||--o{ SKU_XREF : "クロスウォーク"
-    UOM ||--o{ CANONICAL_SKU : "計量単位"
-    CURRENCY }o--o{ CANONICAL_SKU : "参照(code)"
+    UOM |o--o{ CANONICAL_SKU : "計量単位(uom_id NULL可)"
+    CURRENCY |o--o{ CANONICAL_SKU : "参照(1通貨→多SKU)"
 
     CANONICAL_PARTY {
         bigint id PK
@@ -186,7 +187,7 @@ erDiagram
     }
 ```
 
-> `CURRENCY`/`UOM` は全テナント共有マスタ。OLTP・SKU は原則 `currency_code CHAR(3)`（ブリーフ §9）で保持し、`currency` はコードの検証・表示用ルックアップとして参照する（物理 FK は必須化しない, §5.3）。
+> `CURRENCY`/`UOM` は全テナント共有マスタ。**Canonical DB 内に co-locate される `canonical_sku` は `uom`/`currency` の両方へ物理 FK（`uom_id`/`currency_id`）を張る**（同一 DB のため FK が成立）。加えて `currency_code CHAR(3)`（ブリーフ §9）を表示/検証用の値として別途保持する。一方、**別 DB に分離される各 OLTP（31-33）は物理 FK を張らず `currency_code` を値として保持**する（マルチ DB 配置では共有マスタへの FK が成立しないため）。参照方式の適用範囲は §5.3 で確定。
 
 ---
 
@@ -223,7 +224,7 @@ CREATE TABLE region (
     created_by_user_id  BIGINT       NULL REFERENCES app_user(id),
     updated_by_user_id  BIGINT       NULL REFERENCES app_user(id),
     legacy_id           VARCHAR(64)  NULL,
-    CONSTRAINT chk_region_level CHECK (level BETWEEN 0 AND 3),         -- 粒度は 0-3（CMN-003）
+    CONSTRAINT chk_region_level CHECK (level BETWEEN 0 AND 3),         -- 粒度は 0-3（MDM-002）
     CONSTRAINT chk_region_root  CHECK (                                -- level 0 は親なし、それ以外は親必須（段飛ばし検証は§4.3 トリガ）
         (level = 0 AND parent_region_id IS NULL) OR
         (level > 0 AND parent_region_id IS NOT NULL))
@@ -254,7 +255,7 @@ CREATE INDEX idx_region_adjacency_region ON region_adjacency (region_id);
 ### 4.3 親子整合・循環検出（トリガ要求 → 20 §5.2 のロジックを物理強制）
 
 - **段連続性:** `parent_region_id` の指す親は `level - 1` でなければならない（段飛ばし禁止, `MAP-006`）。CHECK 単体では親行 level を参照できないため、**BEFORE INSERT/UPDATE トリガ**で親 level を検証する（`getAfter` 相当の整合を DB 側で保証）。
-- **循環検出:** parent チェーンを辿り自分に戻る閉路を禁止（`CMN-004`）。トリガで再帰 CTE により祖先集合を計算し、自身が含まれれば拒否する。
+- **循環検出:** parent チェーンを辿り自分に戻る閉路を禁止（`MDM-003`）。トリガで再帰 CTE により祖先集合を計算し、自身が含まれれば拒否する。
 - 実装はトリガ関数 `trg_region_hierarchy_check()` を本書 owns の一部として定義（詳細アルゴリズムは 20 §5.2、DDL 化は 34 の責務）。
 
 ---
@@ -275,7 +276,7 @@ CREATE TABLE uom (
     is_deleted  BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_uom_code CHECK (char_length(code) > 0),
+    CONSTRAINT chk_uom_code_nonempty CHECK (char_length(code) > 0),  -- CHECK は chk_ 接頭辞（uq_ は一意制約/索引専用, §2.1）
     CONSTRAINT chk_uom_category CHECK (category BETWEEN 1 AND 6)
 );
 CREATE UNIQUE INDEX uq_uom_code_active ON uom (code) WHERE is_deleted = FALSE;
@@ -301,9 +302,15 @@ CREATE UNIQUE INDEX uq_currency_code_active ON currency (code) WHERE is_deleted 
 COMMENT ON TABLE currency IS '通貨マスタ。全テナント共有・ISO 4217 から初期投入。OLTP は currency_code CHAR(3) を直接保持し本表で検証';
 ```
 
-### 5.3 通貨の参照方式（ブリーフ §9 との整合）
+### 5.3 共有参照マスタ（`uom`/`currency`）の参照方式（ブリーフ §9 との整合）
 
-各 OLTP / `canonical_sku` の金額列は `currency_code CHAR(3) NOT NULL DEFAULT 'JPY'` を**値として保持**する（ブリーフ §9）。`currency` テーブルは (a) コード妥当性の検証、(b) 表示名/記号/minor_unit の解決、(c) `dim_currency`(35) の生成元、として機能する。**物理 FK（`REFERENCES currency`）は必須化しない**（共有マスタへの全 OLTP からの FK はマルチ DB 配置で成立しないため。アプリ/取込層で CHECK 相当を担保）。この判断は 30（横断規約）と整合する。
+共有マスタへの参照方式は**「参照元が共有マスタと同一 DB に co-locate されるか否か」で一貫して決定**する。同種の共有マスタ（`uom`・`currency`）に対して根拠が片方だけに適用される矛盾を避けるため、以下に統一する。
+
+- **Canonical DB 内（co-locate）— 物理 FK を張る:** `uom`・`currency`・`canonical_*` はいずれも同一 Canonical DB 内に配置されるため、物理 FK が成立する。`canonical_sku` は `uom_id BIGINT REFERENCES uom(id)` と `currency_id BIGINT REFERENCES currency(id)` の**両方に物理 FK** を張り、参照整合性を DB 側で保証する。
+- **表示/検証用の値保持は併存:** `canonical_sku.currency_code CHAR(3) NOT NULL DEFAULT 'JPY'`（ブリーフ §9）は、FK とは別に (a) 表示、(b) `dim_currency`(35) 生成、(c) OLTP 由来値との突合、のために保持する。`currency_id` と `currency_code` の整合はアプリ/取込層で担保する（両者が指す通貨は一致させる）。
+- **別 DB の各 OLTP（31-33）— 物理 FK を張らない:** OLTP は Canonical DB とは別の DB に分離されるため、共有マスタへの物理 FK は**マルチ DB 配置で成立しない**。ゆえに OLTP は `currency_code CHAR(3)` を値として保持し、コード妥当性はアプリ/取込層で CHECK 相当を担保する。
+
+すなわち「マルチ DB 配置で FK が成立しない」という根拠は**別 DB に分離される OLTP にのみ適用**され、Canonical DB 内で完結する `canonical_sku`→`uom`/`currency` には適用されない。この判断は 30（横断規約）と整合する。`currency` テーブルは (a) コード妥当性の検証、(b) 表示名/記号/minor_unit の解決、(c) `dim_currency`(35) の生成元、として機能する。
 
 ---
 
@@ -464,7 +471,7 @@ CREATE TABLE product_category (
 );
 CREATE INDEX idx_product_category_parent ON product_category (parent_category_id);
 CREATE INDEX idx_product_category_tenant ON product_category (tenant_id) WHERE is_deleted = FALSE;
-COMMENT ON COLUMN product_category.parent_category_id IS '親分類。循環参照は CMN-004 で拒否（§8.4 トリガ）。未マップは「未分類」ノードへ退避（MAP-004）';
+COMMENT ON COLUMN product_category.parent_category_id IS '親分類。循環参照は MDM-003 で拒否（§8.4 トリガ）。未マップは「未分類」ノードへ退避（MAP-004）';
 ```
 
 ### 8.2 `canonical_product`（企画/商品ファミリ）
@@ -527,8 +534,9 @@ CREATE TABLE canonical_sku (
     color                VARCHAR(64)  NULL,                            -- 色（弱識別子）
     size                 VARCHAR(32)  NULL,                            -- サイズ（弱識別子）
     material_code        VARCHAR(32)  NULL,                            -- 素材
-    uom_id               BIGINT       NULL REFERENCES uom(id),         -- 計量単位（§5.1・共有マスタ）
-    currency_code        CHAR(3)      NOT NULL DEFAULT 'JPY',          -- 通貨（値保持・§5.3）
+    uom_id               BIGINT       NULL REFERENCES uom(id),         -- 計量単位（§5.1・共有マスタ・Canonical DB 内 co-locate のため物理 FK）
+    currency_id          BIGINT       NULL REFERENCES currency(id),    -- 通貨（§5.2・Canonical DB 内 co-locate のため物理 FK, §5.3）
+    currency_code        CHAR(3)      NOT NULL DEFAULT 'JPY',          -- 通貨コード（表示/検証用の値・§5.3。currency_id と整合させる）
     -- ゴールデンメタ（§2.2）
     confidence           NUMERIC(5,4) NOT NULL DEFAULT 1.0000,
     match_method         SMALLINT     NOT NULL DEFAULT 3,
@@ -558,12 +566,13 @@ CREATE INDEX idx_canonical_sku_product   ON canonical_sku (tenant_id, canonical_
 CREATE INDEX idx_canonical_sku_name_norm ON canonical_sku (tenant_id, name_normalized);
 COMMENT ON COLUMN canonical_sku.canonical_product_id IS '所属企画。SKU は独立に名寄せ解決される第一級エンティティのため CASCADE でなく論理削除運用';
 COMMENT ON COLUMN canonical_sku.sku_code             IS '正準 SKU コード。Honshu 11桁品番は正規化して強識別子に使用。桁分解には依存しない（20 §6.2）';
-COMMENT ON COLUMN canonical_sku.currency_code        IS '通貨コード ISO4217。値として保持（§5.3）。currency 表への物理 FK は張らない';
+COMMENT ON COLUMN canonical_sku.currency_id          IS '通貨（currency.id への物理 FK）。Canonical DB 内 co-locate のため FK を張る（§5.3）';
+COMMENT ON COLUMN canonical_sku.currency_code        IS '通貨コード ISO4217。表示/検証用の値として保持（§5.3）。currency_id が指す通貨と整合させる';
 ```
 
 ### 8.4 分類・SKU 階層の整合
 
-- **`product_category` 段連続・循環:** `region` と同型のトリガ `trg_product_category_hierarchy_check()` で親 level 検証（段飛ばし禁止）・循環検出（`CMN-004`）を DB 側で強制。
+- **`product_category` 段連続・循環:** `region` と同型のトリガ `trg_product_category_hierarchy_check()` で親 level 検証（段飛ばし禁止）・循環検出（`MDM-003`）を DB 側で強制。
 - **未マップ分類の退避:** ソース分類が正準へ未対応の場合、テナントごとの「未分類」`product_category` ノードへ暫定紐付けし `MAP-004` を発行、人的レビュー（36 `mapping_review`）で解消（20 §6.3）。
 
 ---
@@ -695,6 +704,13 @@ ALTER TABLE region FORCE  ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_region ON region
     USING      (tenant_id IS NULL OR tenant_id = current_setting('app.tenant_id')::bigint)
     WITH CHECK (tenant_id = current_setting('app.tenant_id')::bigint);  -- 挿入は自テナントのみ（共有は BYPASSRLS 管理バッチ）
+
+-- region_adjacency も region と同型（共有行 tenant_id IS NULL を全テナント可視、挿入は自テナントのみ）
+ALTER TABLE region_adjacency ENABLE ROW LEVEL SECURITY;
+ALTER TABLE region_adjacency FORCE  ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_region_adjacency ON region_adjacency
+    USING      (tenant_id IS NULL OR tenant_id = current_setting('app.tenant_id')::bigint)
+    WITH CHECK (tenant_id = current_setting('app.tenant_id')::bigint);  -- 挿入は自テナントのみ（共有は BYPASSRLS 管理バッチ）
 ```
 
 - `SET LOCAL app.tenant_id` をトランザクション単位で張る（コネクションプール汚染防止）。未設定時は `current_setting` が例外を投げ fail-closed（全行漏洩を防止）。
@@ -735,13 +751,15 @@ flowchart LR
 
 ブリーフ §10（`DOMAIN-NNN`）。本書が**物理制約として**発火/検出するもの。名寄せロジック起因のコード（`MAP-001/002/003/004/005/007`）は 20 が主所有し、本書はそれらが書き込む先の制約を提供する。
 
+> **接頭辞の権威整合（30 §9 との衝突回避）:** `CMN-00N`（共通）の**逆引き定義は [30 §9](./30-schema-strategy-and-sot.md) が単一の権威**であり、本書は 30 §9 の意味（CMN-001=テナントコンテキスト未設定/越境、CMN-002=テナント越境アクセス検知、CMN-003=一意制約違反、CMN-004=マイグレーション整合性、CMN-005=SoT 同期失敗、CMN-006=TZ 移行検証失敗）を上書きしない。本書が独自に検出する MDM 固有事象（正準必須属性欠落・不正列挙値・階層循環・xref 一意違反）は、CMN と衝突しない **MDM 接頭辞**（34 所有・MDM/Canonical ドメイン）に割当てる。`MDM-00N` 接頭辞の逆引き表への登録は 30 §9 側の追随修正が必要（本書 notes 参照）。
+
 | コード | 意味 | 発生する物理箇所 | 主所有 |
 |--------|------|-----------------|--------|
-| CMN-001 | テナントスコープ違反（RLS 由来・tenant_id 不一致） | 全表 RLS ポリシー（§10） | 11/37 |
-| CMN-002 | 正準必須属性欠落（`name`/`name_normalized`/`level` 等 NOT NULL 違反） | `canonical_*`/`region` INSERT | 34 |
-| CMN-003 | 不正な列挙値（`role`/`location_type`/`level`/`match_method` の CHECK 違反） | 各 CHECK 制約 | 34 |
-| CMN-004 | 階層の循環参照（`region`/`product_category` の parent ループ） | 階層検証トリガ（§4.3/§8.4） | 20/34 |
-| CMN-005 | クロスウォーク一意制約違反（同一ソース同一 record_id の多重対応） | `uq_*_xref_tenant_source_record` | 34 |
+| CMN-001 | テナントコンテキスト未設定/越境（RLS fail-closed・`app.tenant_id` 未設定/不一致。逆引きは 30 §9 が権威） | 全表 RLS ポリシー（§10） | 30/11/37 |
+| MDM-001 | 正準必須属性欠落（`name`/`name_normalized`/`level` 等 NOT NULL 違反） | `canonical_*`/`region` INSERT | 34 |
+| MDM-002 | 不正な列挙値（`role`/`location_type`/`level`/`match_method` の CHECK 違反） | 各 CHECK 制約 | 34 |
+| MDM-003 | 階層の循環参照（`region`/`product_category` の parent ループ） | 階層検証トリガ（§4.3/§8.4） | 20/34 |
+| MDM-004 | クロスウォーク一意制約違反（同一ソース同一 record_id の多重対応） | `uq_*_xref_tenant_source_record` | 34 |
 | MAP-001 | クロスウォーク解決失敗（app-local id に正準未確定） | 名寄せ → xref 未登録 | 20/36 |
 | MAP-003 | 誤マージ検出（split：xref 無効化 + 再採番） | `is_active` 更新 + 新 id 採番（§9.2） | 20 |
 | MAP-004 | 商品分類マッピング未解決（「未分類」退避） | `product_category` 未マップ（§8.4） | 20/36 |
@@ -782,6 +800,6 @@ flowchart LR
 - [基本設計: 正準ドメインモデル](../basic-design/03-canonical-domain-model.md)（03） — 概念・論理モデル・ユビキタス言語の出所。
 - [DBスキーマ設計: スキーマ戦略と SoT](./30-schema-strategy-and-sot.md)（30） — 命名/DDL/テナンシー/共通列の横断規約の SoT。
 - [DBスキーマ設計: スタースキーマ DWH](./35-star-schema-dwh.md)（35） — 本書の正準 id を `*_bk` として受ける `dim_*`/`fact_*` の物理所有。
-- [DBスキーマ設計: マッピングメタデータ](./36-mapping-metadata.md)（36） — `mapping_rule`/`mapping_review`/`load_run`/`data_lineage`。本書 xref の `match_run_id`・属性来歴の記録先。
+- [DBスキーマ設計: マッピングメタデータ](./36-mapping-metadata-schema.md)（36） — `mapping_rule`/`mapping_review`/`load_run`/`data_lineage`。本書 xref の `match_run_id`・属性来歴の記録先。
 - [DBスキーマ設計: メーカー OLTP](./32-oltp-manufacturer-schema.md)（32） — `products`/`product_families` 等ローカル商品。本書 `sku_xref`/`product_xref` の解決元。
 - グラウンディング: [Honshu マスタ仕様](../../../.ai-native/domain-context/industry/honshu-master-schema.md)（17/18 マスタ・11桁品番・item_conversion_code）
