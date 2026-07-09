@@ -218,7 +218,7 @@ flowchart LR
 
 ### 3.2 DB 初期化 / マイグレーション (手動)
 1. **初回のみ:** Actions → *DB Init / Migrate (RDS)* → Run workflow → `action = init`。
-   - 空 DB に `db/init/*.sql` (01..08。06=リアルなデモ業務データ、07=業務拡張モジュール(販売管理/出荷/在庫管理)のテーブル+サンプル、08=テナント分離 RLS + アプリロール akebono_app) を番号順に投入し、現行マイグレーションを baseline 記録する。
+   - 空 DB に `db/init/*.sql` (01..09。06=リアルなデモ業務データ、07=業務拡張モジュール(販売管理/出荷/在庫管理)のテーブル+サンプル、08=テナント分離 RLS + アプリロール akebono_app、09=updated_at トリガ汎用配線) を番号順に投入し、現行マイグレーションを baseline 記録する。
    - 既に `public.users` がある DB では **安全のため中止**する (データ保護)。
    - `APP_DB_PASSWORD` secret は **必須** (未設定はエラー終了)。akebono_app のパスワードとして ALTER ROLE で自動反映される。
 2. **以後のスキーマ変更:** `db/migration/` に `mig-3-*` 以外の `*.sql` を追加 → `action = migrate`。

@@ -29,7 +29,7 @@ public static class LegacyImportEndpoints
                 return AuthEndpoints.UnauthorizedError(http);
 
             var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == actorId, ct);
-            if (actor is null || !actor.IsActive || actor.IsDeleted)
+            if (actor is null || !actor.IsActive || actor.DeletedAt != null)
                 // 台帳 (AKB-DOC-12 §14.5) の AUTH-005 代表ステータスに合わせ 403
                 return ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
                     "ユーザが無効化されています");

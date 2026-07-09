@@ -12,17 +12,17 @@ namespace Akebono.Domain.Production;
 /// </summary>
 public class MaterialOrderLine : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public long MaterialOrderId { get; set; }
+    public Guid MaterialOrderId { get; set; }
     public short LineNo { get; set; }
-    public long MaterialId { get; set; }
+    public Guid MaterialId { get; set; }
     public string MaterialNameSnapshot { get; set; } = string.Empty;
 
     /// <summary>由来品番 (未/済の品番ロールアップに使用、NULL 可)</summary>
-    public long? ProductFamilyId { get; set; }
+    public Guid? ProductFamilyId { get; set; }
     /// <summary>由来の生産指示明細 (トレース用、NULL 可)</summary>
-    public long? SourcePiLineId { get; set; }
+    public Guid? SourcePiLineId { get; set; }
 
     /// <summary>発注数量 (推奨= Σ所要量×生産数量×(1+loss_rate)、手調整可)</summary>
     public decimal RequiredQuantity { get; set; }
@@ -34,9 +34,9 @@ public class MaterialOrderLine : ITenantScoped
     public decimal Subtotal { get; set; }
 
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     // ナビプロパティ
     public MaterialOrder? MaterialOrder { get; set; }

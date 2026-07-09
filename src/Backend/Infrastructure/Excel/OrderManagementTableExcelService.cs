@@ -22,7 +22,7 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
     : IOrderManagementTableExcelService
 {
     public async Task<(string FileName, byte[] Content)> ExportAsync(
-        IReadOnlyList<long> orderIds, long actorUserId, CancellationToken ct = default)
+        IReadOnlyList<Guid> orderIds, Guid actorUserId, CancellationToken ct = default)
     {
         var orders = await db.PurchaseOrders
             .Include(o => o.Supplier)

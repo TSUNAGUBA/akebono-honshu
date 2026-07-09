@@ -28,7 +28,7 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
     private const int ColCount = 20; // A..T
 
     public async Task<(string FileName, byte[] Content)> ExportAsync(
-        long purchaseOrderId, long actorUserId, CancellationToken ct = default)
+        Guid purchaseOrderId, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders
             .Include(o => o.Supplier)

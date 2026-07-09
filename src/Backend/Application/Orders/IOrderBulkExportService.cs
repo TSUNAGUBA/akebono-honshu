@@ -15,7 +15,7 @@ public enum BulkExportFormat
 /// 一括ダウンロードリクエスト (POST /api/maker/v1/orders/bulk-export、#3b)。
 /// orderIds は 1 件以上必須。format は order / management / both。
 /// </summary>
-public record BulkExportRequest(List<long> OrderIds, string Format);
+public record BulkExportRequest(List<Guid> OrderIds, string Format);
 
 /// <summary>
 /// 一括ダウンロード結果。Content-Type / FileName / バイト列をまとめて返す
@@ -34,9 +34,9 @@ public record BulkExportResult(string FileName, string ContentType, byte[] Conte
 public interface IOrderBulkExportService
 {
     /// <summary>
-    /// 一括ダウンロードを実行。is_deleted の発注は skip し、残りで処理を続行する (原則4 非ブロッキング)。
+    /// 一括ダウンロードを実行。削除済 (deleted_at) の発注は skip し、残りで処理を続行する (原則4 非ブロッキング)。
     /// </summary>
     /// <exception cref="ArgumentException">orderIds が空 / format 不正 / 有効な発注が 0 件のとき。</exception>
     Task<BulkExportResult> ExportAsync(
-        BulkExportRequest request, long actorUserId, CancellationToken ct = default);
+        BulkExportRequest request, Guid actorUserId, CancellationToken ct = default);
 }

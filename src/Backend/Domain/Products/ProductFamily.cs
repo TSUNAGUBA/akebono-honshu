@@ -10,23 +10,29 @@ namespace Akebono.Domain.Products;
 /// </summary>
 public class ProductFamily : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
+
+    /// <summary>Idempotency-Key (AKB-DOC-12 §8)。作成 API のヘッダ値。NULL = 冪等キーなしで作成された行 (レガシー/シード)。</summary>
+    public string? IdempotencyKey { get; set; }
+
+    /// <summary>Idempotency-Key に対応する要求ペイロードの SHA-256 (同一キー・異ペイロード再送の検出用)。</summary>
+    public string? IdempotencyPayloadHash { get; set; }
 
     // 11桁品番の上位 9 桁を構成する FK + 値
     public char PlannedYearCode { get; set; }
-    public long ProductTypeId { get; set; }
-    public long ProductSeasonId { get; set; }
+    public Guid ProductTypeId { get; set; }
+    public Guid ProductSeasonId { get; set; }
     public string SequenceNo { get; set; } = string.Empty;
-    public long FactorySupplierId { get; set; }
+    public Guid FactorySupplierId { get; set; }
 
     // 商品属性
-    public long BrandId { get; set; }
-    public long? FunctionId { get; set; }
-    public long ProductGroupId { get; set; }
-    public long UpperMaterialId { get; set; }
-    public long InsoleMaterialId { get; set; }
-    public long OutsoleMaterialId { get; set; }
+    public Guid BrandId { get; set; }
+    public Guid? FunctionId { get; set; }
+    public Guid ProductGroupId { get; set; }
+    public Guid UpperMaterialId { get; set; }
+    public Guid InsoleMaterialId { get; set; }
+    public Guid OutsoleMaterialId { get; set; }
 
     public string ProductName1 { get; set; } = string.Empty;
     public string? ProductName2 { get; set; }
@@ -35,9 +41,9 @@ public class ProductFamily : ITenantScoped
     /// <summary>商品年度 (9999=通年)</summary>
     public short? ProductYear { get; set; }
     /// <summary>管理季節 (product_seasons.id)</summary>
-    public long? ManagementSeasonId { get; set; }
+    public Guid? ManagementSeasonId { get; set; }
     /// <summary>企画者 (users.id)</summary>
-    public long? PlannerUserId { get; set; }
+    public Guid? PlannerUserId { get; set; }
     /// <summary>仮番号</summary>
     public string? ProvisionalNumber { get; set; }
     /// <summary>サンプル合格日</summary>
@@ -64,11 +70,11 @@ public class ProductFamily : ITenantScoped
     /// <summary>0=Draft, 1=Active, 2=Discontinued</summary>
     public short Status { get; set; }
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 
     // ナビプロパティ (Include で FK ネスト返却に使用)

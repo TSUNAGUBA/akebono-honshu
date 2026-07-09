@@ -10,19 +10,19 @@ namespace Akebono.Domain.Products;
 /// </summary>
 public class Product : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public long ProductFamilyId { get; set; }
-    public long ColorId { get; set; }
-    public long SizeId { get; set; }
+    public Guid ProductFamilyId { get; set; }
+    public Guid ColorId { get; set; }
+    public Guid SizeId { get; set; }
     /// <summary>11 桁品番 (Sku Value Object で組み立て、UNIQUE 制約で二重生成防止)</summary>
     public string Sku { get; set; } = string.Empty;
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 
     public ProductFamily? ProductFamily { get; set; }

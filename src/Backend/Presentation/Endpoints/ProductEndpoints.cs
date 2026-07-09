@@ -24,19 +24,21 @@ public static class ProductEndpoints
     {
         var families = app.MapGroup("/api/maker/v1/products/families");
 
-        // 一覧 (P-04)
+        // 一覧 (P-04)。キーセットページング (AKB-DOC-12 §7.1): ?limit=50&cursor=<opaque>、
+        // 不正は 400 AKB-SYS-011 (PageCursor.Read が DomainException を投げ中央ハンドラが封筒化)。
         families.MapGet("/", async (HttpContext http, ProductFamilyService svc,
-                                     bool? includeDeleted, CancellationToken ct) =>
+                                     bool? includeDeleted, int? limit, string? cursor, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
-            var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
-            return ApiEnvelope.Ok(http, items);
+            var page = PageCursor.Read(limit, cursor);
+            var result = await svc.ListAsync(actorId, includeDeleted ?? false, page, ct);
+            return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
         // 詳細 (P-05)
-        families.MapGet("/{id:long}", async (HttpContext http, ProductFamilyService svc,
-                                              long id, CancellationToken ct) =>
+        families.MapGet("/{id:guid}", async (HttpContext http, ProductFamilyService svc,
+                                              Guid id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
@@ -50,9 +52,11 @@ public static class ProductEndpoints
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
+            // Idempotency-Key (AKB-DOC-12 §8): 作成系 POST は必須。欠如は 400 AKB-SYS-004。
+            var (idemKey, idemHash) = IdempotencyKeyReader.Read(http, req);
             try
             {
-                var resp = await svc.CreateCompleteAsync(req, auth.ActorId!.Value, ct);
+                var resp = await svc.CreateCompleteAsync(req, auth.ActorId!.Value, idemKey, idemHash, ct: ct);
                 return ApiEnvelope.Created(http, $"/api/maker/v1/products/families/{resp.Family.Id}", resp);
             }
             catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains("uq_product_families") == true)
@@ -70,8 +74,8 @@ public static class ProductEndpoints
 
         // 更新 (P-05)。アソート/セット明細の検証エラーは service 層の DomainException (422) を
         // 中央ハンドラが変換する。
-        families.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                                 ProductFamilyService svc, long id, UpdateFamilyRequest req, CancellationToken ct) =>
+        families.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                                 ProductFamilyService svc, Guid id, UpdateFamilyRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -86,8 +90,8 @@ public static class ProductEndpoints
         });
 
         // 論理削除 (P-05)
-        families.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                                  ProductFamilyService svc, long id, CancellationToken ct) =>
+        families.MapDelete("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                                  ProductFamilyService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -96,8 +100,8 @@ public static class ProductEndpoints
         });
 
         // 単価追加 (BR-04 履歴管理)
-        families.MapPost("/{id:long}/supplier-prices", async (HttpContext http, IAkebonoDbContext db,
-                                                                ProductSupplierPriceService svc, long id, AddSupplierPriceRequest req, CancellationToken ct) =>
+        families.MapPost("/{id:guid}/supplier-prices", async (HttpContext http, IAkebonoDbContext db,
+                                                                ProductSupplierPriceService svc, Guid id, AddSupplierPriceRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -107,8 +111,8 @@ public static class ProductEndpoints
         });
 
         // 単価履歴一覧
-        families.MapGet("/{id:long}/supplier-prices", async (HttpContext http,
-                                                               ProductSupplierPriceService svc, long id, CancellationToken ct) =>
+        families.MapGet("/{id:guid}/supplier-prices", async (HttpContext http,
+                                                               ProductSupplierPriceService svc, Guid id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
@@ -127,9 +131,9 @@ public static class ProductEndpoints
         // ── P-06 画像管理 ─────────────────────────────────
         // 画像アップロード: IFormFile を IImageStorageService 経由で保存 + メタ DB 登録。
         // 保存先は Local (wwwroot) / S3 を appsettings.ImageStorage:Provider で切替 (Iter 4 段階 C)。
-        families.MapPost("/{id:long}/images", async (HttpContext http, IAkebonoDbContext db,
+        families.MapPost("/{id:guid}/images", async (HttpContext http, IAkebonoDbContext db,
                                                        IImageStorageService imageStorage,
-                                                       long id, IFormFile file, short? category, CancellationToken ct) =>
+                                                       Guid id, IFormFile file, short? category, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -146,12 +150,12 @@ public static class ProductEndpoints
             if (imageCategory is not (0 or 1))
                 return ApiEnvelope.Error(http, 422, AkbErrorCodes.SysValidation, "画像区分は 0(企画) / 1(本番) を指定してください");
 
-            var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == id && !pf.IsDeleted, ct);
+            var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == id && pf.DeletedAt == null, ct);
             if (family is null) return AuthEndpoints.NotFoundError(http);
 
             // 上限・order_no は区分ごとに独立 (企画最大5 + 本番最大5、§2a)。
             var currentCount = await db.ProductImages.CountAsync(
-                i => i.ProductFamilyId == id && i.ImageCategory == imageCategory && !i.IsDeleted, ct);
+                i => i.ProductFamilyId == id && i.ImageCategory == imageCategory && i.DeletedAt == null, ct);
             if (currentCount >= 5)
                 return ApiEnvelope.Error(http, 409, AkbErrorCodes.SysUniqueViolation,
                     $"{(imageCategory == 1 ? "本番" : "企画")}画像は最大 5 枚までです");
@@ -217,8 +221,8 @@ public static class ProductEndpoints
         }).DisableAntiforgery();
 
         // 並び順変更 (§2a: 区分ごとに独立。category=0(企画)/1(本番) 内で order_no を振り直す)。
-        families.MapPatch("/{id:long}/images/reorder", async (HttpContext http, IAkebonoDbContext db,
-                                                                long id, List<long> orderedIds, short? category, CancellationToken ct) =>
+        families.MapPatch("/{id:guid}/images/reorder", async (HttpContext http, IAkebonoDbContext db,
+                                                                Guid id, List<Guid> orderedIds, short? category, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -226,7 +230,7 @@ public static class ProductEndpoints
             var imageCategory = category ?? 0;
             // 対象区分内の画像のみを振り直す (他区分の order_no には触れない = 区分別 UNIQUE を壊さない)。
             var images = await db.ProductImages
-                .Where(i => i.ProductFamilyId == id && i.ImageCategory == imageCategory && !i.IsDeleted)
+                .Where(i => i.ProductFamilyId == id && i.ImageCategory == imageCategory && i.DeletedAt == null)
                 .ToListAsync(ct);
 
             // 一度全ての order_no を 100 + index に逃がしてから再設定 (UNIQUE 衝突回避)
@@ -251,8 +255,8 @@ public static class ProductEndpoints
         });
 
         // 画像論理削除
-        families.MapDelete("/{id:long}/images/{imageId:long}", async (HttpContext http, IAkebonoDbContext db,
-                                                                       long id, long imageId, CancellationToken ct) =>
+        families.MapDelete("/{id:guid}/images/{imageId:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                                                       Guid id, Guid imageId, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -261,8 +265,9 @@ public static class ProductEndpoints
                 .FirstOrDefaultAsync(i => i.Id == imageId && i.ProductFamilyId == id, ct);
             if (image is null) return AuthEndpoints.NotFoundError(http);
 
-            image.IsDeleted = true;
-            image.UpdatedAt = SystemTime.UtcNow;
+            var now = SystemTime.UtcNow;
+            image.DeletedAt = now;
+            image.UpdatedAt = now;
             image.UpdatedByUserId = auth.ActorId!.Value;
             await db.SaveChangesAsync(ct);
 

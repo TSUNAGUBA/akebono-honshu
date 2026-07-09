@@ -14,6 +14,24 @@ public static class ApiEnvelope
     public static IResult Ok(HttpContext http, object? data)
         => Results.Ok(new { data, meta = Meta(http) });
 
+    /// <summary>
+    /// キーセットページング付き成功封筒 (200、AKB-DOC-12 §7.1)。
+    /// meta.page = {nextCursor, limit, hasMore}。nextCursor は最終ページで null。
+    /// </summary>
+    public static IResult OkPaged<T>(HttpContext http, PagedResult<T> page, int limit)
+        => Results.Ok(new
+        {
+            data = page.Items,
+            meta = Meta(http, new
+            {
+                nextCursor = page.HasMore && page.NextCreatedAt is { } at && page.NextId is { } id
+                    ? PageCursor.Encode(at, id)
+                    : null,
+                limit,
+                hasMore = page.HasMore,
+            }),
+        });
+
     /// <summary>作成成功封筒 (201 + Location)。</summary>
     public static IResult Created(HttpContext http, string location, object? data)
         => Results.Created(location, new { data, meta = Meta(http) });
@@ -46,11 +64,17 @@ public static class ApiEnvelope
     public static IResult Error(HttpContext http, DomainException ex)
         => Error(http, ex.StatusCode, ex.Code, ex.Message, ex.UserAction, ex.Details);
 
-    private static object Meta(HttpContext http)
+    /// <summary>
+    /// meta 本体 (単一定義)。page はページング応答のみ非 null (JSON では非ページング応答に
+    /// page: null が現れるが、AKB-DOC-12 §7.1 は page 必須をページング応答にのみ課すため許容。
+    /// meta へのフィールド追加はここ 1 箇所に行う)。
+    /// </summary>
+    private static object Meta(HttpContext http, object? page = null)
         => new
         {
             requestId = http.TraceIdentifier,
             source = "live",
             warnings = Array.Empty<object>(),
+            page,
         };
 }

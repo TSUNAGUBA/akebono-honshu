@@ -14,16 +14,16 @@ namespace Akebono.Domain.Products;
 /// </summary>
 public class ProductSupplierPrice : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public long ProductFamilyId { get; set; }
-    public long SupplierId { get; set; }
+    public Guid ProductFamilyId { get; set; }
+    public Guid SupplierId { get; set; }
     /// <summary>
     /// サイズ別仕入単価 (PR2、設計判断Q4)。NULL = 全サイズ共通の既定単価 (従来挙動、既存行は NULL の
     /// まま下位互換)。非NULL = そのサイズ専用単価 (既定をオーバーライド)。現単価解決は
     /// 「サイズ専用の有効行があればそれを、無ければ NULL-size 既定行」のフォールバック (Application 層)。
     /// </summary>
-    public long? SizeId { get; set; }
+    public Guid? SizeId { get; set; }
     public decimal UnitPrice { get; set; }
     public string CurrencyCode { get; set; } = "JPY";
     public decimal? ExchangeRate { get; set; }
@@ -42,11 +42,11 @@ public class ProductSupplierPrice : ITenantScoped
     public DateOnly? EffectiveTo { get; set; }
     public DateOnly DecidedAt { get; set; }
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     public ProductFamily? ProductFamily { get; set; }
     public Supplier? Supplier { get; set; }

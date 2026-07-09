@@ -18,19 +18,21 @@ public static class OrderEndpoints
     {
         var orders = app.MapGroup("/api/maker/v1/orders");
 
-        // 一覧 (O-03)
+        // 一覧 (O-03)。キーセットページング (AKB-DOC-12 §7.1): ?limit=50&cursor=<opaque>、
+        // 不正は 400 AKB-SYS-011 (PageCursor.Read が DomainException を投げ中央ハンドラが封筒化)。
         orders.MapGet("/", async (HttpContext http, PurchaseOrderService svc,
-                                    bool? includeCancelled, CancellationToken ct) =>
+                                    bool? includeCancelled, int? limit, string? cursor, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
-            var items = await svc.ListAsync(actorId, includeCancelled ?? false, ct);
-            return ApiEnvelope.Ok(http, items);
+            var page = PageCursor.Read(limit, cursor);
+            var result = await svc.ListAsync(actorId, includeCancelled ?? false, page, ct);
+            return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
         // 詳細 (O-04 編集画面ベース)
-        orders.MapGet("/{id:long}", async (HttpContext http, PurchaseOrderService svc,
-                                            long id, CancellationToken ct) =>
+        orders.MapGet("/{id:guid}", async (HttpContext http, PurchaseOrderService svc,
+                                            Guid id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
@@ -52,8 +54,8 @@ public static class OrderEndpoints
         });
 
         // 編集 (O-04、F-16 EditReason 必須)
-        orders.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              PurchaseOrderService svc, long id, UpdateOrderRequest req, CancellationToken ct) =>
+        orders.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              PurchaseOrderService svc, Guid id, UpdateOrderRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -64,8 +66,8 @@ public static class OrderEndpoints
         });
 
         // 中止 (O-05)。削除済 (終端状態) の中止は service 層の DomainException (409、§3b)。
-        orders.MapPost("/{id:long}/cancel", async (HttpContext http, IAkebonoDbContext db,
-                                                     PurchaseOrderService svc, long id, CancelOrderRequest req, CancellationToken ct) =>
+        orders.MapPost("/{id:guid}/cancel", async (HttpContext http, IAkebonoDbContext db,
+                                                     PurchaseOrderService svc, Guid id, CancelOrderRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -75,8 +77,8 @@ public static class OrderEndpoints
 
         // 発注済にする (§3b)。未発注 → 発注済 (ordered_at を SET)。ダウンロードとは独立したユーザー操作。
         // 削除済/中止済 (終端状態) は service 層の DomainException (409)。
-        orders.MapPost("/{id:long}/mark-ordered", async (HttpContext http, IAkebonoDbContext db,
-                                                         PurchaseOrderService svc, long id, CancellationToken ct) =>
+        orders.MapPost("/{id:guid}/mark-ordered", async (HttpContext http, IAkebonoDbContext db,
+                                                         PurchaseOrderService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -86,8 +88,8 @@ public static class OrderEndpoints
 
         // 未発注に戻す (§3b)。発注済 → 未発注 (ordered_at を NULL)。
         // 削除済/中止済 (終端状態) は service 層の DomainException (409)。
-        orders.MapPost("/{id:long}/unmark-ordered", async (HttpContext http, IAkebonoDbContext db,
-                                                           PurchaseOrderService svc, long id, CancellationToken ct) =>
+        orders.MapPost("/{id:guid}/unmark-ordered", async (HttpContext http, IAkebonoDbContext db,
+                                                           PurchaseOrderService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -95,9 +97,9 @@ public static class OrderEndpoints
             return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        // 発注削除 (§3b)。論理削除 (is_deleted=true)。物理削除はしない。
-        orders.MapPost("/{id:long}/delete", async (HttpContext http, IAkebonoDbContext db,
-                                                    PurchaseOrderService svc, long id, CancellationToken ct) =>
+        // 発注削除 (§3b)。論理削除 (deleted_at SET)。物理削除はしない。
+        orders.MapPost("/{id:guid}/delete", async (HttpContext http, IAkebonoDbContext db,
+                                                    PurchaseOrderService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -126,12 +128,12 @@ public static class OrderEndpoints
         //   format=management → 管理表 .xlsx (単一)
         //   format=both       → 発注書+管理表 を ZIP (OrderBulkExportService を [id] で再利用)
         // 発注番号重複 / 削除済 (終端状態) は service 層の DomainException (409)。
-        orders.MapPost("/{id:long}/export", async (HttpContext http, IAkebonoDbContext db,
+        orders.MapPost("/{id:guid}/export", async (HttpContext http, IAkebonoDbContext db,
                                                     PurchaseOrderService svc,
                                                     IPurchaseOrderExcelService excel,
                                                     IOrderManagementTableExcelService mgmt,
                                                     IOrderBulkExportService bulk,
-                                                    long id, ExportOrderRequest req, CancellationToken ct) =>
+                                                    Guid id, ExportOrderRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -149,13 +151,13 @@ public static class OrderEndpoints
             if (format == "both")
             {
                 var result = await bulk.ExportAsync(
-                    new BulkExportRequest(new List<long> { id }, "both"), auth.ActorId!.Value, ct);
+                    new BulkExportRequest(new List<Guid> { id }, "both"), auth.ActorId!.Value, ct);
                 return Results.File(result.Content, contentType: result.ContentType, fileDownloadName: result.FileName);
             }
 
             var (fileName, content) = format == "order"
                 ? await excel.ExportAsync(id, auth.ActorId!.Value, ct)
-                : await mgmt.ExportAsync(new List<long> { id }, auth.ActorId!.Value, ct);
+                : await mgmt.ExportAsync(new List<Guid> { id }, auth.ActorId!.Value, ct);
             return Results.File(content,
                 contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 fileDownloadName: fileName);
@@ -191,7 +193,7 @@ public static class OrderEndpoints
         // 注: 本 endpoint は読取専用の入力補助で、snapshot をサーバ側で上書きしない (下位互換)。
         orders.MapGet("/price-suggestion", async (HttpContext http, IAkebonoDbContext db,
                                                    ProductSupplierPriceService priceSvc, IAuditLogger audit,
-                                                   long productId, long supplierId, CancellationToken ct) =>
+                                                   Guid productId, Guid supplierId, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

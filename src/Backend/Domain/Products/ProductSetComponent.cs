@@ -16,11 +16,11 @@ namespace Akebono.Domain.Products;
 /// </summary>
 public class ProductSetComponent : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
 
     /// <summary>親 = アソート/セット商品 (product_families.id)。</summary>
-    public long ProductFamilyId { get; set; }
+    public Guid ProductFamilyId { get; set; }
 
     /// <summary>
     /// 子品番 (旧 spec No.37)。手入力テキスト。FK なし (旧システム品番/外部品番も許容)。
@@ -34,9 +34,9 @@ public class ProductSetComponent : ITenantScoped
     public short LineNo { get; set; }
 
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     // ナビプロパティ
     public ProductFamily? ProductFamily { get; set; }

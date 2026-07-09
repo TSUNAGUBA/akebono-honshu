@@ -10,7 +10,7 @@ namespace Akebono.Domain.Entities;
 /// </summary>
 public class ExchangeRate : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
 
     /// <summary>対象年月 (YYYY-MM 形式、例: "2026-07")</summary>
@@ -22,10 +22,10 @@ public class ExchangeRate : ITenantScoped
     /// <summary>対円レート (1 通貨単位 = Rate 円)。例: USD=150.00, CNY=21.50</summary>
     public decimal Rate { get; set; }
 
-    public bool DeleteFlag { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 }

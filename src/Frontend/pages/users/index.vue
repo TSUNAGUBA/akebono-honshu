@@ -1,6 +1,7 @@
 <script setup lang="ts">
 interface UserItem {
-  id: number
+  // 第二段階契約: users.id は uuid 文字列
+  id: string
   employeeNo: string
   loginId: string
   displayName: string

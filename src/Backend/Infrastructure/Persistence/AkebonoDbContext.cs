@@ -102,7 +102,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.PurchaseOrderInfoPermission).HasColumnName("purchase_order_info_permission");
             b.Property(x => x.ProcessRecordPermission).HasColumnName("process_record_permission");
             b.Property(x => x.IsActive).HasColumnName("is_active");
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -114,11 +114,15 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
         });
 
         // audit_logs (RLS 適用除外・INSERT 専用。tenant_id はテナント確定前イベントで NULL)
+        // 第二段階: occurred_at による月次 RANGE パーティション化 (AKB-DOC-14)。
+        // PK はパーティションキーを含む必要があるため (id, occurred_at) の複合 PK。
+        // 複合キーでは EF の Guid 自動生成規約が効かないため ValueGeneratedNever とし、
+        // AuditLogger 側で Id = Guid.NewGuid() を明示的に採番する。
         modelBuilder.Entity<AuditLog>(b =>
         {
             b.ToTable("audit_logs");
-            b.HasKey(x => x.Id);
-            b.Property(x => x.Id).HasColumnName("id");
+            b.HasKey(x => new { x.Id, x.OccurredAt });
+            b.Property(x => x.Id).HasColumnName("id").ValueGeneratedNever();
             b.Property(x => x.TenantId).HasColumnName("tenant_id");
             b.Property(x => x.OccurredAt).HasColumnName("occurred_at");
             b.Property(x => x.ActorUserId).HasColumnName("actor_user_id");
@@ -209,7 +213,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.YearMonth).HasColumnName("year_month").IsRequired().HasMaxLength(7).IsFixedLength();
             b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
             b.Property(x => x.Rate).HasColumnName("rate").HasColumnType("numeric(12,4)");
-            b.Property(x => x.DeleteFlag).HasColumnName("delete_flag");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -223,6 +227,11 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.ToTable("product_families");
             b.HasKey(x => x.Id);
             b.Property(x => x.Id).HasColumnName("id");
+            // Idempotency-Key (AKB-DOC-12 §8)。DB 側は部分 UNIQUE (tenant_id, idempotency_key)
+            // WHERE idempotency_key IS NOT NULL が最終防壁 (uq_product_families_tenant_idem)。
+            b.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(128);
+            b.Property(x => x.IdempotencyPayloadHash).HasColumnName("idempotency_payload_hash").HasMaxLength(64);
+            b.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique();
             b.Property(x => x.PlannedYearCode).HasColumnName("planned_year_code").IsRequired().HasMaxLength(1).IsFixedLength();
             b.Property(x => x.ProductTypeId).HasColumnName("product_type_id");
             b.Property(x => x.ProductSeasonId).HasColumnName("product_season_id");
@@ -252,7 +261,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.Remark).HasColumnName("remark");
             b.Property(x => x.ColorRemark).HasColumnName("color_remark");
             b.Property(x => x.Status).HasColumnName("status");
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -289,7 +298,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.ColorId).HasColumnName("color_id");
             b.Property(x => x.SizeId).HasColumnName("size_id");
             b.Property(x => x.Sku).HasColumnName("sku").IsRequired().HasMaxLength(16); // 11 桁 (新規) + 旧 SKU (legacy import、最大 16 桁)
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -316,7 +325,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.WidthPx).HasColumnName("width_px");
             b.Property(x => x.HeightPx).HasColumnName("height_px");
             b.Property(x => x.OriginalFilename).HasColumnName("original_filename").HasMaxLength(255);
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -351,7 +360,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.EffectiveFrom).HasColumnName("effective_from");
             b.Property(x => x.EffectiveTo).HasColumnName("effective_to");
             b.Property(x => x.DecidedAt).HasColumnName("decided_at");
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -397,14 +406,13 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
             b.Property(x => x.CancelledByUserId).HasColumnName("cancelled_by_user_id");
             b.Property(x => x.CancelReason).HasColumnName("cancel_reason").HasMaxLength(255);
-            // 発注状態 4 値モデル (§3b)。発注済 (ordered_at)/発注削除 (is_deleted) 列。操作者列は
+            // 発注状態 4 値モデル (§3b)。発注済 (ordered_at)/発注削除 (deleted_at) 列。操作者列は
             // cancelled_by_user_id と同じく scalar (ナビ無し) のため shadow FK 列・cascade は発生しない。
             // DB 側 FK は init/iter21 SQL で定義。納品完了 (delivered_at) は §3b で状態導出から除外 (列は保持)。
             b.Property(x => x.OrderedAt).HasColumnName("ordered_at");
             b.Property(x => x.OrderedByUserId).HasColumnName("ordered_by_user_id");
             b.Property(x => x.DeliveredAt).HasColumnName("delivered_at");
             b.Property(x => x.DeliveredByUserId).HasColumnName("delivered_by_user_id");
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
             b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.DeletedByUserId).HasColumnName("deleted_by_user_id");
             b.Property(x => x.SupplierId).HasColumnName("supplier_id");
@@ -554,7 +562,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.RecommendedSupplierId).HasColumnName("recommended_supplier_id");
             b.Property(x => x.LossRate).HasColumnName("loss_rate").HasColumnType("numeric(5,4)");
             b.Property(x => x.Remark).HasColumnName("remark").HasMaxLength(255);
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -588,7 +596,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.CommunicationText).HasColumnName("communication_text");
             b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
             b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -644,7 +652,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.CommunicationText).HasColumnName("communication_text");
             b.Property(x => x.FirstExportedAt).HasColumnName("first_exported_at");
             b.Property(x => x.LastExportedAt).HasColumnName("last_exported_at");
-            b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
@@ -766,7 +774,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
-    /// <summary>マスタ共通基底カラム (id / code / name / delete_flag / 監査列 / legacy_id) の Fluent 設定。</summary>
+    /// <summary>マスタ共通基底カラム (id / code / name / deleted_at / 監査列 / legacy_id) の Fluent 設定。</summary>
     private static void ConfigureMaster<T>(
         ModelBuilder modelBuilder,
         string tableName,
@@ -780,7 +788,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.Id).HasColumnName("id");
             b.Property(x => x.Code).HasColumnName("code").IsRequired().HasMaxLength(3).IsFixedLength();
             b.Property(x => x.Name).HasColumnName("name").IsRequired().HasMaxLength(255);
-            b.Property(x => x.DeleteFlag).HasColumnName("delete_flag");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");

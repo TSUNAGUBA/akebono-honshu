@@ -38,6 +38,8 @@ public static class AkbErrorCodes
     public const string SysMalformedBody = "AKB-SYS-001";
     /// <summary>バリデーションエラー (422)</summary>
     public const string SysValidation = "AKB-SYS-002";
+    /// <summary>必須ヘッダ欠如 (X-Tenant-Id 等、400)</summary>
+    public const string SysHeaderMissing = "AKB-SYS-003";
     /// <summary>Idempotency-Key 欠如 (400)</summary>
     public const string SysIdempotencyKeyMissing = "AKB-SYS-004";
     /// <summary>Idempotency-Key 競合: 同一キー・異なるペイロード (409)</summary>
@@ -48,6 +50,8 @@ public static class AkbErrorCodes
     public const string SysUniqueViolation = "AKB-SYS-007";
     /// <summary>リクエストサイズ超過 (413)</summary>
     public const string SysPayloadTooLarge = "AKB-SYS-010";
+    /// <summary>ページングパラメータ不正 (limit &gt; 200・カーソル復号不能等、400)</summary>
+    public const string SysPagingInvalid = "AKB-SYS-011";
     /// <summary>内部サーバーエラー (500)</summary>
     public const string SysInternal = "AKB-SYS-020";
 

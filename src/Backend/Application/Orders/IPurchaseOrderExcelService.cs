@@ -16,5 +16,5 @@ public interface IPurchaseOrderExcelService
     /// <summary>Excel ファイルを生成して byte[] で返却。</summary>
     /// <returns>(FileName, ContentBytes)</returns>
     Task<(string FileName, byte[] Content)> ExportAsync(
-        long purchaseOrderId, long actorUserId, CancellationToken ct = default);
+        Guid purchaseOrderId, Guid actorUserId, CancellationToken ct = default);
 }

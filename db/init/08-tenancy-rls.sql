@@ -49,8 +49,27 @@ REVOKE UPDATE, DELETE ON audit_logs FROM akebono_app;
 --   tenant はレジストリ投影 (SoT = akebono-backoffice)。アプリは読取のみ。
 REVOKE INSERT, UPDATE, DELETE ON tenant FROM akebono_app;
 
+--   07-ops-data の記録系 (データ3分類) も audit_logs と同方針で追記専用化。
+--   updated_at を持たない追記専用テーブル。訂正は逆仕訳/逆符号行の追記で行う
+--   (各テーブルの COMMENT ON TABLE 参照)。
+REVOKE UPDATE, DELETE ON payment_receipt    FROM akebono_app;
+REVOKE UPDATE, DELETE ON payment_allocation FROM akebono_app;
+REVOKE UPDATE, DELETE ON shipping_receipt   FROM akebono_app;
+REVOKE UPDATE, DELETE ON report_output      FROM akebono_app;
+REVOKE UPDATE, DELETE ON asn_transmission   FROM akebono_app;
+REVOKE UPDATE, DELETE ON inventory_movement FROM akebono_app;
+
+--   accounts_receivable は導出 VIEW (集約ビューのため元より自動更新不可だが、
+--   権限面でも読取専用を明示)。
+REVOKE INSERT, UPDATE, DELETE ON accounts_receivable FROM akebono_app;
+
+-- 監査ログ月次パーティションの先行作成関数 (01-schema.sql / SECURITY DEFINER)。
+-- アプリの起動時/日次ジョブが呼び出すため EXECUTE を付与する。
+GRANT EXECUTE ON FUNCTION ensure_audit_log_partitions(int) TO akebono_app;
+
 -- ─────────────────────────────────────────────────
 -- 2. RLS 配線 (テナントスコープ業務テーブル 45 本)
+--    (02: 19 / 03: 5 / 04: 4 / 05: 5 / 07: 12。07 は VIEW を除く 12 テーブル)
 --
 -- 適用除外 (理由は各テーブルの定義コメント参照):
 --   - tenant      : テナントレジストリ投影 (横断参照。読取専用 GRANT で保護)
@@ -59,6 +78,9 @@ REVOKE INSERT, UPDATE, DELETE ON tenant FROM akebono_app;
 --   - audit_logs  : テナント未確定イベント (認証拒否等) の記録が必要 (tenant_id NULL 許容。
 --                   INSERT 専用 GRANT で保護)
 --   - staging_legacy_products : レガシー取込の一次着地 (実行時作成・テナント確定前 staging)
+--   - accounts_receivable : VIEW のためポリシー対象外 (RLS はテーブル専用)。
+--                   security_invoker = true により基底テーブル (billing_invoice /
+--                   payment_allocation / customer) の RLS が呼出し側コンテキストで効く
 -- ─────────────────────────────────────────────────
 DO $$
 DECLARE
@@ -80,10 +102,10 @@ BEGIN
         -- 05-production (5)
         'product_materials', 'production_instructions', 'production_instruction_lines',
         'material_orders', 'material_order_lines',
-        -- 07-ops-data (12)
-        'sales_orders', 'billing_invoices', 'payment_receipts', 'accounts_receivable',
-        'shipping_receipts', 'picking_lists', 'report_outputs', 'asn_transmissions',
-        'inbound_records', 'outbound_records', 'stock_adjustments', 'stocktaking_adjustments'
+        -- 07-ops-data (12。accounts_receivable は VIEW のため対象外 — ヘッダの適用除外参照)
+        'customer', 'sales_order', 'sales_order_line', 'billing_invoice',
+        'payment_receipt', 'payment_allocation', 'shipping_receipt', 'picking_list',
+        'report_output', 'asn_transmission', 'inventory_movement', 'inventory_balance'
     ]
     LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);

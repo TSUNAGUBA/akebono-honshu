@@ -10,11 +10,11 @@ namespace Akebono.Domain.Orders;
 /// </summary>
 public class PurchaseOrderLine : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public long PurchaseOrderId { get; set; }
+    public Guid PurchaseOrderId { get; set; }
     public short LineNo { get; set; }
-    public long ProductId { get; set; }
+    public Guid ProductId { get; set; }
 
     public string SkuSnapshot { get; set; } = string.Empty;
     public string ProductNameSnapshot { get; set; } = string.Empty;
@@ -36,9 +36,9 @@ public class PurchaseOrderLine : ITenantScoped
     public decimal Subtotal { get; set; }
 
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     public PurchaseOrder? PurchaseOrder { get; set; }
     public Product? Product { get; set; }

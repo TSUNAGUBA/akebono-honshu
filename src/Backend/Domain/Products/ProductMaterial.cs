@@ -11,13 +11,13 @@ namespace Akebono.Domain.Products;
 /// </summary>
 public class ProductMaterial : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public long ProductFamilyId { get; set; }
+    public Guid ProductFamilyId { get; set; }
 
     /// <summary>部位区分 (0甲皮/1中底/2底/3付属/4副資材)</summary>
     public MaterialRole MaterialRole { get; set; }
-    public long MaterialId { get; set; }
+    public Guid MaterialId { get; set; }
 
     /// <summary>1足あたり所要量 (例: 0.3000 ㎡、1.0000 組)</summary>
     public decimal RequiredQtyPerUnit { get; set; }
@@ -26,17 +26,17 @@ public class ProductMaterial : ITenantScoped
     public string Unit { get; set; } = string.Empty;
 
     /// <summary>推奨素材仕入先 (素材発注時の初期値、NULL 可)</summary>
-    public long? RecommendedSupplierId { get; set; }
+    public Guid? RecommendedSupplierId { get; set; }
 
     /// <summary>ロス率 (0〜1未満、例 0.0500=5%)。発注数 = 所要量×数量×(1+loss_rate)</summary>
     public decimal LossRate { get; set; }
 
     public string? Remark { get; set; }
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     // ナビプロパティ
     public ProductFamily? ProductFamily { get; set; }

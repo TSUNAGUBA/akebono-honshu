@@ -21,7 +21,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     /// OrderEndpoints の GET /api/maker/v1/orders/price-suggestion で別途提供 (読取専用、PR2)。
     /// </summary>
     public async Task<PurchaseOrder> CreateAsync(
-        CreateOrderRequest req, long actorUserId,
+        CreateOrderRequest req, Guid actorUserId,
         string? idempotencyKey = null, string? idempotencyPayloadHash = null,
         CancellationToken ct = default)
     {
@@ -156,28 +156,37 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
 
     /// <summary>
     /// 一覧 (O-03)。SQL 集計で合計金額・明細件数・単価未決定有無を一括取得。
-    /// 発注状態 4 値モデル (§3b): is_deleted 行も含めて返す (発注削除 フィルタが表示できるよう)。
+    /// 発注状態 4 値モデル (§3b): 削除済 (deleted_at) 行も含めて返す (発注削除 フィルタが表示できるよう)。
     /// 既定の絞込 (発注削除を隠す) はフロント側 SPLIT フィルタで行う。
     /// includeCancelled は後方互換のため残すが、4 状態フィルタ導入後はフロントが全状態を
     /// client-side で絞り込むため、サービスは includeCancelled=true 相当の全件 (中止/削除含む) を返す。
+    /// キーセットページング (AKB-DOC-12 §7.1): (created_at, id) 降順の安定ソート +
+    /// アンカー超過分のみ取得。limit+1 件取得で HasMore を判定する。
     /// </summary>
-    public async Task<List<OrderListItem>> ListAsync(
-        long actorUserId, bool includeCancelled, CancellationToken ct = default)
+    public async Task<PagedResult<OrderListItem>> ListAsync(
+        Guid actorUserId, bool includeCancelled, PageRequest page, CancellationToken ct = default)
     {
         var query = db.PurchaseOrders
             .Include(o => o.Supplier)
             .Include(o => o.DeliveryDestination)
             .Include(o => o.Orderer)
             .AsQueryable();
-        // 後方互換: includeCancelled=false の旧呼び出し時は中止を除外。さらに削除済 (is_deleted) も
+        // 後方互換: includeCancelled=false の旧呼び出し時は中止を除外。さらに削除済 (deleted_at) も
         // サーバ側で除外する (論理削除は「非中止」ビューにも出さない。client 未更新でも漏れない)。
         // 発注状態 SPLIT フィルタ (#3a) を使うフロントは includeCancelled=true で呼び、全状態 (削除含む) を
         // 取得して client-side で絞り込む (発注削除 フィルタを ON にしたときだけ削除済を表示)。
         if (!includeCancelled)
-            query = query.Where(o => o.Status == OrderStatus.Active && !o.IsDeleted);
+            query = query.Where(o => o.Status == OrderStatus.Active && o.DeletedAt == null);
+
+        // キーセット: 前ページ末尾 (created_at, id) より「後ろ」(降順) の行のみ。
+        // Guid.CompareTo は Npgsql EF が uuid 比較へ翻訳する (実機検証済)。
+        if (page.AfterCreatedAt is { } afterCreatedAt && page.AfterId is { } afterId)
+            query = query.Where(o => o.CreatedAt < afterCreatedAt
+                || (o.CreatedAt == afterCreatedAt && o.Id.CompareTo(afterId) < 0));
 
         var items = await query
             .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.Id)
             .Select(o => new
             {
                 Order = o,
@@ -187,12 +196,17 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
                 // 単価未決定: 明細に unit_price_snapshot <= 0 が 1 件でも存在するか (EXISTS 相当を SQL 集計)
                 HasUndecidedPrice = o.Lines.Any(l => l.UnitPriceSnapshot <= 0m),
             })
+            .Take(page.Limit + 1)
             .ToListAsync(ct);
+
+        // limit+1 件目が取れたら次ページあり。返却は limit 件に切り詰める。
+        var hasMore = items.Count > page.Limit;
+        if (hasMore) items.RemoveAt(page.Limit);
 
         await audit.LogAsync(actorUserId, "PurchaseOrder.List",
             entityType: "PurchaseOrder", note: $"count={items.Count}", cancellationToken: ct);
 
-        return items.Select(x => new OrderListItem(
+        var list = items.Select(x => new OrderListItem(
             x.Order.Id, x.Order.MgmtNo, x.Order.OrderNo, (short)x.Order.Status,
             x.Order.Supplier?.Code ?? "?", x.Order.Supplier?.Name ?? "?",
             x.Order.DeliveryDestination?.Name ?? "?",
@@ -206,7 +220,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
             x.Order.IsOverseas,
             // 発注状態 4 値モデル (§3b): 発注削除 導出フィールド + フィルタ用フィールド (DeliveredAt は未使用列)
             x.Order.DeliveredAt,
-            x.Order.IsDeleted,
+            x.Order.DeletedAt != null,
             x.Order.SupplierId,
             x.Order.OrdererUserId,
             // 得意先: 発注時凍結スナップショット優先、未設定時は納品先マスタの取引先名で補完
@@ -214,10 +228,14 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
             x.HasUndecidedPrice,
             // 発注済日時 (§3b): 未発注/発注済 の導出に使用
             x.Order.OrderedAt)).ToList();
+
+        var last = items.Count > 0 ? items[^1].Order : null;
+        return new PagedResult<OrderListItem>(
+            list, hasMore, hasMore ? last?.CreatedAt : null, hasMore ? last?.Id : null);
     }
 
     /// <summary>詳細 (O-04 編集画面ベース)。</summary>
-    public async Task<OrderDetail?> GetDetailAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<OrderDetail?> GetDetailAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders
             .Include(o => o.Supplier)
@@ -289,7 +307,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
             order.Warehouse3Id, order.Warehouse3?.Name,
             // 発注状態 4 値モデル (§3b)。発注削除 の状態表示・操作可否判定に使う (DeliveredAt は未使用列)。
             order.DeliveredAt,
-            order.IsDeleted,
+            order.DeletedAt != null,
             order.DeletedAt,
             // 連絡文書 6 行 (構造化、PR6)。新フローの SoT を返す。6 列が全 NULL の旧発注は
             // フロント側で CommunicationText を改行分割してブリッジ表示する (本メソッドは両方返すだけ)。
@@ -305,7 +323,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
 
     /// <summary>編集 (O-04)。F-16 edit_reason 必須、audit_logs.changes に before/after 記録。</summary>
     public async Task<PurchaseOrder?> UpdateAsync(
-        long id, UpdateOrderRequest req, long actorUserId, CancellationToken ct = default)
+        Guid id, UpdateOrderRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
         if (order is null) return null;
@@ -314,7 +332,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
                 "中止済みの発注書は編集できません", "発注の状態を確認し許可された操作を選択してください");
         // 発注状態 4 値モデル (§3b): 削除済は終端状態として編集不可。納品完了は §3b で廃止したため判定しない。
-        if (order.IsDeleted)
+        if (order.DeletedAt != null)
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
                 "削除済みの発注書は編集できません", "発注の状態を確認し許可された操作を選択してください");
 
@@ -429,14 +447,14 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     }
 
     /// <summary>中止 (O-05)。status = Cancelled、cancelled_at / cancelled_by_user_id を SET。</summary>
-    public async Task<bool> CancelAsync(long id, CancelOrderRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> CancelAsync(Guid id, CancelOrderRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
         if (order is null) return false;
         if (order.Status == OrderStatus.Cancelled) return true; // 冪等
         // 発注状態 4 値モデル (§3b): 削除済は終端状態として中止不可
         // (deriveOrderState の優先順位 発注削除 > 発注中止 と整合)。納品完了は §3b で廃止したため判定しない。
-        if (order.IsDeleted)
+        if (order.DeletedAt != null)
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
                 "削除済みの発注書は中止できません", "発注の状態を確認し許可された操作を選択してください");
 
@@ -462,12 +480,12 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     /// ダウンロード (Excel 出力) とは独立したユーザー操作。既に発注済なら冪等に成功を返す。
     /// 中止済/削除済は終端状態として発注済にできない (deriveOrderState の優先順位と整合)。
     /// </summary>
-    public async Task<bool> MarkOrderedAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> MarkOrderedAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
         if (order is null) return false;
         // 終端状態ガードを冪等 return より先に評価する (削除済/中止済を発注済成功と誤報しないため)。
-        if (order.IsDeleted)
+        if (order.DeletedAt != null)
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
                 "削除済みの発注書は発注済にできません", "発注の状態を確認し許可された操作を選択してください");
         if (order.Status == OrderStatus.Cancelled)
@@ -494,11 +512,11 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     /// 未発注に戻す (§3b)。ordered_at / ordered_by_user_id を NULL に戻す (発注済 → 未発注)。
     /// 既に未発注なら冪等に成功を返す。中止済/削除済は終端状態として戻せない。
     /// </summary>
-    public async Task<bool> UnmarkOrderedAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> UnmarkOrderedAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
         if (order is null) return false;
-        if (order.IsDeleted)
+        if (order.DeletedAt != null)
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
                 "削除済みの発注書は未発注に戻せません", "発注の状態を確認し許可された操作を選択してください");
         if (order.Status == OrderStatus.Cancelled)
@@ -522,17 +540,16 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     }
 
     /// <summary>
-    /// 発注削除 (#3a)。論理削除 (is_deleted=true、deleted_at / deleted_by_user_id を SET)。
+    /// 発注削除 (#3a)。論理削除 (deleted_at / deleted_by_user_id を SET)。
     /// 物理削除はしない (監査・履歴保持)。既に削除済なら冪等に成功を返す。
     /// </summary>
-    public async Task<bool> SoftDeleteAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> SoftDeleteAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
         if (order is null) return false;
-        if (order.IsDeleted) return true; // 冪等
+        if (order.DeletedAt != null) return true; // 冪等
 
         var now = SystemTime.UtcNow;
-        order.IsDeleted = true;
         order.DeletedAt = now;
         order.DeletedByUserId = actorUserId;
         order.UpdatedAt = now;
@@ -553,7 +570,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     /// スキップして処理を継続する (CLAUDE.md 原則 4 非ブロッキング)。ダウンロードとは無関係にユーザー操作でのみ変更。
     /// </summary>
     public async Task<BulkStatusResult> BulkSetStatusAsync(
-        BulkStatusRequest req, long actorUserId, CancellationToken ct = default)
+        BulkStatusRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var target = req.TargetState?.Trim();
         if (target is not ("notOrdered" or "ordered" or "cancelled" or "deleted"))
@@ -605,14 +622,14 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     /// 戻り値: 発注が存在し保存したら true、不在なら false。
     /// </summary>
     public async Task<bool> ApplyExportFormFieldsAsync(
-        long id, DateOnly? orderDate, string? shippingInstructionNo, string? orderNo,
-        long actorUserId, CancellationToken ct = default)
+        Guid id, DateOnly? orderDate, string? shippingInstructionNo, string? orderNo,
+        Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.PurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
         if (order is null) return false;
         // 削除済は出力対象外 (一覧・詳細でも操作不可)。中止は印字メタデータ更新を許容する
         // (旧画面も「発注中止」チェック状態のまま出力可能だったため)。
-        if (order.IsDeleted)
+        if (order.DeletedAt != null)
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
                 "削除済みの発注書は出力できません", "発注の状態を確認し許可された操作を選択してください");
 
@@ -647,11 +664,11 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     public async Task<List<CommunicationTextSuggestion>> GetCommunicationSuggestionsAsync(CancellationToken ct = default)
     {
         var confirmations = await db.DocumentTemplateConfirmations
-            .Where(d => !d.DeleteFlag && d.StandardPrintFlag)
+            .Where(d => d.DeletedAt == null && d.StandardPrintFlag)
             .Select(d => new CommunicationTextSuggestion(d.Body, true, $"確認表 {d.Code} - {d.Name}"))
             .ToListAsync(ct);
         var purchases = await db.DocumentTextPurchases
-            .Where(d => !d.DeleteFlag && d.StandardPrintFlag)
+            .Where(d => d.DeletedAt == null && d.StandardPrintFlag)
             .Select(d => new CommunicationTextSuggestion(d.Body, true, $"発注書 {d.Code} - {d.Name}"))
             .ToListAsync(ct);
 
@@ -694,7 +711,7 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
     /// 呼び出し前に <see cref="ValidateDeliveries"/> で検証済であることを前提とする。
     /// </summary>
     private static List<PurchaseOrderLineDelivery> BuildDeliveryEntities(
-        long lineId, List<OrderLineDeliveryInput> deliveries, DateTime now, long actorUserId)
+        Guid lineId, List<OrderLineDeliveryInput> deliveries, DateTime now, Guid actorUserId)
     {
         var result = new List<PurchaseOrderLineDelivery>(deliveries.Count);
         short seq = 1;

@@ -4,10 +4,12 @@
  */
 
 export interface MasterItem {
-  id: number
+  // 第二段階契約: エンティティ ID は uuid 文字列 (JSON では文字列で受け渡し)
+  id: string
   code: string
   name: string
-  deleteFlag: boolean
+  // 論理削除 (プラットフォーム標準 deleted_at。null = 有効行)
+  deletedAt: string | null
   createdAt: string
   updatedAt: string
   // 拡張カラムは Record で動的に保持
@@ -30,7 +32,7 @@ export const useMasters = () => {
 
   const update = async (
     slug: string,
-    id: number,
+    id: string,
     payload: Record<string, unknown>,
   ): Promise<MasterItem> => {
     return await apiData<MasterItem>(`/masters/${slug}/${id}`, {
@@ -39,11 +41,11 @@ export const useMasters = () => {
     })
   }
 
-  const softDelete = async (slug: string, id: number): Promise<void> => {
+  const softDelete = async (slug: string, id: string): Promise<void> => {
     await apiFetch<void>(`/masters/${slug}/${id}`, { method: 'DELETE' })
   }
 
-  const restore = async (slug: string, id: number): Promise<void> => {
+  const restore = async (slug: string, id: string): Promise<void> => {
     await apiFetch<void>(`/masters/${slug}/${id}/restore`, { method: 'POST' })
   }
 

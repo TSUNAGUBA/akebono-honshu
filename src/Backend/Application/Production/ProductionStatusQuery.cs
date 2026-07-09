@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Akebono.Application.Production;
 
 public record ProductionStatusRow(
-    long FamilyId,
+    Guid FamilyId,
     string Sku9,
     string ProductName,
     string MaterialOrder,          // done / undone
@@ -29,33 +29,33 @@ public class ProductionStatusQuery(IAkebonoDbContext db)
     {
         // 品番 (有効) 一覧 + 代表 SKU
         var families = await db.ProductFamilies
-            .Where(f => !f.IsDeleted)
+            .Where(f => f.DeletedAt == null)
             .Select(f => new
             {
                 f.Id,
                 f.ProductName1,
-                FirstSku = db.Products.Where(p => p.ProductFamilyId == f.Id && !p.IsDeleted)
+                FirstSku = db.Products.Where(p => p.ProductFamilyId == f.Id && p.DeletedAt == null)
                     .OrderBy(p => p.Sku).Select(p => p.Sku).FirstOrDefault(),
             })
             .ToListAsync(ct);
 
         // 生産指示=済 (Issued/Completed)
         var piDone = (await db.ProductionInstructions
-            .Where(p => !p.IsDeleted && (p.Status == ProductionInstructionStatus.Issued || p.Status == ProductionInstructionStatus.Completed))
+            .Where(p => p.DeletedAt == null && (p.Status == ProductionInstructionStatus.Issued || p.Status == ProductionInstructionStatus.Completed))
             .Select(p => p.ProductFamilyId)
             .Distinct()
             .ToListAsync(ct)).ToHashSet();
 
         // 素材発注=済 (明細の由来品番 × Ordered)
         var moDone = (await db.MaterialOrderLines
-            .Where(l => l.ProductFamilyId != null && !l.MaterialOrder!.IsDeleted && l.MaterialOrder.Status == MaterialOrderStatus.Ordered)
+            .Where(l => l.ProductFamilyId != null && l.MaterialOrder!.DeletedAt == null && l.MaterialOrder.Status == MaterialOrderStatus.Ordered)
             .Select(l => l.ProductFamilyId!.Value)
             .Distinct()
             .ToListAsync(ct)).ToHashSet();
 
         // BOM 登録済
         var bomSet = (await db.ProductMaterials
-            .Where(m => !m.IsDeleted)
+            .Where(m => m.DeletedAt == null)
             .Select(m => m.ProductFamilyId)
             .Distinct()
             .ToListAsync(ct)).ToHashSet();

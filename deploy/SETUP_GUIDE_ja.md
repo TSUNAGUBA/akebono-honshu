@@ -249,7 +249,7 @@ GitHub の **Actions** タブから手動実行します。
 
 ### 6-1. DB 初期化
 `Actions → DB Init / Migrate (RDS) → Run workflow` → `action` で **`init`** を選択 → Run。
-- 空 DB に `db/init/*.sql`（01..08。06 はリアルなデモ業務データ、07 は業務拡張モジュール、08 はテナント分離 RLS + アプリロール akebono_app）を番号順に投入し、現行マイグレーションを baseline 記録します。`APP_DB_PASSWORD` secret が未設定だとエラー終了します（手順 5 参照）。
+- 空 DB に `db/init/*.sql`（01..09。06 はリアルなデモ業務データ、07 は業務拡張モジュール、08 はテナント分離 RLS + アプリロール akebono_app、09 は updated_at トリガ汎用配線）を番号順に投入し、現行マイグレーションを baseline 記録します。`APP_DB_PASSWORD` secret が未設定だとエラー終了します（手順 5 参照）。
 - 緑（成功）になったら次へ。
 
 ### 6-2. Backend デプロイ

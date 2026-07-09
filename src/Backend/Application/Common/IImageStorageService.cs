@@ -26,7 +26,7 @@ public interface IImageStorageService
     Task<string> GetUrlAsync(string key, CancellationToken ct);
 
     /// <summary>
-    /// 物理削除 (将来用)。現状の API は論理削除 (`IsDeleted=true`) のみで本メソッドは未呼出だが、
+    /// 物理削除 (将来用)。現状の API は論理削除 (`DeletedAt` SET) のみで本メソッドは未呼出だが、
     /// 抽象の対称性のため定義。実装は no-op でも可。
     /// </summary>
     Task DeleteAsync(string key, CancellationToken ct);

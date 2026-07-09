@@ -16,7 +16,7 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
 
     /// <summary>新規作成 (PI-01)。status=Draft。明細合計を planned_quantity に整合。</summary>
     public async Task<ProductionInstruction> CreateAsync(
-        CreatePiRequest req, long actorUserId,
+        CreatePiRequest req, Guid actorUserId,
         string? idempotencyKey = null, string? idempotencyPayloadHash = null,
         CancellationToken ct = default)
     {
@@ -37,7 +37,7 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
         // 品番に属する SKU か検証
         var productIds = req.Lines.Select(l => l.ProductId).ToList();
         var products = await db.Products
-            .Where(p => productIds.Contains(p.Id) && !p.IsDeleted)
+            .Where(p => productIds.Contains(p.Id) && p.DeletedAt == null)
             .ToListAsync(ct);
         if (products.Count != productIds.Count)
             throw DomainException.Validation("指定された SKU の一部が存在しません");
@@ -102,24 +102,37 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
         }
     }
 
-    /// <summary>一覧 (PI-02)。</summary>
-    public async Task<List<PiListItem>> ListAsync(long actorUserId, bool includeCancelled, CancellationToken ct = default)
+    /// <summary>一覧 (PI-02)。キーセットページング (AKB-DOC-12 §7.1): (created_at, id) 降順の安定ソート。</summary>
+    public async Task<PagedResult<PiListItem>> ListAsync(
+        Guid actorUserId, bool includeCancelled, PageRequest page, CancellationToken ct = default)
     {
         var query = db.ProductionInstructions
             .Include(p => p.FactorySupplier)
             .Include(p => p.ProductFamily)
-            .Where(p => !p.IsDeleted);
+            .Where(p => p.DeletedAt == null);
         if (!includeCancelled)
             query = query.Where(p => p.Status != ProductionInstructionStatus.Cancelled);
 
+        // キーセット: 前ページ末尾 (created_at, id) より「後ろ」(降順) の行のみ。
+        // Guid.CompareTo は Npgsql EF が uuid 比較へ翻訳する (実機検証済)。
+        if (page.AfterCreatedAt is { } afterCreatedAt && page.AfterId is { } afterId)
+            query = query.Where(p => p.CreatedAt < afterCreatedAt
+                || (p.CreatedAt == afterCreatedAt && p.Id.CompareTo(afterId) < 0));
+
         var rows = await query
             .OrderByDescending(p => p.CreatedAt)
+            .ThenByDescending(p => p.Id)
             .Select(p => new
             {
                 P = p,
                 FirstSku = p.Lines.OrderBy(l => l.LineNo).Select(l => l.SkuSnapshot).FirstOrDefault(),
             })
+            .Take(page.Limit + 1)
             .ToListAsync(ct);
+
+        // limit+1 件目が取れたら次ページあり。返却は limit 件に切り詰める。
+        var hasMore = rows.Count > page.Limit;
+        if (hasMore) rows.RemoveAt(page.Limit);
 
         var result = rows.Select(x => new PiListItem(
             x.P.Id, x.P.InstructionNo, Sku9(x.FirstSku), x.P.ProductFamily?.ProductName1 ?? "?",
@@ -130,11 +143,14 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
 
         await audit.LogAsync(actorUserId, "ProductionInstruction.List",
             entityType: "ProductionInstruction", note: $"count={result.Count}", cancellationToken: ct);
-        return result;
+
+        var last = rows.Count > 0 ? rows[^1].P : null;
+        return new PagedResult<PiListItem>(
+            result, hasMore, hasMore ? last?.CreatedAt : null, hasMore ? last?.Id : null);
     }
 
     /// <summary>詳細 (PI-03 編集画面ベース)。</summary>
-    public async Task<PiDetail?> GetDetailAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<PiDetail?> GetDetailAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var pi = await db.ProductionInstructions
             .Include(p => p.FactorySupplier)
@@ -165,9 +181,9 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
     }
 
     /// <summary>編集 (PI-03)。Draft/Issued のみ。明細は全削除→再INSERT。</summary>
-    public async Task<ProductionInstruction?> UpdateAsync(long id, UpdatePiRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<ProductionInstruction?> UpdateAsync(Guid id, UpdatePiRequest req, Guid actorUserId, CancellationToken ct = default)
     {
-        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && p.DeletedAt == null, ct);
         if (pi is null) return null;
         if (pi.Status is ProductionInstructionStatus.Cancelled or ProductionInstructionStatus.Completed)
             throw new DomainException(AkbErrorCodes.MakerProductionStateViolation, 409,
@@ -178,7 +194,7 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
             throw DomainException.Validation("同一 SKU が重複しています");
 
         var productIds = req.Lines.Select(l => l.ProductId).ToList();
-        var products = await db.Products.Where(p => productIds.Contains(p.Id) && !p.IsDeleted).ToListAsync(ct);
+        var products = await db.Products.Where(p => productIds.Contains(p.Id) && p.DeletedAt == null).ToListAsync(ct);
         if (products.Count != productIds.Count || products.Any(p => p.ProductFamilyId != pi.ProductFamilyId))
             throw DomainException.Validation("指定 SKU が品番に属していません");
         var family = await db.ProductFamilies.FirstAsync(f => f.Id == pi.ProductFamilyId, ct);
@@ -231,9 +247,9 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
     }
 
     /// <summary>発行 (PI-03)。Draft→Issued、instructed_at SET。冪等。</summary>
-    public async Task<bool> IssueAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> IssueAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
-        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && p.DeletedAt == null, ct);
         if (pi is null) return false;
         if (pi.Status == ProductionInstructionStatus.Cancelled)
             throw new DomainException(AkbErrorCodes.MakerProductionStateViolation, 409,
@@ -255,9 +271,9 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
     }
 
     /// <summary>生産完了 (PI-03)。Issued→Completed。</summary>
-    public async Task<bool> CompleteAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> CompleteAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
-        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && p.DeletedAt == null, ct);
         if (pi is null) return false;
         if (pi.Status != ProductionInstructionStatus.Issued)
             throw new DomainException(AkbErrorCodes.MakerProductionStateViolation, 409,
@@ -277,9 +293,9 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
     }
 
     /// <summary>中止 (PI-03)。status=Cancelled。物理削除しない。冪等。</summary>
-    public async Task<bool> CancelAsync(long id, CancelPiRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> CancelAsync(Guid id, CancelPiRequest req, Guid actorUserId, CancellationToken ct = default)
     {
-        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && p.DeletedAt == null, ct);
         if (pi is null) return false;
         if (pi.Status == ProductionInstructionStatus.Cancelled) return true; // 冪等
 

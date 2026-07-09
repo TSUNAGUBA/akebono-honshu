@@ -8,7 +8,7 @@ namespace Akebono.Application.Auth;
 /// リクエストで X-Tenant-Id ヘッダに TenantId を明示する。
 /// </summary>
 public record SyncResponse(
-    long UserId,
+    Guid UserId,
     string EmployeeNo,
     string DisplayName,
     bool IsActive,
@@ -20,7 +20,7 @@ public record SyncResponse(
     string TenantCode);
 
 public record MeResponse(
-    long UserId,
+    Guid UserId,
     string EmployeeNo,
     string DisplayName,
     bool IsActive,

@@ -5,15 +5,16 @@ const { canEditMaster } = useAuth()
 const { apiFetch, apiData } = useApi()
 
 interface ExchangeRateItem {
-  id: number
+  // 第二段階契約: エンティティ ID は uuid 文字列
+  id: string
   yearMonth: string
   currencyCode: string
   rate: number
-  deleteFlag: boolean
+  deletedAt: string | null
   createdAt: string
   updatedAt: string
 }
-interface CurrencyItem { id: number; code: string; name: string }
+interface CurrencyItem { id: string; code: string; name: string }
 
 const items = ref<ExchangeRateItem[]>([])
 // 通貨マスタ (対象通貨のドロップダウン用。JPY を除いた外貨のみ選択肢に出す)。
@@ -28,7 +29,7 @@ const submitting = ref(false)
 
 // 追加/編集フォーム。editingId=null は新規、非 null は該当 id の編集。
 const nowMonth = currentMonthJst() // 'YYYY-MM' (JST 基準。UTC 由来だと月初 09:00 まで前月になる)
-const editingId = ref<number | null>(null)
+const editingId = ref<string | null>(null)
 const form = ref({ yearMonth: nowMonth, currencyCode: '', rate: null as number | null })
 
 const resetForm = () => {
@@ -217,18 +218,18 @@ const onRestore = async (item: ExchangeRateItem) => {
           <tr v-if="items.length === 0">
             <td :colspan="canEditMaster ? 5 : 4" class="px-4 py-8 text-center text-sm text-gray-500">データがありません</td>
           </tr>
-          <tr v-for="i in items" :key="i.id" class="border-b border-gray-100 last:border-0" :class="i.deleteFlag ? 'opacity-50' : ''">
+          <tr v-for="i in items" :key="i.id" class="border-b border-gray-100 last:border-0" :class="i.deletedAt ? 'opacity-50' : ''">
             <td class="px-3 py-2 font-mono">{{ i.yearMonth }}</td>
             <td class="px-3 py-2"><span class="font-mono">{{ i.currencyCode }}</span> <span class="text-xs text-gray-500">{{ currencyName(i.currencyCode) }}</span></td>
             <td class="px-3 py-2 text-right font-mono">{{ i.rate.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</td>
             <td class="px-3 py-2">
-              <span v-if="i.deleteFlag" class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">削除済</span>
+              <span v-if="i.deletedAt" class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">削除済</span>
               <span v-else class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">有効</span>
             </td>
             <td v-if="canEditMaster" class="px-3 py-2 text-right">
               <div class="flex justify-end gap-2">
-                <button v-if="!i.deleteFlag" type="button" class="text-xs text-blue-600 hover:underline" @click="startEdit(i)">編集</button>
-                <button v-if="!i.deleteFlag" type="button" class="text-xs text-red-600 hover:underline" @click="onDelete(i)">削除</button>
+                <button v-if="!i.deletedAt" type="button" class="text-xs text-blue-600 hover:underline" @click="startEdit(i)">編集</button>
+                <button v-if="!i.deletedAt" type="button" class="text-xs text-red-600 hover:underline" @click="onDelete(i)">削除</button>
                 <button v-else type="button" class="text-xs text-blue-600 hover:underline" @click="onRestore(i)">復元</button>
               </div>
             </td>

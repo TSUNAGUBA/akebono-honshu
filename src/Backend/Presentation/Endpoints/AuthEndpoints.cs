@@ -11,7 +11,7 @@ public static class AuthEndpoints
 {
     /// <summary>
     /// JwtBearer の OnTokenValidated で users テーブル引当後、ClaimsPrincipal に追加する Claim 名。
-    /// 業務ユーザ ID (users.id BIGINT) を string 化して保持する。
+    /// 業務ユーザ ID (users.id UUID) を string 化して保持する。
     /// </summary>
     public const string AkebonoUserIdClaim = "akebono_user_id";
 
@@ -98,11 +98,11 @@ public static class AuthEndpoints
     /// JwtBearer + OnTokenValidated 後、ClaimsPrincipal に詰めた akebono_user_id Claim を読む。
     /// 業務ユーザが users テーブルに引当できなかった場合、Claim 自体が付かないため false。
     /// </summary>
-    internal static bool TryGetUserId(HttpContext http, out long userId)
+    internal static bool TryGetUserId(HttpContext http, out Guid userId)
     {
-        userId = 0;
+        userId = Guid.Empty;
         var raw = http.User.FindFirst(AkebonoUserIdClaim)?.Value;
-        return long.TryParse(raw, out userId);
+        return Guid.TryParse(raw, out userId);
     }
 
     /// <summary>
@@ -119,7 +119,7 @@ public static class AuthEndpoints
             return new(null, UnauthorizedError(http));
 
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
-        if (actor is null || !actor.IsActive || actor.IsDeleted)
+        if (actor is null || !actor.IsActive || actor.DeletedAt != null)
             // 台帳 (AKB-DOC-12 §14.5) の AUTH-005 代表ステータスに合わせ 403
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
                 "ユーザが無効化されています"));
@@ -144,7 +144,7 @@ public static class AuthEndpoints
             return new(null, UnauthorizedError(http));
 
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
-        if (actor is null || !actor.IsActive || actor.IsDeleted)
+        if (actor is null || !actor.IsActive || actor.DeletedAt != null)
             // 台帳 (AKB-DOC-12 §14.5) の AUTH-005 代表ステータスに合わせ 403
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
                 "ユーザが無効化されています"));
@@ -157,4 +157,4 @@ public static class AuthEndpoints
     }
 }
 
-internal sealed record MasterEditAuth(long? ActorId, IResult? ErrorResult);
+internal sealed record MasterEditAuth(Guid? ActorId, IResult? ErrorResult);

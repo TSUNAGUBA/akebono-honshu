@@ -17,7 +17,7 @@ public class MaterialOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
     private const string TemplateVersion = "iter5-v1";
 
     public async Task<(string FileName, byte[] Content)> ExportAsync(
-        long materialOrderId, long actorUserId, CancellationToken ct = default)
+        Guid materialOrderId, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.MaterialOrders
             .Include(o => o.MaterialSupplier)

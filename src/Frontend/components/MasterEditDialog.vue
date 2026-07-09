@@ -150,9 +150,9 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
 
             <MasterSelect
               v-else-if="f.type === 'select-master'"
-              :model-value="(form[f.key] as number | null)"
+              :model-value="(form[f.key] as string | null)"
               :items="referenceItemsFor(f.master ?? '')"
-              @update:model-value="(v) => form[f.key] = v ?? 0"
+              @update:model-value="(v) => form[f.key] = v ?? null"
             />
 
             <!-- 参照先マスタの code (文字列) を選ぶドロップダウン (通貨等)。id ではなく code を保存する。 -->

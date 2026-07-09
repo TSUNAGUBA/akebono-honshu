@@ -41,6 +41,9 @@ public static class DependencyInjection
         services.AddScoped<IAkebonoDbContext>(sp => sp.GetRequiredService<AkebonoDbContext>());
 
         services.AddScoped<IAuditLogger, AuditLogger>();
+        // audit_logs 月次パーティションの先行作成 (起動時 + 24h ごと、失敗は warning のみで継続。
+        // DEFAULT パーティションが安全網 — AuditPartitionMaintenanceService 参照)。
+        services.AddHostedService<AuditPartitionMaintenanceService>();
         services.AddScoped<AuthService>();
         services.AddScoped<UserQueryService>();
 

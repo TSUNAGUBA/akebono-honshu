@@ -23,11 +23,11 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
     /// </summary>
     public async Task<MaterialRequirements> PrepareAsync(PrepareMaterialOrderRequest req, CancellationToken ct = default)
     {
-        long familyId;
+        Guid familyId;
         int quantity;
         if (req.ProductionInstructionId is { } piId)
         {
-            var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == piId && !p.IsDeleted, ct)
+            var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == piId && p.DeletedAt == null, ct)
                 ?? throw DomainException.Validation("生産指示が存在しません");
             familyId = pi.ProductFamilyId;
             quantity = pi.PlannedQuantity;
@@ -47,7 +47,7 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
 
     /// <summary>新規作成 (MO-01)。素材仕入先1社あて。status=Draft。素材名スナップショット。</summary>
     public async Task<MaterialOrder> CreateAsync(
-        CreateMaterialOrderRequest req, long actorUserId,
+        CreateMaterialOrderRequest req, Guid actorUserId,
         string? idempotencyKey = null, string? idempotencyPayloadHash = null,
         CancellationToken ct = default)
     {
@@ -125,17 +125,25 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
         }
     }
 
-    /// <summary>一覧 (MO-02)。</summary>
-    public async Task<List<MaterialOrderListItem>> ListAsync(long actorUserId, bool includeCancelled, CancellationToken ct = default)
+    /// <summary>一覧 (MO-02)。キーセットページング (AKB-DOC-12 §7.1): (created_at, id) 降順の安定ソート。</summary>
+    public async Task<PagedResult<MaterialOrderListItem>> ListAsync(
+        Guid actorUserId, bool includeCancelled, PageRequest page, CancellationToken ct = default)
     {
         var query = db.MaterialOrders
             .Include(o => o.MaterialSupplier)
-            .Where(o => !o.IsDeleted);
+            .Where(o => o.DeletedAt == null);
         if (!includeCancelled)
             query = query.Where(o => o.Status != MaterialOrderStatus.Cancelled);
 
+        // キーセット: 前ページ末尾 (created_at, id) より「後ろ」(降順) の行のみ。
+        // Guid.CompareTo は Npgsql EF が uuid 比較へ翻訳する (実機検証済)。
+        if (page.AfterCreatedAt is { } afterCreatedAt && page.AfterId is { } afterId)
+            query = query.Where(o => o.CreatedAt < afterCreatedAt
+                || (o.CreatedAt == afterCreatedAt && o.Id.CompareTo(afterId) < 0));
+
         var rows = await query
             .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.Id)
             .Select(o => new
             {
                 O = o,
@@ -143,7 +151,12 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
                 Total = o.Lines.Sum(l => (decimal?)l.Subtotal) ?? 0m,
                 Currency = o.Lines.Select(l => l.CurrencyCode).FirstOrDefault() ?? "JPY",
             })
+            .Take(page.Limit + 1)
             .ToListAsync(ct);
+
+        // limit+1 件目が取れたら次ページあり。返却は limit 件に切り詰める。
+        var hasMore = rows.Count > page.Limit;
+        if (hasMore) rows.RemoveAt(page.Limit);
 
         var result = rows.Select(x => new MaterialOrderListItem(
             x.O.Id, x.O.OrderNo, x.O.MaterialSupplierId,
@@ -156,11 +169,14 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
         // 機密(素材単価=金額)を含む一覧の開示を監査 (金額はマスク)
         await audit.LogAsync(actorUserId, "MaterialPrice.View",
             entityType: "MaterialOrder", note: $"list count={result.Count}, total=***", cancellationToken: ct);
-        return result;
+
+        var last = rows.Count > 0 ? rows[^1].O : null;
+        return new PagedResult<MaterialOrderListItem>(
+            result, hasMore, hasMore ? last?.CreatedAt : null, hasMore ? last?.Id : null);
     }
 
     /// <summary>詳細 (MO-03)。素材単価を含むため開示を監査 (金額マスク)。</summary>
-    public async Task<MaterialOrderDetail?> GetDetailAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<MaterialOrderDetail?> GetDetailAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var order = await db.MaterialOrders
             .Include(o => o.MaterialSupplier)
@@ -190,9 +206,9 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
     }
 
     /// <summary>編集 (MO-03)。Draft のみ全編集。明細は全削除→再INSERT。</summary>
-    public async Task<MaterialOrder?> UpdateAsync(long id, UpdateMaterialOrderRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<MaterialOrder?> UpdateAsync(Guid id, UpdateMaterialOrderRequest req, Guid actorUserId, CancellationToken ct = default)
     {
-        var order = await db.MaterialOrders.FirstOrDefaultAsync(o => o.Id == id && !o.IsDeleted, ct);
+        var order = await db.MaterialOrders.FirstOrDefaultAsync(o => o.Id == id && o.DeletedAt == null, ct);
         if (order is null) return null;
         if (order.Status != MaterialOrderStatus.Draft)
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
@@ -254,9 +270,9 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
     }
 
     /// <summary>発注確定 (MO-03)。Draft→Ordered、instructed_at SET。冪等。</summary>
-    public async Task<bool> OrderAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> OrderAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
-        var order = await db.MaterialOrders.FirstOrDefaultAsync(o => o.Id == id && !o.IsDeleted, ct);
+        var order = await db.MaterialOrders.FirstOrDefaultAsync(o => o.Id == id && o.DeletedAt == null, ct);
         if (order is null) return false;
         if (order.Status == MaterialOrderStatus.Cancelled)
             throw new DomainException(AkbErrorCodes.MakerPurchaseOrderStateViolation, 409,
@@ -277,9 +293,9 @@ public class MaterialOrderService(IAkebonoDbContext db, IAuditLogger audit, Prod
     }
 
     /// <summary>中止 (MO-03)。status=Cancelled。物理削除しない。冪等。</summary>
-    public async Task<bool> CancelAsync(long id, CancelMaterialOrderRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> CancelAsync(Guid id, CancelMaterialOrderRequest req, Guid actorUserId, CancellationToken ct = default)
     {
-        var order = await db.MaterialOrders.FirstOrDefaultAsync(o => o.Id == id && !o.IsDeleted, ct);
+        var order = await db.MaterialOrders.FirstOrDefaultAsync(o => o.Id == id && o.DeletedAt == null, ct);
         if (order is null) return false;
         if (order.Status == MaterialOrderStatus.Cancelled) return true; // 冪等
 

@@ -5,13 +5,13 @@ namespace Akebono.Domain.Common;
 /// </summary>
 public interface IMasterEntity
 {
-    long Id { get; set; }
+    Guid Id { get; set; }
     string Code { get; set; }
     string Name { get; set; }
-    bool DeleteFlag { get; set; }
+    DateTime? DeletedAt { get; set; }
     DateTime CreatedAt { get; set; }
-    long CreatedByUserId { get; set; }
+    Guid CreatedByUserId { get; set; }
     DateTime UpdatedAt { get; set; }
-    long UpdatedByUserId { get; set; }
+    Guid UpdatedByUserId { get; set; }
     string? LegacyId { get; set; }
 }

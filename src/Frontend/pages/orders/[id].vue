@@ -3,7 +3,8 @@ import type { OrderDetail, EditReason, CommunicationSuggestion, OrderExportForma
 import { editReasonLabel, deriveOrderState, orderStateLabel, orderStateBadgeClass } from '~/composables/useOrders'
 
 const route = useRoute()
-const id = computed(() => Number(route.params.id))
+// 第二段階契約: 発注 id は uuid 文字列。数値変換せず文字列のまま使う。
+const id = computed(() => String(route.params.id))
 const { user } = useAuth()
 const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 
@@ -19,14 +20,14 @@ const downloading = ref(false)
 const editing = ref(false)
 // 分納×倉庫の多次元明細 (PR5b)。1 明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
 interface EditDeliveryRow {
-  warehouseId: number | null
+  warehouseId: string | null
   deliveryDate: string
   quantity: number
   packQuantity: number | null
 }
 interface EditLineRow {
-  id: number | null
-  productId: number
+  id: string | null
+  productId: string
   sku: string
   productName: string
   quantity: number
@@ -52,12 +53,12 @@ const editHeader = ref({
   factoryShippingDate: '' as string,
   deliveryPlaceShippingDate: '' as string,
   overseasDepartureDate: '' as string,
-  warehouse2Id: null as number | null,
-  warehouse3Id: null as number | null,
+  warehouse2Id: null as string | null,
+  warehouse3Id: null as string | null,
 })
 // 納入倉庫2/3 編集用にマスタを読み込む
 const { list: listMasters } = useMasters()
-const warehouses = ref<{ id: number; code?: string | null; name?: string | null }[]>([])
+const warehouses = ref<{ id: string; code?: string | null; name?: string | null }[]>([])
 
 // 連絡文書 6 行 (構造化、PR6)。編集用の固定長 6 スロット + テンプレ候補。reload() で detail から初期化する。
 const editCommLines = ref<string[]>(['', '', '', '', '', ''])
@@ -203,7 +204,7 @@ const editLineQuantityValid = (l: EditLineRow): boolean =>
     ? l.deliveries.every((d) => (Number(d.quantity) || 0) > 0) && editLineQuantity(l) > 0
     : (Number(l.quantity) || 0) > 0
 const canSaveEdit = computed(() =>
-  editLines.value.length > 0 && editLines.value.every((l) => l.productId > 0 && editLineQuantityValid(l) && l.unitPriceSnapshot >= 0))
+  editLines.value.length > 0 && editLines.value.every((l) => !!l.productId && editLineQuantityValid(l) && l.unitPriceSnapshot >= 0))
 
 const onSaveEdit = async () => {
   if (!detail.value) return

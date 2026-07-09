@@ -17,7 +17,7 @@ public class ProductionInstructionExcelService(IAkebonoDbContext db, IAuditLogge
     private const string TemplateVersion = "iter5-v1";
 
     public async Task<(string FileName, byte[] Content)> ExportAsync(
-        long productionInstructionId, long actorUserId, CancellationToken ct = default)
+        Guid productionInstructionId, Guid actorUserId, CancellationToken ct = default)
     {
         var pi = await db.ProductionInstructions
             .Include(p => p.FactorySupplier)

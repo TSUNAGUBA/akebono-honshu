@@ -40,7 +40,7 @@
 
 1. **バックアップ取得** (推奨):
    ```bash
-   pg_dump -h localhost -U postgres -d akebono > backup_before_mig3.sql
+   pg_dump -h localhost -U postgres -d akebono_honshu > backup_before_mig3.sql
    ```
 
 2. **画面アクセス:** ログイン後、上部ナビの「データ移行」をクリック
@@ -89,24 +89,46 @@ Backend 経由ではなく、DBA が直接 psql で取込みたい場合の手�
   ```bash
   iconv -f SHIFT_JIS -t UTF-8 products.csv > /tmp/legacy_products_utf8.csv
   ```
+- **UI 取込との排他** (プラットフォーム統合 第二段階): アプリ経由の取込はグローバル
+  advisory lock (`hashtext('akebono:legacy-import')`) で直列化されるが、psql 直接実行は
+  その対象外。**アプリを停止して実施する**か、下記手順 0 で同じロックを取得してから行う
+  (取得できない場合は UI 取込が実行中 = 完了を待つ)。
+- **テナントコンテキスト**: FORCE RLS + `tenant_id` DEFAULT が GUC から解決されるため、
+  セッション冒頭の `SET app.tenant_id` が必須 (未設定は NOT NULL 違反で失敗 = フェイルクローズ)。
 
-### 実行 (5 ステップ)
+### 実行 (単一 psql セッションで 0 → 5 を順に流す)
 
-```bash
-# 1. DB スキーマ拡張
-psql -h localhost -U postgres -d akebono -f db/migration/mig-3-pre-patch.sql
+advisory lock (セッションレベル) と `app.tenant_id` (セッション GUC) はどちらも
+**同一セッション内でのみ有効**のため、psql を対話起動して `\i` で順に実行する
+(ステップごとに psql を起動し直すとロックもテナントコンテキストも失われる)。
+mig-3-*.sql 自体はテナント GUC を埋め込まない (アプリ経由の取込では認証テナントの
+GUC が使われる共有 SQL のため)。
 
-# 2. マスタ補完
-psql -h localhost -U postgres -d akebono -f db/migration/mig-3-step-01-master-fill.sql
+```
+psql -h localhost -U postgres -d akebono_honshu
 
-# 3. Staging テーブル作成
-psql -h localhost -U postgres -d akebono -f db/migration/mig-3-step-02-staging.sql
+-- 0. 排他ロック取得 + テナントコンテキスト設定
+--    (ロックが取れない場合は UI 取込が実行中。完了を待つ)
+SELECT pg_advisory_lock(hashtext('akebono:legacy-import')::bigint);
+SET app.tenant_id = '00000000-0000-4000-8000-000000000001';  -- Honshu 既定テナント
 
-# 4. CSV を Staging に取込 (\copy + 主要列抽出)
-psql -h localhost -U postgres -d akebono -f db/migration/mig-3-step-02-staging-load.sql
+-- 1. DB スキーマ拡張
+\i db/migration/mig-3-pre-patch.sql
 
-# 5. 本テーブル取込
-psql -h localhost -U postgres -d akebono -f db/migration/mig-3-step-03-import.sql
+-- 2. マスタ補完
+\i db/migration/mig-3-step-01-master-fill.sql
+
+-- 3. Staging テーブル作成
+\i db/migration/mig-3-step-02-staging.sql
+
+-- 4. CSV を Staging に取込 (\copy + 主要列抽出)
+\i db/migration/mig-3-step-02-staging-load.sql
+
+-- 5. 本テーブル取込
+\i db/migration/mig-3-step-03-import.sql
+
+-- 6. ロック解放 (セッション終了でも自動解放される)
+SELECT pg_advisory_unlock(hashtext('akebono:legacy-import')::bigint);
 ```
 
 各ステップで `RAISE NOTICE` や検証 SELECT が件数を出力します。

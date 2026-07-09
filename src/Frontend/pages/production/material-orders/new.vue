@@ -4,15 +4,17 @@ import { materialRoleLabel } from '~/composables/useProduction'
 import type { MasterItem } from '~/composables/useMasters'
 
 const route = useRoute()
-const piId = computed(() => route.query.piId ? Number(route.query.piId) : null)
-const familyId = computed(() => route.query.familyId ? Number(route.query.familyId) : null)
+// 第二段階契約: piId / familyId は uuid 文字列。数値変換せず文字列のまま使う (quantity は数値のまま)。
+const piId = computed(() => route.query.piId ? String(route.query.piId) : null)
+const familyId = computed(() => route.query.familyId ? String(route.query.familyId) : null)
 const quantity = computed(() => route.query.quantity ? Number(route.query.quantity) : null)
 
 const { prepareMaterialOrder, moCreate } = useProduction()
 const { list } = useMasters()
 
-interface EditLine { materialId: number; materialName: string; requiredQuantity: number; unit: string; unitPrice: number | null }
-interface EditGroup { supplierId: number; supplierName: string | null; dueDate: string; currency: string; lines: EditLine[] }
+interface EditLine { materialId: string; materialName: string; requiredQuantity: number; unit: string; unitPrice: number | null }
+// supplierId は uuid 文字列。未選択 (推奨仕入先なし) は null で表し、!g.supplierId で判定する。
+interface EditGroup { supplierId: string | null; supplierName: string | null; dueDate: string; currency: string; lines: EditLine[] }
 
 const req = ref<MaterialRequirements | null>(null)
 const groups = ref<EditGroup[]>([])
@@ -34,7 +36,7 @@ const reload = async () => {
       quantity: quantity.value,
     })
     groups.value = req.value.groups.map(g => ({
-      supplierId: g.recommendedSupplierId ?? 0,
+      supplierId: g.recommendedSupplierId ?? null,
       supplierName: g.recommendedSupplierName,
       dueDate: defaultDue,
       currency: 'JPY',
@@ -52,11 +54,13 @@ onMounted(reload)
 const createGroup = async (gi: number) => {
   errorMessage.value = ''
   const g = groups.value[gi]
-  if (!g.supplierId) { errorMessage.value = '素材仕入先を選択してください'; return }
+  // 未選択 (null) は弾く。以降は非 null 確定値 (supplierId) を使う。
+  const supplierId = g.supplierId
+  if (!supplierId) { errorMessage.value = '素材仕入先を選択してください'; return }
   submittingIdx.value = gi
   try {
     const res = await moCreate({
-      materialSupplierId: g.supplierId,
+      materialSupplierId: supplierId,
       productionInstructionId: piId.value,
       dueDate: g.dueDate,
       communicationText: null,
@@ -100,7 +104,7 @@ const createGroup = async (gi: number) => {
           <label class="block text-sm">
             <span class="text-gray-600">素材仕入先</span>
             <div class="mt-1">
-              <MasterSelect :model-value="g.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => g.supplierId = v ?? 0" />
+              <MasterSelect :model-value="g.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => g.supplierId = v" />
             </div>
           </label>
           <label class="block text-sm"><span class="text-gray-600">納入希望日</span><input v-model="g.dueDate" type="date" class="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" /></label>

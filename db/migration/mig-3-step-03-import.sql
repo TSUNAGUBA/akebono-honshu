@@ -27,12 +27,13 @@ BEGIN;
 -- ────────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-    v_owner_id          BIGINT;
-    v_default_type_id   BIGINT;
-    v_default_season_id BIGINT;
-    v_default_brand_id  BIGINT;
-    v_default_group_id  BIGINT;
-    v_default_material  BIGINT;
+    -- プラットフォーム統合 第二段階: 各テーブル id が BIGSERIAL → UUID になったため変数型を追随
+    v_owner_id          UUID;
+    v_default_type_id   UUID;
+    v_default_season_id UUID;
+    v_default_brand_id  UUID;
+    v_default_group_id  UUID;
+    v_default_material  UUID;
     v_inserted_families INTEGER;
     v_inserted_products INTEGER;
     v_inserted_prices   INTEGER;

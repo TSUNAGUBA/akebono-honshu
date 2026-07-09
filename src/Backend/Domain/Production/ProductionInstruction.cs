@@ -12,7 +12,7 @@ namespace Akebono.Domain.Production;
 /// </summary>
 public class ProductionInstruction : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
 
     /// <summary>Idempotency-Key (AKB-DOC-12 §8)。作成 API のヘッダ値。NULL = 冪等キーなしで作成された行 (レガシー/シード)。</summary>
@@ -24,9 +24,9 @@ public class ProductionInstruction : ITenantScoped
     /// <summary>生産指示番号 (例: "26-PI-00001"、作成時採番)</summary>
     public string InstructionNo { get; set; } = string.Empty;
 
-    public long ProductFamilyId { get; set; }
+    public Guid ProductFamilyId { get; set; }
     /// <summary>加工先 (工場、supplier 兼用)</summary>
-    public long FactorySupplierId { get; set; }
+    public Guid FactorySupplierId { get; set; }
 
     /// <summary>生産総数量 (明細合計と一致)</summary>
     public int PlannedQuantity { get; set; }
@@ -38,7 +38,7 @@ public class ProductionInstruction : ITenantScoped
     public DateTime? InstructedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
-    public long? CancelledByUserId { get; set; }
+    public Guid? CancelledByUserId { get; set; }
     public string? CancelReason { get; set; }
 
     // 帳票宛名・表示の凍結 (初回 Excel 出力時にコピー)
@@ -51,11 +51,11 @@ public class ProductionInstruction : ITenantScoped
     public DateTime? FirstExportedAt { get; set; }
     public DateTime? LastExportedAt { get; set; }
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 
     // ナビプロパティ

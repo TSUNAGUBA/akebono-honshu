@@ -12,7 +12,7 @@ namespace Akebono.Domain.Production;
 /// </summary>
 public class MaterialOrder : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
 
     /// <summary>Idempotency-Key (AKB-DOC-12 §8)。作成 API のヘッダ値。NULL = 冪等キーなしで作成された行 (レガシー/シード)。</summary>
@@ -25,9 +25,9 @@ public class MaterialOrder : ITenantScoped
     public string OrderNo { get; set; } = string.Empty;
 
     /// <summary>素材仕入先 (supplier 兼用)</summary>
-    public long MaterialSupplierId { get; set; }
+    public Guid MaterialSupplierId { get; set; }
     /// <summary>起点の生産指示 (NULL 可 = 指示なしの単独素材発注も許容)</summary>
-    public long? ProductionInstructionId { get; set; }
+    public Guid? ProductionInstructionId { get; set; }
 
     /// <summary>素材納入希望日</summary>
     public DateOnly DueDate { get; set; }
@@ -36,7 +36,7 @@ public class MaterialOrder : ITenantScoped
     /// <summary>発注確定日時。NOT NULL = 発注済 (未/済バッジの済判定根拠)</summary>
     public DateTime? InstructedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
-    public long? CancelledByUserId { get; set; }
+    public Guid? CancelledByUserId { get; set; }
     public string? CancelReason { get; set; }
 
     // 帳票宛名の凍結 (既存 purchase_orders と同方針)
@@ -47,11 +47,11 @@ public class MaterialOrder : ITenantScoped
     public DateTime? FirstExportedAt { get; set; }
     public DateTime? LastExportedAt { get; set; }
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 
     // ナビプロパティ

@@ -4,16 +4,16 @@ namespace Akebono.Application.Production;
 // 生産指示書 (PI-01〜04)
 // ═══════════════════════════════════════════════════
 public record CreatePiRequest(
-    long ProductFamilyId,
-    long FactorySupplierId,
+    Guid ProductFamilyId,
+    Guid FactorySupplierId,
     DateOnly DueDate,
     string? CommunicationText,
     List<PiLineInput> Lines);
 
-public record PiLineInput(long ProductId, int Quantity);
+public record PiLineInput(Guid ProductId, int Quantity);
 
 public record UpdatePiRequest(
-    long FactorySupplierId,
+    Guid FactorySupplierId,
     DateOnly DueDate,
     string? CommunicationText,
     List<PiLineInput> Lines);
@@ -21,7 +21,7 @@ public record UpdatePiRequest(
 public record CancelPiRequest(string Reason);
 
 public record PiListItem(
-    long Id,
+    Guid Id,
     string InstructionNo,
     string ProductSku9,
     string ProductName,
@@ -36,12 +36,12 @@ public record PiListItem(
     DateTime UpdatedAt);
 
 public record PiDetail(
-    long Id,
+    Guid Id,
     string InstructionNo,
-    long ProductFamilyId,
+    Guid ProductFamilyId,
     string ProductSku9,
     string ProductName,
-    long FactorySupplierId,
+    Guid FactorySupplierId,
     string FactoryCode,
     string FactoryName,
     int PlannedQuantity,
@@ -59,9 +59,9 @@ public record PiDetail(
     List<PiLineDetail> Lines);
 
 public record PiLineDetail(
-    long Id,
+    Guid Id,
     short LineNo,
-    long ProductId,
+    Guid ProductId,
     string Sku,
     string ProductName,
     string ColorName,
@@ -72,21 +72,21 @@ public record PiLineDetail(
 // 素材発注書 (MO-01〜04)
 // ═══════════════════════════════════════════════════
 public record PrepareMaterialOrderRequest(
-    long? ProductionInstructionId,
-    long? ProductFamilyId,
+    Guid? ProductionInstructionId,
+    Guid? ProductFamilyId,
     int? Quantity);
 
 public record CreateMaterialOrderRequest(
-    long MaterialSupplierId,
-    long? ProductionInstructionId,
+    Guid MaterialSupplierId,
+    Guid? ProductionInstructionId,
     DateOnly DueDate,
     string? CommunicationText,
     List<MaterialOrderLineInput> Lines);
 
 public record MaterialOrderLineInput(
-    long MaterialId,
-    long? ProductFamilyId,
-    long? SourcePiLineId,
+    Guid MaterialId,
+    Guid? ProductFamilyId,
+    Guid? SourcePiLineId,
     decimal RequiredQuantity,
     string Unit,
     decimal? UnitPrice,
@@ -100,12 +100,12 @@ public record UpdateMaterialOrderRequest(
 public record CancelMaterialOrderRequest(string Reason);
 
 public record MaterialOrderListItem(
-    long Id,
+    Guid Id,
     string OrderNo,
-    long MaterialSupplierId,
+    Guid MaterialSupplierId,
     string MaterialSupplierCode,
     string MaterialSupplierName,
-    long? ProductionInstructionId,
+    Guid? ProductionInstructionId,
     DateOnly DueDate,
     short Status,
     int LineCount,
@@ -119,14 +119,14 @@ public record MaterialOrderListItem(
     DateTime UpdatedAt);
 
 public record MaterialOrderDetail(
-    long Id,
+    Guid Id,
     string OrderNo,
-    long MaterialSupplierId,
+    Guid MaterialSupplierId,
     string MaterialSupplierCode,
     string MaterialSupplierName,
     string? SupplierOfficialNameSnapshot,
     string? SupplierCodeSnapshot,
-    long? ProductionInstructionId,
+    Guid? ProductionInstructionId,
     string? ProductionInstructionNo,
     DateOnly DueDate,
     short Status,
@@ -141,11 +141,11 @@ public record MaterialOrderDetail(
     List<MaterialOrderLineDetail> Lines);
 
 public record MaterialOrderLineDetail(
-    long Id,
+    Guid Id,
     short LineNo,
-    long MaterialId,
+    Guid MaterialId,
     string MaterialName,
-    long? ProductFamilyId,
+    Guid? ProductFamilyId,
     decimal RequiredQuantity,
     string Unit,
     decimal? UnitPrice,        // 機密。開示は GetDetailAsync で MaterialPrice.View 監査 (金額マスク)。上部 TotalAmount 注記参照

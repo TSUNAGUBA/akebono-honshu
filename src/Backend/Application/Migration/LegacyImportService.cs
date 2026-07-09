@@ -21,6 +21,15 @@ namespace Akebono.Application.Migration;
 ///
 /// SQL ファイルは db/migration/ が SoT、本 Service の Application.csproj に
 /// EmbeddedResource として埋込済 (Akebono.Application.Migration.Sql.*.sql)。
+///
+/// 直列化: staging_legacy_products は**全テナント共有**の一次着地テーブルで、取込は
+/// その DROP &amp; CREATE を含むため、並行実行 (同一テナント・別テナントを問わず) は互いの
+/// 途中状態を破壊する。グローバル (テナント非依存) のセッションレベル advisory lock で
+/// 単一実行を保証し、取得できない場合は 409 AKB-SYS-006 を返す
+/// (「処理実行中・直列化競合」専用コードは台帳 AKB-DOC-12 §14.7 に存在しないため、
+///  プラットフォームへの採番申請までの暫定流用。docs/platform-integration/README.md §9 未決 14)。
+/// テナント別 staging への分離 (並行取込の許容) は将来のマルチテナント運用で必要になった
+/// 時点で行う (docs/platform-integration/README.md §9 未決 12)。
 /// </summary>
 public sealed class LegacyImportService(IAkebonoDbContext db)
 {
@@ -54,41 +63,106 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
         if (rows.Count == 0)
             throw DomainException.Validation("CSV にデータ行が含まれていません");
 
-        // 2. SQL 4 種を順次実行 (Pre-patch → Master-fill → Staging DDL → Bulk INSERT → Import)
-        var prePatchSql   = ReadSqlResource("pre-patch.sql");
-        var masterFillSql = ReadSqlResource("step-01-master-fill.sql");
-        var stagingDdlSql = ReadSqlResource("step-02-staging.sql");
-        var importSql     = ReadSqlResource("step-03-import.sql");
+        // 直列化: セッションレベル advisory lock (pg_try_advisory_lock) を要求リクエストの
+        // 接続上で取得し、以降の全ステップを同一接続で実行する (OpenConnectionAsync は
+        // 参照カウント式の冪等オープンで、内部メソッドの再オープンも同一接続に載る)。
+        // 取得失敗 = 取込が実行中 (テナントを問わず) → 409 で拒否 (待たせない)。
+        // ロックは finally で明示解放する。接続断で解放漏れした場合も、PostgreSQL の
+        // セッション終了 / Npgsql のプール返却リセット (DISCARD 相当) で自動解放される。
+        await db.Database.OpenConnectionAsync(ct);
+        if (!await TryAcquireImportLockAsync(ct))
+        {
+            throw new DomainException(AkbErrorCodes.SysOptimisticConflict, 409,
+                "レガシー取込が既に実行中です",
+                userAction: "実行中の取込が完了してから再実行してください");
+        }
 
-        await db.Database.ExecuteSqlRawAsync(prePatchSql, ct);
-        await db.Database.ExecuteSqlRawAsync(masterFillSql, ct);
-        await db.Database.ExecuteSqlRawAsync(stagingDdlSql, ct);
+        try
+        {
+            // 2. SQL 4 種を順次実行 (Pre-patch → Master-fill → Staging DDL → Bulk INSERT → Import)
+            var prePatchSql   = ReadSqlResource("pre-patch.sql");
+            var masterFillSql = ReadSqlResource("step-01-master-fill.sql");
+            var stagingDdlSql = ReadSqlResource("step-02-staging.sql");
+            var importSql     = ReadSqlResource("step-03-import.sql");
 
-        // 3. Staging へバルク INSERT (1000 行ずつバッチ、138 列 + row_no 自動採番)
-        await BulkInsertStagingAsync(rows, ct);
+            await db.Database.ExecuteSqlRawAsync(prePatchSql, ct);
+            await db.Database.ExecuteSqlRawAsync(masterFillSql, ct);
+            await db.Database.ExecuteSqlRawAsync(stagingDdlSql, ct);
 
-        // 4. 主要列抽出 UPDATE (c001-c138 → 名前付き)
-        await db.Database.ExecuteSqlRawAsync(BuildStagingExtractSql(), ct);
+            // 3. Staging へバルク INSERT (1000 行ずつバッチ、138 列 + row_no 自動採番)
+            await BulkInsertStagingAsync(rows, ct);
 
-        // 5. Staging 件数確認
-        var staging = await CountStagingAsync(ct);
+            // 4. 主要列抽出 UPDATE (c001-c138 → 名前付き)
+            await db.Database.ExecuteSqlRawAsync(BuildStagingExtractSql(), ct);
 
-        // 6. Import SQL 実行 (PL/pgSQL DO ブロック、RAISE NOTICE は console ログに出力)
-        await db.Database.ExecuteSqlRawAsync(importSql, ct);
+            // 5. Staging 件数確認
+            var staging = await CountStagingAsync(ct);
 
-        // 7. 取込件数 + フォールバック件数を集計
-        var import = await CountImportedAsync(ct);
-        var fallbacks = await CountFallbacksAsync(ct);
+            // 6. Import SQL 実行 (PL/pgSQL DO ブロック、RAISE NOTICE は console ログに出力)
+            await db.Database.ExecuteSqlRawAsync(importSql, ct);
 
-        sw.Stop();
-        return new LegacyImportResult(
-            PrePatch:   new(true, "products.sku を VARCHAR(16) に拡張済"),
-            MasterFill: new(true, "旧マスタ (色/サイズ/仕入先) を補完済"),
-            Staging:    staging,
-            Import:     import,
-            Fallbacks:  fallbacks,
-            Warnings:   warnings,
-            Elapsed:    sw.Elapsed);
+            // 7. 取込件数 + フォールバック件数を集計
+            var import = await CountImportedAsync(ct);
+            var fallbacks = await CountFallbacksAsync(ct);
+
+            sw.Stop();
+            return new LegacyImportResult(
+                PrePatch:   new(true, "products.sku を VARCHAR(16) に拡張済"),
+                MasterFill: new(true, "旧マスタ (色/サイズ/仕入先) を補完済"),
+                Staging:    staging,
+                Import:     import,
+                Fallbacks:  fallbacks,
+                Warnings:   warnings,
+                Elapsed:    sw.Elapsed);
+        }
+        finally
+        {
+            await ReleaseImportLockAsync();
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // 取込直列化ロック (グローバル = テナント非依存のセッションレベル advisory lock)
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// ロックキー。staging_legacy_products が全テナント共有のため、採番ロックと異なり
+    /// **テナントを含めない** (テナントスコープにすると別テナント同士の同時取込が
+    /// 共有 staging を破壊し合う)。
+    /// </summary>
+    private const string ImportLockKey = "akebono:legacy-import";
+
+    private async Task<bool> TryAcquireImportLockAsync(CancellationToken ct)
+    {
+        var conn = db.Database.GetDbConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT pg_try_advisory_lock(hashtext(@key)::bigint)";
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@key";
+        p.Value = ImportLockKey;
+        cmd.Parameters.Add(p);
+        return await cmd.ExecuteScalarAsync(ct) is true;
+    }
+
+    private async Task ReleaseImportLockAsync()
+    {
+        try
+        {
+            var conn = db.Database.GetDbConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT pg_advisory_unlock(hashtext(@key)::bigint)";
+            var p = cmd.CreateParameter();
+            p.ParameterName = "@key";
+            p.Value = ImportLockKey;
+            cmd.Parameters.Add(p);
+            // 解放は本処理の失敗理由を上書きしないよう CancellationToken.None で実行する
+            await cmd.ExecuteScalarAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // 接続断等で解放に失敗しても、セッション終了 / プール返却リセットで自動解放される
+            // (原則4: 補助処理の失敗で主フローの例外を握り潰さない)
+        }
     }
 
     // ────────────────────────────────────────────────────────────────

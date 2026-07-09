@@ -3,7 +3,8 @@ import type { MaterialOrderDetail } from '~/composables/useProduction'
 import { moStatusLabel } from '~/composables/useProduction'
 
 const route = useRoute()
-const id = computed(() => Number(route.params.id))
+// 第二段階契約: 素材発注 id は uuid 文字列。数値変換せず文字列のまま使う。
+const id = computed(() => String(route.params.id))
 const { moGet, moOrder, moCancel, moDownloadExcel } = useProduction()
 const { user } = useAuth()
 const canEdit = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)

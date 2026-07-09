@@ -3,7 +3,8 @@ import type { FamilyDetail } from '~/composables/useProducts'
 import type { MasterItem } from '~/composables/useMasters'
 
 const route = useRoute()
-const familyId = computed(() => Number(route.query.familyId ?? 0))
+// 第二段階契約: family id は uuid 文字列。未指定は '' (数値変換しない)。
+const familyId = computed(() => String(route.query.familyId ?? ''))
 const { getFamily } = useProducts()
 const { list } = useMasters()
 const { piCreate } = useProduction()
@@ -15,12 +16,12 @@ const errorMessage = ref('')
 const submitting = ref(false)
 
 const form = ref({
-  factorySupplierId: 0,
+  factorySupplierId: '',  // uuid 文字列 ('' = 未選択)
   dueDate: todayJstPlusDays(30), // 業務日付は JST 基準
   communicationText: '',
 })
-// productId -> quantity
-const qty = ref<Record<number, number>>({})
+// productId (uuid 文字列) -> quantity
+const qty = ref<Record<string, number>>({})
 
 const reload = async () => {
   loading.value = true
@@ -42,7 +43,7 @@ const submit = async () => {
   errorMessage.value = ''
   if (!form.value.factorySupplierId) { errorMessage.value = '加工先を選択してください'; return }
   const lines = Object.entries(qty.value)
-    .map(([pid, q]) => ({ productId: Number(pid), quantity: Number(q) || 0 }))
+    .map(([pid, q]) => ({ productId: pid, quantity: Number(q) || 0 }))
     .filter(l => l.quantity > 0)
   if (lines.length === 0) { errorMessage.value = '生産数量を 1 件以上入力してください'; return }
   submitting.value = true
@@ -78,7 +79,7 @@ const submit = async () => {
           <label class="block text-sm">
             <span class="text-gray-600">加工先 (工場)</span>
             <div class="mt-1">
-              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="加工先を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? 0" />
+              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="加工先を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
             </div>
           </label>
           <label class="block text-sm">

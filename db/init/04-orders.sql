@@ -1,6 +1,7 @@
 -- Iteration 3: 発注関連 3 テーブル (Phase 5 data-design.md §5.1-5.3)
 -- 前提: 03-products.sql まで投入済
 -- プラットフォーム統合改修: tenant_id (uuid) 導入・UNIQUE を (tenant_id, ...) へ差替・TIMESTAMPTZ(UTC) 化
+-- プラットフォーム統合 第二段階: uuid PK / deleted_at 統一 / 監査パーティション
 
 SET TIMEZONE = 'UTC';
 
@@ -12,7 +13,7 @@ SET app.tenant_id = '00000000-0000-4000-8000-000000000001';
 -- Phase 6 簡素化: status 2 値 (0=Active, 1=Cancelled)、改訂概念廃止
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_orders (
-    id                              BIGSERIAL PRIMARY KEY,
+    id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                       UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
     -- Idempotency-Key (AKB-DOC-12 §8: 作成系 POST の冪等キー。ヘッダ値と要求ペイロードの SHA-256)
     idempotency_key                 VARCHAR(128) NULL,
@@ -25,40 +26,40 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     shipping_instruction_no         VARCHAR(32)  NULL,                                      -- 出荷指示番号
     status                          SMALLINT     NOT NULL DEFAULT 0,
     cancelled_at                    TIMESTAMPTZ  NULL,
-    cancelled_by_user_id            BIGINT       NULL REFERENCES users(id),
+    cancelled_by_user_id            UUID         NULL REFERENCES users(id),
     cancel_reason                   VARCHAR(255) NULL,
 
     -- 発注状態 4 値モデル (§3b): 未発注 / 発注済 / 発注中止 / 発注削除。
     -- 「発注済」はユーザー操作で明示設定 (ordered_at)。ダウンロード (Excel 出力) では状態を変えない。
-    -- 導出優先順位: 発注削除(is_deleted) > 発注中止(status=1) > 発注済(ordered_at IS NOT NULL) > 未発注。
+    -- 導出優先順位: 発注削除(deleted_at IS NOT NULL) > 発注中止(status=1) > 発注済(ordered_at IS NOT NULL) > 未発注。
     ordered_at                      TIMESTAMPTZ  NULL,
-    ordered_by_user_id              BIGINT       NULL REFERENCES users(id),
-    -- 納品完了 (delivered_at) は §3b で状態導出から除外 (列は後方互換のため保持、is_deleted は論理削除フラグ)。
+    ordered_by_user_id              UUID         NULL REFERENCES users(id),
+    -- 納品完了 (delivered_at) は §3b で状態導出から除外 (列は後方互換のため保持)。
+    -- 論理削除は deleted_at IS NOT NULL で表す (第二段階: is_deleted BOOLEAN を deleted_at へ統一)。
     delivered_at                    TIMESTAMPTZ  NULL,
-    delivered_by_user_id            BIGINT       NULL REFERENCES users(id),
-    is_deleted                      BOOLEAN      NOT NULL DEFAULT FALSE,
+    delivered_by_user_id            UUID         NULL REFERENCES users(id),
     deleted_at                      TIMESTAMPTZ  NULL,
-    deleted_by_user_id              BIGINT       NULL REFERENCES users(id),
+    deleted_by_user_id              UUID         NULL REFERENCES users(id),
 
-    supplier_id                     BIGINT       NOT NULL REFERENCES suppliers(id),
+    supplier_id                     UUID         NOT NULL REFERENCES suppliers(id),
     supplier_official_name_snapshot VARCHAR(255) NULL,
     supplier_code_snapshot          VARCHAR(3)   NULL,
 
-    delivery_destination_id         BIGINT       NOT NULL REFERENCES delivery_destinations(id),
+    delivery_destination_id         UUID         NOT NULL REFERENCES delivery_destinations(id),
     customer_name_snapshot          VARCHAR(255) NULL,
 
-    department_id                   BIGINT       NOT NULL REFERENCES departments(id),
-    warehouse_id                    BIGINT       NOT NULL REFERENCES warehouses(id),
+    department_id                   UUID         NOT NULL REFERENCES departments(id),
+    warehouse_id                    UUID         NOT NULL REFERENCES warehouses(id),
     due_date                        DATE         NOT NULL,
 
-    orderer_user_id                 BIGINT       NOT NULL REFERENCES users(id),
-    sub_orderer_1_user_id           BIGINT       NULL REFERENCES users(id),
-    sub_orderer_2_user_id           BIGINT       NULL REFERENCES users(id),
-    sub_orderer_3_user_id           BIGINT       NULL REFERENCES users(id),
-    sub_orderer_4_user_id           BIGINT       NULL REFERENCES users(id),
-    sub_orderer_5_user_id           BIGINT       NULL REFERENCES users(id),
-    sub_orderer_6_user_id           BIGINT       NULL REFERENCES users(id),
-    manager_user_id                 BIGINT       NOT NULL REFERENCES users(id),
+    orderer_user_id                 UUID         NOT NULL REFERENCES users(id),
+    sub_orderer_1_user_id           UUID         NULL REFERENCES users(id),
+    sub_orderer_2_user_id           UUID         NULL REFERENCES users(id),
+    sub_orderer_3_user_id           UUID         NULL REFERENCES users(id),
+    sub_orderer_4_user_id           UUID         NULL REFERENCES users(id),
+    sub_orderer_5_user_id           UUID         NULL REFERENCES users(id),
+    sub_orderer_6_user_id           UUID         NULL REFERENCES users(id),
+    manager_user_id                 UUID         NOT NULL REFERENCES users(id),
 
     -- 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外 NULL 許容)
     is_overseas                     BOOLEAN      NOT NULL DEFAULT FALSE,                    -- 発注区分 (国内=false/海外=true)
@@ -67,8 +68,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     factory_shipping_date           DATE         NULL,                                      -- 工場出荷日
     delivery_place_shipping_date    DATE         NULL,                                      -- 納品所出荷日 (旧名: 検品所出荷日、設計判断Q6)
     overseas_departure_date         DATE         NULL,                                      -- 海外出港日
-    warehouse2_id                   BIGINT       NULL REFERENCES warehouses(id),            -- 納入倉庫2
-    warehouse3_id                   BIGINT       NULL REFERENCES warehouses(id),            -- 納入倉庫3
+    warehouse2_id                   UUID         NULL REFERENCES warehouses(id),            -- 納入倉庫2
+    warehouse3_id                   UUID         NULL REFERENCES warehouses(id),            -- 納入倉庫3
 
     communication_text              TEXT         NULL,
     -- 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」(選択式) に対応。
@@ -85,17 +86,16 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     last_exported_at                TIMESTAMPTZ  NULL,
 
     created_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    created_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
+    created_by_user_id              UUID         NOT NULL REFERENCES users(id),
     updated_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
+    updated_by_user_id              UUID         NOT NULL REFERENCES users(id),
     legacy_id                       VARCHAR(64)  NULL,
 
     CONSTRAINT chk_po_status         CHECK (status IN (0, 1)),
     CONSTRAINT chk_po_last_after_first CHECK (last_exported_at IS NULL OR first_exported_at IS NOT NULL),
     CONSTRAINT chk_po_cancelled_consistency CHECK ((status = 1) = (cancelled_at IS NOT NULL)),
-    -- 発注状態 5 値モデル (#3a): is_deleted と deleted_at の整合 (chk_po_cancelled_consistency の踏襲)。
-    -- 既存行は is_deleted=FALSE / deleted_at=NULL で TRUE=TRUE を満たす。
-    CONSTRAINT chk_po_deleted_consistency CHECK (is_deleted = (deleted_at IS NOT NULL)),
+    -- 発注状態 5 値モデル (#3a): 削除状態は deleted_at IS NOT NULL 単独で表現するため、
+    -- 旧 chk_po_deleted_consistency (is_deleted = (deleted_at IS NOT NULL)) は第二段階で不要となり撤去。
     CONSTRAINT uq_purchase_orders_tenant_mgmt_no UNIQUE (tenant_id, mgmt_no)
 );
 CREATE INDEX IF NOT EXISTS idx_po_mgmt    ON purchase_orders (mgmt_no);
@@ -107,10 +107,10 @@ CREATE INDEX IF NOT EXISTS idx_po_dates   ON purchase_orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_po_unexported
     ON purchase_orders (first_exported_at) WHERE first_exported_at IS NULL AND status = 0;
 -- 発注状態 5 値モデル (#3a): 後方互換の「非中止・未削除」一覧パス (ListAsync の
--- includeCancelled=false 分岐: WHERE status=0 AND is_deleted=FALSE) を高速化する部分索引。
+-- includeCancelled=false 分岐: WHERE status=0 AND deleted_at IS NULL) を高速化する部分索引。
 -- 新フロントは includeCancelled=true で全状態を取得し client-side 絞込するためこの索引は使わない。
 CREATE INDEX IF NOT EXISTS idx_po_not_deleted
-    ON purchase_orders (created_at DESC) WHERE is_deleted = FALSE;
+    ON purchase_orders (created_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_tenant ON purchase_orders (tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_tenant_idem ON purchase_orders (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
@@ -120,11 +120,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_tenant_idem ON purchase_ord
 -- subtotal は GENERATED ALWAYS AS で DB 側計算
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_order_lines (
-    id                              BIGSERIAL PRIMARY KEY,
+    id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                       UUID          NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
-    purchase_order_id               BIGINT        NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    purchase_order_id               UUID          NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
     line_no                         SMALLINT      NOT NULL,
-    product_id                      BIGINT        NOT NULL REFERENCES products(id),
+    product_id                      UUID          NOT NULL REFERENCES products(id),
     sku_snapshot                    VARCHAR(11)   NOT NULL,
     product_name_snapshot           VARCHAR(255)  NOT NULL,
     quantity                        INTEGER       NOT NULL,
@@ -137,9 +137,9 @@ CREATE TABLE IF NOT EXISTS purchase_order_lines (
     remark                          TEXT          NULL,                                     -- 発注明細 備考 (行レベル、spec 明細 No.26)
     subtotal                        NUMERIC(14,2) GENERATED ALWAYS AS (quantity * unit_price_snapshot) STORED,
     created_at                      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    created_by_user_id              BIGINT        NOT NULL REFERENCES users(id),
+    created_by_user_id              UUID          NOT NULL REFERENCES users(id),
     updated_at                      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    updated_by_user_id              BIGINT        NOT NULL REFERENCES users(id),
+    updated_by_user_id              UUID          NOT NULL REFERENCES users(id),
 
     CONSTRAINT chk_pol_quantity     CHECK (quantity > 0),
     CONSTRAINT chk_pol_unit_price   CHECK (unit_price_snapshot >= 0),
@@ -164,18 +164,18 @@ CREATE INDEX IF NOT EXISTS idx_purchase_order_lines_tenant ON purchase_order_lin
 -- 単一明細時の入数として温存し、分納時は分納行 (本テーブル) の pack_quantity を使う (二重表現)。
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_order_line_deliveries (
-    id                       BIGSERIAL PRIMARY KEY,
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
-    purchase_order_line_id   BIGINT       NOT NULL REFERENCES purchase_order_lines(id) ON DELETE CASCADE,
-    warehouse_id             BIGINT       NULL REFERENCES warehouses(id),          -- 倉庫 (NULL=倉庫未指定)
+    purchase_order_line_id   UUID         NOT NULL REFERENCES purchase_order_lines(id) ON DELETE CASCADE,
+    warehouse_id             UUID         NULL REFERENCES warehouses(id),          -- 倉庫 (NULL=倉庫未指定)
     delivery_date            DATE         NULL,                                     -- 納期 / 発注明細日 (NULL=発注明細日未指定)
     quantity                 INTEGER      NOT NULL,                                 -- 発注明細数 (分納数量)
     pack_quantity            INTEGER      NULL,                                     -- 倉庫別入数
     seq                      SMALLINT     NOT NULL DEFAULT 1,                       -- 表示順 (配列順で採番)
     created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    created_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
+    created_by_user_id       UUID         NOT NULL REFERENCES users(id),
     updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
+    updated_by_user_id       UUID         NOT NULL REFERENCES users(id),
     CONSTRAINT chk_pold_quantity CHECK (quantity > 0)
 );
 CREATE INDEX IF NOT EXISTS idx_pold_line ON purchase_order_line_deliveries (purchase_order_line_id);
@@ -185,11 +185,11 @@ CREATE INDEX IF NOT EXISTS idx_purchase_order_line_deliveries_tenant ON purchase
 -- §5.3 purchase_order_export_logs — Excel 出力履歴 (監査用、非 UI 露出)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_order_export_logs (
-    id                              BIGSERIAL PRIMARY KEY,
+    id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                       UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
-    purchase_order_id               BIGINT       NOT NULL REFERENCES purchase_orders(id),
+    purchase_order_id               UUID         NOT NULL REFERENCES purchase_orders(id),
     exported_at                     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    exported_by_user_id             BIGINT       NOT NULL REFERENCES users(id),
+    exported_by_user_id             UUID         NOT NULL REFERENCES users(id),
     is_first_export                 BOOLEAN      NOT NULL,
     excel_template_version          VARCHAR(16)  NOT NULL
 );
@@ -201,15 +201,15 @@ CREATE INDEX IF NOT EXISTS idx_purchase_order_export_logs_tenant ON purchase_ord
 -- ─────────────────────────────────────────────────
 DO $$
 DECLARE
-    owner_id    BIGINT;
-    supplier_id BIGINT;
-    dest_id     BIGINT;
-    dept_id     BIGINT;
-    wh_id       BIGINT;
-    po_id       BIGINT;
-    sku_id1     BIGINT;
-    sku_id2     BIGINT;
-    sku_id3     BIGINT;
+    owner_id    UUID;
+    supplier_id UUID;
+    dest_id     UUID;
+    dept_id     UUID;
+    wh_id       UUID;
+    po_id       UUID;
+    sku_id1     UUID;
+    sku_id2     UUID;
+    sku_id3     UUID;
 BEGIN
     SELECT id INTO owner_id    FROM users WHERE login_id = 'owner';
     SELECT id INTO supplier_id FROM suppliers WHERE code = '336';

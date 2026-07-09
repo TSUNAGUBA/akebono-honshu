@@ -9,9 +9,9 @@ namespace Akebono.Domain.Products;
 /// </summary>
 public class ProductImage : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public long ProductFamilyId { get; set; }
+    public Guid ProductFamilyId { get; set; }
 
     /// <summary>
     /// 画像区分 (§2a)。0=企画画像 (planning)、1=本番画像 (production)。既定 0 (既存画像は企画扱いで下位互換)。
@@ -33,11 +33,11 @@ public class ProductImage : ITenantScoped
     public int? HeightPx { get; set; }
     public string? OriginalFilename { get; set; }
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     public ProductFamily? ProductFamily { get; set; }
 }

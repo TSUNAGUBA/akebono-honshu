@@ -15,7 +15,8 @@ import {
 interface AkebonoUser {
   firebaseUid: string
   email: string | null
-  userId: number
+  // 第二段階契約: users.id は uuid 文字列 (JSON では文字列で受け渡し)
+  userId: string
   displayName: string
   // マルチテナント (AKB-DOC-12)。/auth/sync 応答から取得し、useApi が X-Tenant-Id ヘッダーに使う。
   tenantId: string
@@ -28,7 +29,7 @@ interface AkebonoUser {
 }
 
 interface SyncApiResponse {
-  userId: number
+  userId: string
   employeeNo: string
   displayName: string
   isActive: boolean

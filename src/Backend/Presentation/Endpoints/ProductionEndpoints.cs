@@ -25,9 +25,9 @@ public static class ProductionEndpoints
     // ── BOM (B-01/B-02) ─────────────────────────────
     private static void MapBom(IEndpointRouteBuilder app)
     {
-        var bom = app.MapGroup("/api/maker/v1/products/families/{familyId:long}/materials");
+        var bom = app.MapGroup("/api/maker/v1/products/families/{familyId:guid}/materials");
 
-        bom.MapGet("/", async (HttpContext http, ProductMaterialService svc, long familyId, CancellationToken ct) =>
+        bom.MapGet("/", async (HttpContext http, ProductMaterialService svc, Guid familyId, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out _))
                 return AuthEndpoints.UnauthorizedError(http);
@@ -35,7 +35,7 @@ public static class ProductionEndpoints
         });
 
         bom.MapPut("/", async (HttpContext http, IAkebonoDbContext db, ProductMaterialService svc,
-                                long familyId, ReplaceBomRequest req, CancellationToken ct) =>
+                                Guid familyId, ReplaceBomRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -44,8 +44,8 @@ public static class ProductionEndpoints
         });
 
         // 所要量展開プレビュー (B-02、金額なし)
-        app.MapGet("/api/maker/v1/products/families/{familyId:long}/material-requirements",
-            async (HttpContext http, ProductMaterialService svc, long familyId, int quantity, CancellationToken ct) =>
+        app.MapGet("/api/maker/v1/products/families/{familyId:guid}/material-requirements",
+            async (HttpContext http, ProductMaterialService svc, Guid familyId, int quantity, CancellationToken ct) =>
             {
                 if (!AuthEndpoints.TryGetUserId(http, out _))
                     return AuthEndpoints.UnauthorizedError(http);
@@ -58,14 +58,19 @@ public static class ProductionEndpoints
     {
         var pi = app.MapGroup("/api/maker/v1/production-instructions");
 
-        pi.MapGet("/", async (HttpContext http, ProductionInstructionService svc, bool? includeCancelled, CancellationToken ct) =>
+        // 一覧 (PI-02)。キーセットページング (AKB-DOC-12 §7.1): ?limit=50&cursor=<opaque>、
+        // 不正は 400 AKB-SYS-011 (PageCursor.Read が DomainException を投げ中央ハンドラが封筒化)。
+        pi.MapGet("/", async (HttpContext http, ProductionInstructionService svc,
+                               bool? includeCancelled, int? limit, string? cursor, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
-            return ApiEnvelope.Ok(http, await svc.ListAsync(actorId, includeCancelled ?? false, ct));
+            var page = PageCursor.Read(limit, cursor);
+            var result = await svc.ListAsync(actorId, includeCancelled ?? false, page, ct);
+            return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
-        pi.MapGet("/{id:long}", async (HttpContext http, ProductionInstructionService svc, long id, CancellationToken ct) =>
+        pi.MapGet("/{id:guid}", async (HttpContext http, ProductionInstructionService svc, Guid id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
@@ -85,8 +90,8 @@ public static class ProductionEndpoints
                 new { id = created.Id, instructionNo = created.InstructionNo });
         });
 
-        pi.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc,
-                                          long id, UpdatePiRequest req, CancellationToken ct) =>
+        pi.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc,
+                                          Guid id, UpdatePiRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -96,7 +101,7 @@ public static class ProductionEndpoints
                 : ApiEnvelope.Ok(http, new { id = updated.Id, instructionNo = updated.InstructionNo });
         });
 
-        pi.MapPost("/{id:long}/issue", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc, long id, CancellationToken ct) =>
+        pi.MapPost("/{id:guid}/issue", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -104,7 +109,7 @@ public static class ProductionEndpoints
                 ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        pi.MapPost("/{id:long}/complete", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc, long id, CancellationToken ct) =>
+        pi.MapPost("/{id:guid}/complete", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -112,8 +117,8 @@ public static class ProductionEndpoints
                 ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        pi.MapPost("/{id:long}/cancel", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc,
-                                                long id, CancelPiRequest req, CancellationToken ct) =>
+        pi.MapPost("/{id:guid}/cancel", async (HttpContext http, IAkebonoDbContext db, ProductionInstructionService svc,
+                                                Guid id, CancelPiRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -121,8 +126,8 @@ public static class ProductionEndpoints
                 ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        pi.MapGet("/{id:long}/export.xlsx", async (HttpContext http, IAkebonoDbContext db,
-                                                    IProductionInstructionExcelService excel, long id, CancellationToken ct) =>
+        pi.MapGet("/{id:guid}/export.xlsx", async (HttpContext http, IAkebonoDbContext db,
+                                                    IProductionInstructionExcelService excel, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -146,14 +151,19 @@ public static class ProductionEndpoints
             return ApiEnvelope.Ok(http, await svc.PrepareAsync(req, ct));
         });
 
-        mo.MapGet("/", async (HttpContext http, MaterialOrderService svc, bool? includeCancelled, CancellationToken ct) =>
+        // 一覧 (MO-02)。キーセットページング (AKB-DOC-12 §7.1): ?limit=50&cursor=<opaque>、
+        // 不正は 400 AKB-SYS-011 (PageCursor.Read が DomainException を投げ中央ハンドラが封筒化)。
+        mo.MapGet("/", async (HttpContext http, MaterialOrderService svc,
+                               bool? includeCancelled, int? limit, string? cursor, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
-            return ApiEnvelope.Ok(http, await svc.ListAsync(actorId, includeCancelled ?? false, ct));
+            var page = PageCursor.Read(limit, cursor);
+            var result = await svc.ListAsync(actorId, includeCancelled ?? false, page, ct);
+            return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
-        mo.MapGet("/{id:long}", async (HttpContext http, MaterialOrderService svc, long id, CancellationToken ct) =>
+        mo.MapGet("/{id:guid}", async (HttpContext http, MaterialOrderService svc, Guid id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
@@ -173,8 +183,8 @@ public static class ProductionEndpoints
                 new { id = created.Id, orderNo = created.OrderNo });
         });
 
-        mo.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db, MaterialOrderService svc,
-                                          long id, UpdateMaterialOrderRequest req, CancellationToken ct) =>
+        mo.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db, MaterialOrderService svc,
+                                          Guid id, UpdateMaterialOrderRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -184,7 +194,7 @@ public static class ProductionEndpoints
                 : ApiEnvelope.Ok(http, new { id = updated.Id, orderNo = updated.OrderNo });
         });
 
-        mo.MapPost("/{id:long}/order", async (HttpContext http, IAkebonoDbContext db, MaterialOrderService svc, long id, CancellationToken ct) =>
+        mo.MapPost("/{id:guid}/order", async (HttpContext http, IAkebonoDbContext db, MaterialOrderService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -192,8 +202,8 @@ public static class ProductionEndpoints
                 ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        mo.MapPost("/{id:long}/cancel", async (HttpContext http, IAkebonoDbContext db, MaterialOrderService svc,
-                                                long id, CancelMaterialOrderRequest req, CancellationToken ct) =>
+        mo.MapPost("/{id:guid}/cancel", async (HttpContext http, IAkebonoDbContext db, MaterialOrderService svc,
+                                                Guid id, CancelMaterialOrderRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -201,8 +211,8 @@ public static class ProductionEndpoints
                 ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        mo.MapGet("/{id:long}/export.xlsx", async (HttpContext http, IAkebonoDbContext db,
-                                                    IMaterialOrderExcelService excel, long id, CancellationToken ct) =>
+        mo.MapGet("/{id:guid}/export.xlsx", async (HttpContext http, IAkebonoDbContext db,
+                                                    IMaterialOrderExcelService excel, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

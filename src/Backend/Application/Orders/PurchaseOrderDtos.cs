@@ -6,19 +6,19 @@ namespace Akebono.Application.Orders;
 // 新規作成 (POST /api/maker/v1/orders、O-01)
 // ─────────────────────────────────────────────────
 public record CreateOrderRequest(
-    long SupplierId,
-    long DeliveryDestinationId,
-    long DepartmentId,
-    long WarehouseId,
+    Guid SupplierId,
+    Guid DeliveryDestinationId,
+    Guid DepartmentId,
+    Guid WarehouseId,
     DateOnly DueDate,
-    long OrdererUserId,
-    long ManagerUserId,
-    long? SubOrderer1UserId,
-    long? SubOrderer2UserId,
-    long? SubOrderer3UserId,
-    long? SubOrderer4UserId,
-    long? SubOrderer5UserId,
-    long? SubOrderer6UserId,
+    Guid OrdererUserId,
+    Guid ManagerUserId,
+    Guid? SubOrderer1UserId,
+    Guid? SubOrderer2UserId,
+    Guid? SubOrderer3UserId,
+    Guid? SubOrderer4UserId,
+    Guid? SubOrderer5UserId,
+    Guid? SubOrderer6UserId,
     string? CommunicationText,
     List<OrderLineInput> Lines,
     // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
@@ -28,8 +28,8 @@ public record CreateOrderRequest(
     DateOnly? FactoryShippingDate = null,
     DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
-    long? Warehouse2Id = null,
-    long? Warehouse3Id = null,
+    Guid? Warehouse2Id = null,
+    Guid? Warehouse3Id = null,
     // 連絡文書 6 行 (構造化、PR6、末尾・nullable = 下位互換)。旧 spec 発注明細 No.27-32。
     // 新フローは本 6 列を保存する (SoT)。旧クライアントが未指定なら全 NULL で保存される。
     string? CommunicationLine1 = null,
@@ -42,7 +42,7 @@ public record CreateOrderRequest(
     string? OrderNo = null);
 
 public record OrderLineInput(
-    long ProductId,
+    Guid ProductId,
     int Quantity,
     decimal UnitPriceSnapshot,
     string CurrencyCodeSnapshot,
@@ -59,7 +59,7 @@ public record OrderLineInput(
 // No.18-23 倉庫入数/発注数)。WarehouseId / DeliveryDate は NULL 許容 (倉庫未指定 / 発注明細日未指定)。
 // Quantity は正の整数 (CHECK quantity > 0)。PackQuantity は倉庫別入数 (任意)。
 public record OrderLineDeliveryInput(
-    long? WarehouseId,
+    Guid? WarehouseId,
     DateOnly? DeliveryDate,
     int Quantity,
     int? PackQuantity = null);
@@ -68,7 +68,7 @@ public record OrderLineDeliveryInput(
 // 一覧 (GET /api/maker/v1/orders、O-03)
 // ─────────────────────────────────────────────────
 public record OrderListItem(
-    long Id,
+    Guid Id,
     string MgmtNo,
     string? OrderNo,
     short Status,
@@ -87,12 +87,13 @@ public record OrderListItem(
     // 発注区分 国内/海外 (Phase B、is_overseas)。一覧でのタブ絞込・区分バッジ表示用。
     bool IsOverseas = false,
     // 発注状態 4 値モデル (§3b)。OrderedAt(発注済)/Status(発注中止)/IsDeleted(発注削除) から導出 (フロント側)。
+    // IsDeleted は FE 互換のため DTO 名を維持し、entity.DeletedAt != null から算出して詰める (第二段階規約)。
     // DeliveredAt は §3b で状態導出から除外 (後方互換のため列は残すが未使用)。
     DateTime? DeliveredAt = null,
     bool IsDeleted = false,
     // 一覧 SPLIT フィルタ (#3a) 用フィールド。発注先/発注者/得意先/単価未決定で client-side 絞込。
-    long SupplierId = 0,
-    long OrdererUserId = 0,
+    Guid SupplierId = default,
+    Guid OrdererUserId = default,
     string? CustomerName = null,
     // 明細に単価未決定 (unit_price_snapshot <= 0) を含むか (クエリで EXISTS 集計)。
     bool HasUndecidedPrice = false,
@@ -103,7 +104,7 @@ public record OrderListItem(
 // 詳細 (GET /api/maker/v1/orders/{id}、O-04 編集画面ベース)
 // ─────────────────────────────────────────────────
 public record OrderDetail(
-    long Id,
+    Guid Id,
     string MgmtNo,
     string? OrderNo,
     // 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力フォームの初期表示に使う。
@@ -112,29 +113,29 @@ public record OrderDetail(
     short Status,
     DateTime? CancelledAt,
     string? CancelReason,
-    long SupplierId,
+    Guid SupplierId,
     string SupplierCode,
     string SupplierName,
     string? SupplierOfficialNameSnapshot,
     string? SupplierCodeSnapshot,
-    long DeliveryDestinationId,
+    Guid DeliveryDestinationId,
     string DeliveryDestinationName,
     string? CustomerNameSnapshot,
-    long DepartmentId,
+    Guid DepartmentId,
     string DepartmentName,
-    long WarehouseId,
+    Guid WarehouseId,
     string WarehouseName,
     DateOnly DueDate,
-    long OrdererUserId,
+    Guid OrdererUserId,
     string OrdererName,
-    long ManagerUserId,
+    Guid ManagerUserId,
     string ManagerName,
-    long? SubOrderer1UserId,
-    long? SubOrderer2UserId,
-    long? SubOrderer3UserId,
-    long? SubOrderer4UserId,
-    long? SubOrderer5UserId,
-    long? SubOrderer6UserId,
+    Guid? SubOrderer1UserId,
+    Guid? SubOrderer2UserId,
+    Guid? SubOrderer3UserId,
+    Guid? SubOrderer4UserId,
+    Guid? SubOrderer5UserId,
+    Guid? SubOrderer6UserId,
     string? CommunicationText,
     DateTime? FirstExportedAt,
     DateTime? LastExportedAt,
@@ -148,12 +149,13 @@ public record OrderDetail(
     DateOnly? FactoryShippingDate = null,
     DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
-    long? Warehouse2Id = null,
+    Guid? Warehouse2Id = null,
     string? Warehouse2Name = null,
-    long? Warehouse3Id = null,
+    Guid? Warehouse3Id = null,
     string? Warehouse3Name = null,
     // 発注状態 4 値モデル (§3b)。発注済(OrderedAt、末尾)/発注中止(Status)/発注削除(IsDeleted) の状態表示・
-    // 操作可否判定に使う。DeliveredAt は §3b で状態導出から除外 (後方互換のため列は残すが未使用)。
+    // 操作可否判定に使う。IsDeleted は FE 互換のため DTO 名を維持し、entity.DeletedAt != null から算出して
+    // 詰める (第二段階規約)。DeliveredAt は §3b で状態導出から除外 (後方互換のため列は残すが未使用)。
     // 操作者名は cancelled_by と同じく詳細では非表示 (日時のみ表示)。
     DateTime? DeliveredAt = null,
     bool IsDeleted = false,
@@ -171,9 +173,9 @@ public record OrderDetail(
     DateTime? OrderedAt = null);
 
 public record OrderLineDetail(
-    long Id,
+    Guid Id,
     short LineNo,
-    long ProductId,
+    Guid ProductId,
     string Sku,
     string ProductName,
     string ColorName,
@@ -194,8 +196,8 @@ public record OrderLineDetail(
 // 分納×倉庫の多次元明細 1 行の返却 (PR5b、旧 spec 発注明細 No.6/No.7-17/No.18-23)。
 // Seq は表示順 (配列順で採番)。WarehouseName は倉庫名 (未指定時 null)。
 public record OrderLineDeliverySummary(
-    long Id,
-    long? WarehouseId,
+    Guid Id,
+    Guid? WarehouseId,
     string? WarehouseName,
     DateOnly? DeliveryDate,
     int Quantity,
@@ -208,19 +210,19 @@ public record OrderLineDeliverySummary(
 public record UpdateOrderRequest(
     EditReason EditReason,
     string? EditNote,
-    long SupplierId,
-    long DeliveryDestinationId,
-    long DepartmentId,
-    long WarehouseId,
+    Guid SupplierId,
+    Guid DeliveryDestinationId,
+    Guid DepartmentId,
+    Guid WarehouseId,
     DateOnly DueDate,
-    long OrdererUserId,
-    long ManagerUserId,
-    long? SubOrderer1UserId,
-    long? SubOrderer2UserId,
-    long? SubOrderer3UserId,
-    long? SubOrderer4UserId,
-    long? SubOrderer5UserId,
-    long? SubOrderer6UserId,
+    Guid OrdererUserId,
+    Guid ManagerUserId,
+    Guid? SubOrderer1UserId,
+    Guid? SubOrderer2UserId,
+    Guid? SubOrderer3UserId,
+    Guid? SubOrderer4UserId,
+    Guid? SubOrderer5UserId,
+    Guid? SubOrderer6UserId,
     string? CommunicationText,
     List<UpdateLineInput> Lines,
     // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外任意)
@@ -230,8 +232,8 @@ public record UpdateOrderRequest(
     DateOnly? FactoryShippingDate = null,
     DateOnly? DeliveryPlaceShippingDate = null,
     DateOnly? OverseasDepartureDate = null,
-    long? Warehouse2Id = null,
-    long? Warehouse3Id = null,
+    Guid? Warehouse2Id = null,
+    Guid? Warehouse3Id = null,
     // 連絡文書 6 行 (構造化、PR6、末尾・nullable = 下位互換)。旧 spec 発注明細 No.27-32。
     // 新フローは本 6 列で上書き保存する (SoT)。CommunicationText は新フローで書かない (旧データのみ保持)。
     string? CommunicationLine1 = null,
@@ -242,8 +244,8 @@ public record UpdateOrderRequest(
     string? CommunicationLine6 = null);
 
 public record UpdateLineInput(
-    long? Id,
-    long ProductId,
+    Guid? Id,
+    Guid ProductId,
     int Quantity,
     decimal UnitPriceSnapshot,
     string CurrencyCodeSnapshot,
@@ -268,7 +270,7 @@ public record CancelOrderRequest(string CancelReason);
 //   終端状態ガードで変更できない発注はスキップし、Updated / Skipped を返す (非ブロッキング)。
 // ─────────────────────────────────────────────────
 public record BulkStatusRequest(
-    List<long> OrderIds,
+    List<Guid> OrderIds,
     string TargetState,
     string? CancelReason = null);
 
@@ -306,5 +308,5 @@ public record SupplierPriceSuggestion(
     string? CurrencyCode,
     decimal? ExchangeRate,
     // 解決に使われた行が size 専用か全サイズ既定か (UI 表示・デバッグ用)。
-    long? ResolvedSizeId,
+    Guid? ResolvedSizeId,
     bool IsSizeSpecific);

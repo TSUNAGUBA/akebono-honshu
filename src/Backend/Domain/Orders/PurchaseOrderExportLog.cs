@@ -9,11 +9,11 @@ namespace Akebono.Domain.Orders;
 /// </summary>
 public class PurchaseOrderExportLog : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public long PurchaseOrderId { get; set; }
+    public Guid PurchaseOrderId { get; set; }
     public DateTime ExportedAt { get; set; }
-    public long ExportedByUserId { get; set; }
+    public Guid ExportedByUserId { get; set; }
     /// <summary>この出力が初回かどうか (purchase_orders.first_exported_at 採番のトリガとなった可視化)</summary>
     public bool IsFirstExport { get; set; }
     /// <summary>テンプレートバージョン (例: "iter3-v1")。Iter 4 で本テンプレ化時にバージョンアップ</summary>

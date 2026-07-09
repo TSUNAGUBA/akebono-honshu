@@ -6,6 +6,7 @@ const { user } = useAuth()
 const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 const { list } = useMasters()
 const { create, communicationSuggestions, priceSuggestion } = useOrders()
+const { listFamiliesAll } = useProducts()
 const { apiData } = useApi()
 
 // マスタ参照
@@ -16,7 +17,7 @@ const warehouses = ref<MasterItem[]>([])
 
 // SKU 候補 (products テーブル全件、簡素実装)
 interface SkuOption {
-  id: number
+  id: string
   sku: string
   productName: string
   colorName: string
@@ -25,7 +26,7 @@ interface SkuOption {
 const skus = ref<SkuOption[]>([])
 
 // ユーザ候補 (発注担当者・管理者・副担当者用)
-interface UserOption { id: number; loginId: string; displayName: string }
+interface UserOption { id: string; loginId: string; displayName: string }
 const users = ref<UserOption[]>([])
 
 // 連絡文章テンプレ
@@ -41,20 +42,21 @@ const today = todayJst() // 業務日付は JST 基準 (UTC 由来だと JST 00:
 // is_overseas は帳票の言語切替 (国内=日本語/海外=英語) と一覧の区分バッジのみに使う。
 const form = ref({
   orderNo: '',            // 発注書番号 (§5)。従来は初回 Excel 出力時に採番だが、作成時に手入力も可能 (任意)。
-  supplierId: 0,          // 発注先 (旧「仕入先」、§5 名称変更)
+  // ID 系は uuid 文字列 (第二段階契約)。未選択は '' で表し、送信前の必須チェックで弾く。
+  supplierId: '',          // 発注先 (旧「仕入先」、§5 名称変更)
   customerRef: '',        // 得意先 / 受注先 (国内/海外共通)
-  deliveryDestinationId: 0, // 納品先
-  departmentId: 0,        // 発注事業部
+  deliveryDestinationId: '', // 納品先
+  departmentId: '',        // 発注事業部
   landingPlace: '',       // 荷揚地 (国内/海外共通)
-  warehouseId: 0,         // 納入倉庫1
-  warehouse2Id: null as number | null, // 納入倉庫2 (国内/海外共通)
-  warehouse3Id: null as number | null, // 納入倉庫3 (国内/海外共通)
+  warehouseId: '',         // 納入倉庫1
+  warehouse2Id: null as string | null, // 納入倉庫2 (国内/海外共通)
+  warehouse3Id: null as string | null, // 納入倉庫3 (国内/海外共通)
   dueDate: today,         // 取引先納入日 (旧「納入日」、§5 名称変更)
   factoryShippingDate: '',        // 工場出荷日 (国内/海外共通)
   deliveryPlaceShippingDate: '',  // 検品場出荷日 (列 delivery_place_shipping_date、国内/海外共通)
   overseasDepartureDate: '',      // 海外出港日 (国内/海外共通)
-  ordererUserId: 0,       // 発注担当者
-  managerUserId: 0,       // 発注管理者
+  ordererUserId: '',       // 発注担当者
+  managerUserId: '',       // 発注管理者
   // 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」。各行はテンプレ
   // 選択式 (連絡文書サジェスト再利用) + 自由編集可。新フローは本 6 列を SoT として送る (communicationText
   // は新フロントから書かない)。固定長 6 の配列で各スロットを保持する。
@@ -66,7 +68,7 @@ const form = ref({
 // 分納×倉庫の多次元明細 (PR5b)。1 明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
 // 倉庫 / 納期 は任意 (null 許容)。数量は正の整数、入数は任意。
 interface LineRow {
-  productId: number
+  productId: string
   quantity: number
   unitPriceSnapshot: number
   currencyCodeSnapshot: string
@@ -78,7 +80,7 @@ interface LineRow {
   deliveryQtys: Record<number, number | null>
 }
 const lines = ref<LineRow[]>([
-  { productId: 0, quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, remark: null, deliveryQtys: {} },
+  { productId: '', quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, remark: null, deliveryQtys: {} },
 ])
 
 // 分納 (納期列マトリクス)。「分納入力」で納期列を追加し、SKU 明細行ごとに納期別の発注数を入力する。
@@ -142,8 +144,9 @@ onMounted(async () => {
       list('departments'),
       list('warehouses'),
       communicationSuggestions(),
-      // 商品企画から全 SKU を引いてくる (簡素実装、Iter 4 で検索 + ページング)
-      apiData<{ id: number; productName1: string; skuVariationCount: number }[]>('/products/families'),
+      // 商品企画から全 SKU を引いてくる。一覧 API はページングされるため、
+      // 候補の全量が必要な本画面はカーソルを終端まで辿る listFamiliesAll を使う (§7.2)。
+      listFamiliesAll(false),
       apiData<UserOption[]>('/users'),
     ])
     suppliers.value = sup
@@ -156,7 +159,7 @@ onMounted(async () => {
     // 各 family の詳細を並列取得して SKU リスト構築
     const skuLists = await Promise.all(
       family.map((f) =>
-        apiData<{ products: { id: number; sku: string; colorName: string; sizeName: string }[] }>(`/products/families/${f.id}`)
+        apiData<{ products: { id: string; sku: string; colorName: string; sizeName: string }[] }>(`/products/families/${f.id}`)
           .then((d) =>
             d.products.map((p) => ({
               id: p.id,
@@ -189,7 +192,7 @@ onMounted(async () => {
 
 const addLine = () => {
   lines.value.push({
-    productId: skus.value[0]?.id ?? 0,
+    productId: skus.value[0]?.id ?? '',
     quantity: 1,
     unitPriceSnapshot: 0,
     currencyCodeSnapshot: 'JPY',
@@ -222,7 +225,7 @@ const lineQuantity = (l: LineRow): number =>
 // は新しい SKU の現単価を反映するため上書きを許す。
 const applyPriceSuggestion = async (idx: number, force = false) => {
   const line = lines.value[idx]
-  if (!line || line.productId <= 0 || form.value.supplierId <= 0) return
+  if (!line || !line.productId || !form.value.supplierId) return
   // 発注先変更時 (force=false) は手入力済 (>0) の単価を保護する。
   if (!force && line.unitPriceSnapshot > 0) return
   try {
@@ -238,8 +241,8 @@ const applyPriceSuggestion = async (idx: number, force = false) => {
 }
 
 // SKU 選択変更時に単価を再サジェスト (明示選択なので force=true で新 SKU の現単価を反映)。
-const onLineProductChange = (idx: number, v: number | null) => {
-  lines.value[idx].productId = v ?? 0
+const onLineProductChange = (idx: number, v: string | null) => {
+  lines.value[idx].productId = v ?? ''
   applyPriceSuggestion(idx, true)
 }
 
@@ -287,13 +290,13 @@ const applyTemplateToLine = (slot: number, optionValue: string) => {
 const lineQuantityValid = (l: LineRow): boolean => lineQuantity(l) > 0
 
 const canSubmit = computed(() =>
-  form.value.supplierId > 0 &&
-  form.value.deliveryDestinationId > 0 &&
-  form.value.departmentId > 0 &&
-  form.value.warehouseId > 0 &&
-  form.value.ordererUserId > 0 &&
-  form.value.managerUserId > 0 &&
-  lines.value.every((l) => l.productId > 0 && lineQuantityValid(l) && l.unitPriceSnapshot >= 0) &&
+  form.value.supplierId !== '' &&
+  form.value.deliveryDestinationId !== '' &&
+  form.value.departmentId !== '' &&
+  form.value.warehouseId !== '' &&
+  form.value.ordererUserId !== '' &&
+  form.value.managerUserId !== '' &&
+  lines.value.every((l) => l.productId !== '' && lineQuantityValid(l) && l.unitPriceSnapshot >= 0) &&
   !submitting.value)
 
 const onSubmit = async () => {
@@ -347,7 +350,7 @@ const onSubmit = async () => {
         deliveries: deliveryMode.value
           ? deliveryColumns.value
               .map((c) => ({
-                warehouseId: null as number | null,
+                warehouseId: null as string | null,
                 deliveryDate: c.date || null,
                 quantity: Number(l.deliveryQtys[c.id]) || 0,
                 packQuantity: null as number | null,

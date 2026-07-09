@@ -19,14 +19,14 @@ namespace Akebono.Domain.Orders;
 /// </summary>
 public class PurchaseOrderLineDelivery : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
 
     /// <summary>親 = 発注明細 (purchase_order_lines.id)。ON DELETE CASCADE。</summary>
-    public long PurchaseOrderLineId { get; set; }
+    public Guid PurchaseOrderLineId { get; set; }
 
     /// <summary>倉庫 (warehouses.id)。NULL = 倉庫未指定。任意参照 FK (cascade なし)。</summary>
-    public long? WarehouseId { get; set; }
+    public Guid? WarehouseId { get; set; }
 
     /// <summary>納期 / 発注明細日。NULL = 発注明細日未指定。</summary>
     public DateOnly? DeliveryDate { get; set; }
@@ -41,9 +41,9 @@ public class PurchaseOrderLineDelivery : ITenantScoped
     public short Seq { get; set; }
 
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     // ナビプロパティ
     public PurchaseOrderLine? PurchaseOrderLine { get; set; }

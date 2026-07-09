@@ -16,16 +16,16 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
     private static partial Regex YearMonthPattern();
 
     public async Task<List<ExchangeRateListItem>> ListAsync(
-        long actorUserId, bool includeDeleted, CancellationToken ct = default)
+        Guid actorUserId, bool includeDeleted, CancellationToken ct = default)
     {
         var query = db.ExchangeRates.AsQueryable();
-        if (!includeDeleted) query = query.Where(e => !e.DeleteFlag);
+        if (!includeDeleted) query = query.Where(e => e.DeletedAt == null);
 
         // 新しい年月 → 通貨コード順。
         var items = await query
             .OrderByDescending(e => e.YearMonth).ThenBy(e => e.CurrencyCode)
             .Select(e => new ExchangeRateListItem(
-                e.Id, e.YearMonth, e.CurrencyCode, e.Rate, e.DeleteFlag, e.CreatedAt, e.UpdatedAt))
+                e.Id, e.YearMonth, e.CurrencyCode, e.Rate, e.DeletedAt, e.CreatedAt, e.UpdatedAt))
             .ToListAsync(ct);
 
         await audit.LogAsync(actorUserId, "ExchangeRate.List",
@@ -34,21 +34,21 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         return items;
     }
 
-    public async Task<ExchangeRate?> GetAsync(long id, CancellationToken ct = default)
+    public async Task<ExchangeRate?> GetAsync(Guid id, CancellationToken ct = default)
         => await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
 
     // 有効行 (未削除) の (年月, 通貨) 重複を検出して DomainException (AKB-SYS-007 / 409) を投げる。
     // 部分 UNIQUE 索引による DB 例外に頼らず、アプリ層で分かりやすいメッセージにする (review #1 対応)。
-    private async Task EnsureNoActiveDuplicateAsync(string yearMonth, string currency, long? excludeId, CancellationToken ct)
+    private async Task EnsureNoActiveDuplicateAsync(string yearMonth, string currency, Guid? excludeId, CancellationToken ct)
     {
         var dup = await db.ExchangeRates.AnyAsync(
-            e => !e.DeleteFlag && e.YearMonth == yearMonth && e.CurrencyCode == currency
+            e => e.DeletedAt == null && e.YearMonth == yearMonth && e.CurrencyCode == currency
                  && (excludeId == null || e.Id != excludeId), ct);
         if (dup)
             throw DomainException.UniqueViolation($"{yearMonth} {currency} の為替レートは既に登録されています");
     }
 
-    public async Task<ExchangeRate> CreateAsync(ExchangeRateWriteRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<ExchangeRate> CreateAsync(ExchangeRateWriteRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var (yearMonth, currency) = Validate(req);
         await EnsureNoActiveDuplicateAsync(yearMonth, currency, null, ct);
@@ -74,7 +74,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         return entity;
     }
 
-    public async Task<ExchangeRate?> UpdateAsync(long id, ExchangeRateWriteRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<ExchangeRate?> UpdateAsync(Guid id, ExchangeRateWriteRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return null;
@@ -95,11 +95,11 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         return entity;
     }
 
-    public async Task<bool> SoftDeleteAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> SoftDeleteAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return false;
-        entity.DeleteFlag = true;
+        entity.DeletedAt = SystemTime.UtcNow;
         entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
@@ -109,13 +109,13 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         return true;
     }
 
-    public async Task<bool> RestoreAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> RestoreAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return false;
-        if (entity.DeleteFlag) // 既に有効なら何もしない。復元時は同一 (年月,通貨) の有効行が無いことを保証する。
+        if (entity.DeletedAt != null) // 既に有効なら何もしない。復元時は同一 (年月,通貨) の有効行が無いことを保証する。
             await EnsureNoActiveDuplicateAsync(entity.YearMonth, entity.CurrencyCode, id, ct);
-        entity.DeleteFlag = false;
+        entity.DeletedAt = null;
         entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);

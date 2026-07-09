@@ -22,8 +22,10 @@
 | DB スキーマ | 単一テナント (tenant_id なし)・TIMESTAMP (JST naive) | **tenant_id uuid + RLS**・**TIMESTAMPTZ (UTC)** |
 | Backend DB 接続ユーザ | `akebono_honshu` (docker スーパーユーザ) | **`akebono_app`** (RLS 適用の一般ロール。08-tenancy-rls.sql が作成) |
 | 現在時刻 | `SystemTime.Now` (JST naive) | 格納 `SystemTime.UtcNow` / 表示・採番年度 `SystemTime.JstNow` |
-| 作成系 API | – | `Idempotency-Key` ヘッダ必須 (orders / production-instructions / material-orders の POST) |
-| テナントヘッダ | – | Frontend が `X-Tenant-Id` を自動付与 (auth/sync の応答 `tenantId` を使用) |
+| 作成系 API | – | `Idempotency-Key` ヘッダ必須 (orders / production-instructions / material-orders / products/families/complete の POST。第二段階で families を追加) |
+| テナントヘッダ | – | 業務 API は `X-Tenant-Id` **必須** (欠如 400 AKB-SYS-003。第二段階で必須化、`/auth/*` は適用除外)。Frontend が自動付与 (auth/sync の応答 `tenantId` を使用) |
+| 一覧 API | 全件返却 | **カーソルページング** (第二段階)。`?limit=` 既定 50・上限 200、`meta.page = {nextCursor, limit, hasMore}`。curl 疎通時は `nextCursor` を辿る |
+| PK / 論理削除 | BIGSERIAL / delete_flag・is_deleted | **uuid PK / deleted_at** (第二段階。エンティティ ID は API/FE で uuid 文字列) |
 
 **既存ローカル環境の追従手順 (破壊的変更・データ再作成):**
 
@@ -31,7 +33,7 @@
 2. **DB 再作成** (tenant_id/RLS/TIMESTAMPTZ は既存ボリュームへ追従適用しない。稼働前 MVP のため再作成):
    ```bash
    docker compose down -v   # akebono-postgres-data ボリューム破棄
-   docker compose up -d     # db/init 01〜08 が番号順に自動適用される
+   docker compose up -d     # db/init 01〜09 が番号順に自動適用される
    ```
 3. **Firebase UID 再紐付け** (§0 手順 4 と同じ):
    ```sql
@@ -222,9 +224,10 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 ##### Step 2. スキーマ初期化 (db/init/*.sql を番号順に投入)
 
 ```bash
-# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..08)
+# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..09)
 # ※プラットフォーム統合改修後は 08-tenancy-rls.sql (テナント分離 RLS + アプリロール
-#   akebono_app) まで必ず適用すること。アプリの接続ユーザは akebono_app (§0-P 参照)。
+#   akebono_app) と 09-updated-at-triggers.sql (updated_at トリガ汎用配線) まで
+#   必ず適用すること。アプリの接続ユーザは akebono_app (§0-P 参照)。
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
@@ -254,6 +257,10 @@ psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=re
 #   ALTER ROLE akebono_app WITH PASSWORD '<強固なパスワード>';
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/08-tenancy-rls.sql
+
+# updated_at トリガの汎用配線 (プラットフォーム統合 第二段階)。冪等 (再実行可)
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/09-updated-at-triggers.sql
 
 # 動作確認
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
@@ -299,7 +306,27 @@ cd ../../Frontend && pnpm dev
 | `password authentication failed` | pguser のパスワードを再確認 (RDS console から再リセット可能) |
 | `SSL is not enabled on the server` | RDS の `rds.force_ssl` パラメータ確認、Connection String の `SslMode=Require` |
 | Backend 起動時 EF Core エラー | スキーマ未投入。Step 2 を再実行 |
-| `relation "..." does not exist` | スキーマファイルの投入順序ミス (01 → 02 → 03 → 04 の順) |
+| `relation "..." does not exist` | スキーマファイルの投入順序ミス (01 → 02 → … → 09 の番号順) |
+| 起動ログに `audit_logs パーティション先行作成に失敗しました` が毎回出る | audit_logs の DEFAULT パーティションに行が落ちている (長期停止後の再開直後等)。DEFAULT に対象月の行があると `CREATE TABLE ... PARTITION OF` が失敗し続けるため、下記の回復 SQL で行を月次パーティションへ移送する |
+
+**audit_logs_default からの回復 SQL** (スーパーユーザで実行。`<YYYY>` `<MM>` は default に落ちた行の月):
+
+```sql
+BEGIN;
+-- 1. 対象月の行を一時退避して default から削除
+CREATE TEMP TABLE audit_default_moved AS
+  SELECT * FROM audit_logs_default
+  WHERE occurred_at >= DATE '<YYYY>-<MM>-01'
+    AND occurred_at <  DATE '<YYYY>-<MM>-01' + INTERVAL '1 month';
+DELETE FROM audit_logs_default
+  WHERE occurred_at >= DATE '<YYYY>-<MM>-01'
+    AND occurred_at <  DATE '<YYYY>-<MM>-01' + INTERVAL '1 month';
+-- 2. 月次パーティションを作成 (default が空になったので成功する)
+SELECT ensure_audit_log_partitions(3);
+-- 3. 退避した行を戻す (ルーティングで新パーティションに入る)
+INSERT INTO audit_logs SELECT * FROM audit_default_moved;
+COMMIT;
+```
 
 ---
 
@@ -583,7 +610,7 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 | Frontend で `Failed to fetch http://localhost:5000` | Backend が起動していない / CORS 不整合 / Connection String が DB に届いていない (`appsettings.Development.json` で上書き確認) |
 | `audit_logs` が記録されない | Backend が DB に接続できていない。`appsettings.json` または `appsettings.Development.json` の `ConnectionStrings:Postgres` を確認、pgAdmin4 で対象ロールが該当 DB へのアクセス権限を持つか確認 |
 | `pnpm install` で `EACCES` | Node のパーミッション問題。Volta or nvm 経由で Node を入れ直す |
-| ログイン失敗 (Iter 4 段階 B 以降) | Firebase Console のテストユーザ Email + パスワードを使う。`users.firebase_uid` が紐付け済か確認 (`SELECT firebase_uid, is_active, is_deleted FROM users WHERE login_id='owner'`)。失敗時の audit 記録は: 未紐付け UID → `Auth.UidUnboundProbe` (actor_user_id=NULL)、inactive ユーザ → `Auth.LoginRejected.Inactive` (actor_user_id 付き)。**いずれも 5 分に 1 回しか記録されない**ので連続テスト時は Backend 再起動で cache flush。 |
+| ログイン失敗 (Iter 4 段階 B 以降) | Firebase Console のテストユーザ Email + パスワードを使う。`users.firebase_uid` が紐付け済か確認 (`SELECT firebase_uid, is_active, deleted_at FROM users WHERE login_id='owner'`)。失敗時の audit 記録は: 未紐付け UID → `Auth.UidUnboundProbe` (actor_user_id=NULL)、inactive ユーザ → `Auth.LoginRejected.Inactive` (actor_user_id 付き)。**いずれも 5 分に 1 回しか記録されない**ので連続テスト時は Backend 再起動で cache flush。 |
 | `pnpm dev` でポート 3000 衝突 | 別アプリ使用中、`pnpm dev --port 3001` で代替 (`.env` の NUXT_PUBLIC_API_BASE は変更不要) |
 
 ---

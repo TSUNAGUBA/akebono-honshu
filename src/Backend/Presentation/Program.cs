@@ -71,8 +71,8 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
 // - Firebase ID Token を JWKS で検証 (issuer/audience = projectId、ValidateIssuerSigningKey 明示)
 // - OnTokenValidated で users.firebase_uid → users.id を **単一 cache + タプル引当** で取得
 //   - cache key `fb_uid_resolve:{uid}` (60s) に `(ActiveId, AnyId)` を atomic に格納
-//   - ActiveId: `!IsDeleted && IsActive` 引当結果 (null なら拒否対象)
-//   - AnyId:    `!IsDeleted` 引当結果 (null なら未紐付け、有値なら inactive ユーザを示す)
+//   - ActiveId: `DeletedAt == null && IsActive` 引当結果 (null なら拒否対象)
+//   - AnyId:    `DeletedAt == null` 引当結果 (null なら未紐付け、有値なら inactive ユーザを示す)
 //   - 4 周目レビューで指摘された 2 段 cache 乖離 (CR P1-1) を解消するため単一 cache に統合
 // - 判定分岐:
 //   - ActiveId 有値 → Claim 付与 (通常認証成立)
@@ -87,7 +87,7 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(p => p
 // - multi-instance 注意: Backend を 2 インスタンス以上に水平拡張する場合 (EC2 複数台 / 複数コンテナ等) IMemoryCache は
 //   プロセスローカルかつ memory pressure で eviction される (de-dup の信頼性も低下)。架構判断は
 //   architecture.md §4.5 参照
-// - soft-deleted (`IsDeleted=true`) ユーザの扱い: 引当 WHERE が `!IsDeleted` のため hit せず
+// - soft-deleted (`DeletedAt != null`) ユーザの扱い: 引当 WHERE が `DeletedAt == null` のため hit せず
 //   `(ActiveId=null, AnyId=null)` 組合せで `Auth.UidUnboundProbe` 扱い (actor_user_id=null)。
 //   これは「Firebase Auth `disabled=true` 同期を SoT 防御の単一ポイント」とする設計判断
 //   (architecture.md §5.1 参照)。退職者の不正試行は Firebase 側で先に拒否される前提
@@ -158,7 +158,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     .CreateLogger("JwtBearer.OnTokenValidated");
                 var cache = sp.GetRequiredService<IMemoryCache>();
 
-                (long? ActiveId, long? AnyId, Guid? TenantId, string? TenantStatus) resolved;
+                (Guid? ActiveId, Guid? AnyId, Guid? TenantId, string? TenantStatus) resolved;
                 try
                 {
                     resolved = await cache.GetOrCreateAsync(
@@ -170,7 +170,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                             // cache.Remove を呼ぶ仕組みを入れる前提、Program.cs 上部コメント参照)。
                             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
                             var db = sp.GetRequiredService<IAkebonoDbContext>();
-                            // 1 度の DB クエリで (IsActive な行、!IsDeleted な行) の id を同時取得し、
+                            // 1 度の DB クエリで (IsActive な行、DeletedAt == null な行) の id を同時取得し、
                             // ActiveId / AnyId のペアを atomic に確定させる。同じスナップショットから
                             // 派生するため必ず整合する (ActiveId 有値 → AnyId も同値)。
                             //
@@ -179,7 +179,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                             // テーブル。詳細は db/init/08-tenancy-rls.sql / AkebonoDbContext 参照)。
                             var row = await db.Users
                                 .IgnoreQueryFilters()
-                                .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted)
+                                .Where(u => u.FirebaseUid == firebaseUid && u.DeletedAt == null)
                                 .Select(u => new
                                 {
                                     u.Id,
@@ -195,9 +195,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                                 .FirstOrDefaultAsync(ctx.HttpContext.RequestAborted);
                             if (row is null)
                             {
-                                return ((long?)null, (long?)null, (Guid?)null, (string?)null);
+                                return ((Guid?)null, (Guid?)null, (Guid?)null, (string?)null);
                             }
-                            return (row.IsActive ? (long?)row.Id : null, (long?)row.Id,
+                            return (row.IsActive ? (Guid?)row.Id : null, (Guid?)row.Id,
                                 (Guid?)row.TenantId, (string?)row.TenantStatus);
                         });
                 }
@@ -270,7 +270,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 {
                     identity.AddClaim(new System.Security.Claims.Claim(
                         AuthEndpoints.AkebonoUserIdClaim,
-                        resolved.ActiveId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                        resolved.ActiveId.Value.ToString()));
 
                     // テナントコンテキスト (AKB-DOC-12 §10.1)。
                     // 一次ソース = Firebase Custom Claims の tenant_id (SoT は akebono-backoffice。
@@ -343,6 +343,9 @@ builder.Services.AddSwaggerGen(options =>
             Array.Empty<string>()
         },
     });
+
+    // 共通必須ヘッダ (X-Tenant-Id / Idempotency-Key) を生成仕様へ反映 (AKB-DOC-12 §4-1)
+    options.OperationFilter<AkbCommonHeadersOperationFilter>();
 });
 
 var app = builder.Build();

@@ -14,12 +14,12 @@ namespace Akebono.Application.Products;
 public class ProductMaterialService(IAkebonoDbContext db, IAuditLogger audit)
 {
     /// <summary>BOM 一覧取得 (B-01)。登録済が無い場合は空リスト (3FK初期シードはフロントで構築)。</summary>
-    public async Task<List<ProductMaterialItem>> GetAsync(long familyId, CancellationToken ct = default)
+    public async Task<List<ProductMaterialItem>> GetAsync(Guid familyId, CancellationToken ct = default)
     {
         return await db.ProductMaterials
             .Include(m => m.Material)
             .Include(m => m.RecommendedSupplier)
-            .Where(m => m.ProductFamilyId == familyId && !m.IsDeleted)
+            .Where(m => m.ProductFamilyId == familyId && m.DeletedAt == null)
             .OrderBy(m => m.MaterialRole).ThenBy(m => m.Id)
             .Select(m => new ProductMaterialItem(
                 m.Id, (short)m.MaterialRole, m.MaterialId, m.Material!.Name,
@@ -33,7 +33,7 @@ public class ProductMaterialService(IAkebonoDbContext db, IAuditLogger audit)
     /// BOM 一括更新 (B-01)。既存の有効行を論理削除 → 新規 INSERT を単一トランザクションで実施。
     /// 3FK へは書き戻さない。重複 (部位×素材) と所要量を検証。
     /// </summary>
-    public async Task ReplaceAsync(long familyId, ReplaceBomRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task ReplaceAsync(Guid familyId, ReplaceBomRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var family = await db.ProductFamilies.FirstOrDefaultAsync(f => f.Id == familyId, ct)
             ?? throw DomainException.Validation($"品番 family_id={familyId} 不在");
@@ -66,11 +66,11 @@ public class ProductMaterialService(IAkebonoDbContext db, IAuditLogger audit)
         {
             var now = SystemTime.UtcNow;
             var existing = await db.ProductMaterials
-                .Where(m => m.ProductFamilyId == familyId && !m.IsDeleted)
+                .Where(m => m.ProductFamilyId == familyId && m.DeletedAt == null)
                 .ToListAsync(ct);
             foreach (var e in existing)
             {
-                e.IsDeleted = true;
+                e.DeletedAt = now;
                 e.UpdatedAt = now;
                 e.UpdatedByUserId = actorUserId;
             }
@@ -110,7 +110,7 @@ public class ProductMaterialService(IAkebonoDbContext db, IAuditLogger audit)
     /// 所要量展開 (B-02)。BOM × quantity で素材別に Σ(所要量×数量×(1+loss_rate)) を集計、
     /// 推奨仕入先別にグルーピング。金額は含まない。BOM 未登録時は DomainException (AKB-MAKER-011)。
     /// </summary>
-    public async Task<MaterialRequirements> GetRequirementsAsync(long familyId, int quantity, CancellationToken ct = default)
+    public async Task<MaterialRequirements> GetRequirementsAsync(Guid familyId, int quantity, CancellationToken ct = default)
     {
         if (quantity <= 0)
             throw DomainException.Validation("数量は正の数を指定してください");
@@ -118,7 +118,7 @@ public class ProductMaterialService(IAkebonoDbContext db, IAuditLogger audit)
         var bom = await db.ProductMaterials
             .Include(m => m.Material)
             .Include(m => m.RecommendedSupplier)
-            .Where(m => m.ProductFamilyId == familyId && !m.IsDeleted)
+            .Where(m => m.ProductFamilyId == familyId && m.DeletedAt == null)
             .ToListAsync(ct);
         if (bom.Count == 0)
             throw new DomainException(AkbErrorCodes.MakerBomRequirementMissing, 422,
@@ -133,7 +133,9 @@ public class ProductMaterialService(IAkebonoDbContext db, IAuditLogger audit)
                     m.MaterialId, m.Material!.Name, (short)m.MaterialRole,
                     decimal.Round(m.RequiredQtyPerUnit * quantity * (1 + m.LossRate), 4),
                     m.Unit)).ToList()))
-            .OrderBy(g => g.RecommendedSupplierId ?? long.MaxValue)
+            // 推奨仕入先なし (NULL) のグループを末尾へ (uuid 化前の `?? long.MaxValue` と同じ並び意図)。
+            .OrderBy(g => g.RecommendedSupplierId == null)
+            .ThenBy(g => g.RecommendedSupplierId)
             .ToList();
 
         return new MaterialRequirements(familyId, quantity, groups);

@@ -37,7 +37,7 @@ internal static class OrderReportLineMath
     ///   - 分納なし明細: 群1 = (line.Quantity, line.PackQuantity)、群2/3 は空。
     /// wh1 は発注ヘッダの主倉庫 (NOT NULL)、wh2/wh3 は納入倉庫2/3 (NULL 許容)。
     /// </summary>
-    public static DepartCell[] Departs(PurchaseOrderLine line, long wh1, long? wh2, long? wh3)
+    public static DepartCell[] Departs(PurchaseOrderLine line, Guid wh1, Guid? wh2, Guid? wh3)
     {
         var qty = new int[3];
         var pack = new int?[3];

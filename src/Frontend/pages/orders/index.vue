@@ -25,7 +25,7 @@ const regionTabs: { key: RegionTab; label: string }[] = [
 
 // --- フィルタ用マスタ参照 (発注先=仕入先 / 発注者=ユーザ) ---
 const suppliers = ref<MasterItem[]>([])
-interface UserOption { id: number; loginId: string; displayName: string }
+interface UserOption { id: string; loginId: string; displayName: string }
 const users = ref<UserOption[]>([])
 // 発注者ドロップダウン用 (orders/new.vue と同じ整形)
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
@@ -40,8 +40,8 @@ const defaultStateFilter = (): Record<OrderState, boolean> => ({
 const filters = ref({
   createdFrom: '',                         // date 手入力 (created_at >= From)
   createdTo: '',                           // date 手入力 (created_at <= To)
-  supplierId: null as number | null,       // dropdown (発注先=仕入先)
-  ordererUserId: null as number | null,    // dropdown (発注者=ユーザ)
+  supplierId: null as string | null,       // dropdown (発注先=仕入先)
+  ordererUserId: null as string | null,    // dropdown (発注者=ユーザ)
   undecidedPrice: false,                   // checkbox (単価未決定を含む発注のみ)
   hideLines: false,                        // checkbox (明細列を隠す表示トグル、後述)
   customer: '',                            // text 手入力 (得意先 部分一致)
@@ -94,19 +94,55 @@ const activeFilterCount = computed(() => {
   return n
 })
 
+// キーセットページング (AKB-DOC-12 §7.1)。limit=200 で取得し、続きは「さらに読み込む」で辿る。
+const nextCursor = ref<string | null>(null)
+const loadingMore = ref(false)
+// リロード世代。reload 開始でインクリメントし、in-flight の応答が旧世代なら破棄する
+// (一括操作後 reload と「さらに読み込む」の競合で、混在リスト・旧カーソルが残るのを防ぐ)。
+const requestSeq = ref(0)
+
 const reload = async () => {
+  const seq = ++requestSeq.value
   loading.value = true
   errorMessage.value = ''
   try {
     // 発注状態 4 値フィルタ (§3b) のため全状態 (中止/削除含む) を取得し client-side で絞り込む。
-    items.value = await list(true)
+    const page = await list(true)
+    if (seq !== requestSeq.value) return
+    items.value = page.items
+    nextCursor.value = page.page.hasMore ? page.page.nextCursor : null
   } catch (e) {
+    // 旧世代 (reload で置き換え済み) の失敗は表示を汚染しない
+    if (seq !== requestSeq.value) return
     const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 401
       ? 'セッションが切れました。再ログインしてください。'
       : '発注書一覧の取得に失敗しました'
   } finally {
-    loading.value = false
+    // 新しい reload が in-flight の場合、旧世代がローディング表示を先に消さない
+    if (seq === requestSeq.value) loading.value = false
+  }
+}
+
+const loadMore = async () => {
+  if (!nextCursor.value || loadingMore.value) return
+  const seq = requestSeq.value
+  loadingMore.value = true
+  try {
+    const page = await list(true, nextCursor.value)
+    if (seq !== requestSeq.value) return
+    items.value = [...items.value, ...page.items]
+    nextCursor.value = page.page.hasMore ? page.page.nextCursor : null
+  } catch (e) {
+    // 旧世代 (reload で置き換え済み) の失敗は表示を汚染しない
+    if (seq !== requestSeq.value) return
+    const err = e as { statusCode?: number }
+    errorMessage.value = err.statusCode === 401
+      ? 'セッションが切れました。再ログインしてください。'
+      : '発注書一覧の取得に失敗しました'
+  } finally {
+    // loadingMore は同時実行ガードのため無条件で解除する
+    loadingMore.value = false
   }
 }
 
@@ -206,18 +242,18 @@ const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
 // チェックした発注を 発注書 / 管理表 / 発注書+管理表 でまとめてダウンロードする。
 // 選択は order id の Set。フィルタで非表示になった id は watch で間引く
 // (見えていない発注を黙ってダウンロードしないため)。
-const selectedIds = ref<Set<number>>(new Set())
+const selectedIds = ref<Set<string>>(new Set())
 
 // フィルタ変更で filtered から外れた選択を除去する (表示中の発注のみ選択状態を保持)。
 watch(filtered, (rows) => {
   const visible = new Set(rows.map((r) => r.id))
-  const next = new Set<number>()
+  const next = new Set<string>()
   for (const id of selectedIds.value) if (visible.has(id)) next.add(id)
   if (next.size !== selectedIds.value.size) selectedIds.value = next
 })
 
-const isSelected = (id: number): boolean => selectedIds.value.has(id)
-const toggleRow = (id: number): void => {
+const isSelected = (id: string): boolean => selectedIds.value.has(id)
+const toggleRow = (id: string): void => {
   const next = new Set(selectedIds.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
@@ -356,7 +392,7 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
     </div>
 
     <!-- 絞込フィルタパネル (SPLIT フィルタ、AND 合成・状態のみ OR、未指定 = 全件)。
-         開閉可能 (FilterPanel)。dropdown は MasterSelect (数値 ID・allow-empty)、date/text は手入力。
+         開閉可能 (FilterPanel)。dropdown は MasterSelect (uuid 文字列 ID・allow-empty)、date/text は手入力。
          products/index.vue のパネルをミラー。レスポンシブグリッド: モバイル 1 列 → sm 2 列 → lg 4 列。 -->
     <FilterPanel
       title="絞込"
@@ -445,7 +481,7 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
     </FilterPanel>
 
     <div class="mb-3 flex items-center gap-4">
-      <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件</span>
+      <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件{{ nextCursor ? ' (続きあり)' : '' }}</span>
     </div>
 
     <!-- 一括操作バー (§3a)。常時表示し、選択の有無でボタンの活性/非活性を制御する。
@@ -627,6 +663,12 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
         </tbody>
       </table>
     </section>
+
+    <div v-if="nextCursor && !loading" class="mt-3 text-center">
+      <button type="button" :disabled="loadingMore" class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50" @click="loadMore">
+        {{ loadingMore ? '読み込み中…' : 'さらに読み込む' }}
+      </button>
+    </div>
 
     <p class="mt-3 text-xs text-gray-400">API: GET /api/maker/v1/orders</p>
   </main>

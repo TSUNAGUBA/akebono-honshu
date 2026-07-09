@@ -46,7 +46,7 @@ public static class MasterEndpoints
     private record ProductSeasonWriteRequest(string Code, string Name, string ItemConversionCode, string? ConversionOrder);
     private record ProductGroupWriteRequest(string Code, string Name, decimal PlanningFee);
     private record ColorWriteRequest(string Code, string Name, string ItemConversionCode);
-    private record MaterialWriteRequest(string Code, string Name, long MaterialClassificationId);
+    private record MaterialWriteRequest(string Code, string Name, Guid MaterialClassificationId);
     private record DeliveryDestinationWriteRequest(
         string Code, string Name, string? CustomerName,
         string? Remark1, string? Remark2, string? Remark3);
@@ -68,14 +68,14 @@ public static class MasterEndpoints
             return ApiEnvelope.Ok(http, items);
         });
 
-        group.MapGet("/{id:long}", async (HttpContext http, long id, MasterService<T> svc, CancellationToken ct) =>
+        group.MapGet("/{id:guid}", async (HttpContext http, Guid id, MasterService<T> svc, CancellationToken ct) =>
         {
             var entity = await svc.GetAsync(id, ct);
             return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
         });
 
-        group.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<T> svc, long id, CancellationToken ct) =>
+        group.MapDelete("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<T> svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -83,8 +83,8 @@ public static class MasterEndpoints
             return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
-                                                     MasterService<T> svc, long id, CancellationToken ct) =>
+        group.MapPost("/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
+                                                     MasterService<T> svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -111,8 +111,8 @@ public static class MasterEndpoints
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/{path}/{created.Id}", created);
         });
 
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<T> svc, long id, SimpleWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<T> svc, Guid id, SimpleWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -137,8 +137,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/sizes/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<Size> svc, long id, SizeWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<Size> svc, Guid id, SizeWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -165,7 +165,7 @@ public static class MasterEndpoints
             return ApiEnvelope.Ok(http, items);
         });
 
-        group.MapGet("/{id:long}", async (HttpContext http, long id, SupplierService svc, CancellationToken ct) =>
+        group.MapGet("/{id:guid}", async (HttpContext http, Guid id, SupplierService svc, CancellationToken ct) =>
         {
             var entity = await svc.GetAsync(id, ct);
             return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
@@ -180,8 +180,8 @@ public static class MasterEndpoints
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/suppliers/{created.Id}", created);
         });
 
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              SupplierService svc, long id, SupplierWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              SupplierService svc, Guid id, SupplierWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -189,8 +189,8 @@ public static class MasterEndpoints
             return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
 
-        group.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              SupplierService svc, long id, CancellationToken ct) =>
+        group.MapDelete("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              SupplierService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -198,8 +198,8 @@ public static class MasterEndpoints
             return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
-                                                     SupplierService svc, long id, CancellationToken ct) =>
+        group.MapPost("/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
+                                                     SupplierService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -224,7 +224,7 @@ public static class MasterEndpoints
             return ApiEnvelope.Ok(http, items);
         });
 
-        group.MapGet("/{id:long}", async (HttpContext http, long id, ExchangeRateService svc, CancellationToken ct) =>
+        group.MapGet("/{id:guid}", async (HttpContext http, Guid id, ExchangeRateService svc, CancellationToken ct) =>
         {
             var entity = await svc.GetAsync(id, ct);
             return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
@@ -239,8 +239,8 @@ public static class MasterEndpoints
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/exchange-rates/{created.Id}", created);
         });
 
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              ExchangeRateService svc, long id, ExchangeRateWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              ExchangeRateService svc, Guid id, ExchangeRateWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -248,8 +248,8 @@ public static class MasterEndpoints
             return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
 
-        group.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              ExchangeRateService svc, long id, CancellationToken ct) =>
+        group.MapDelete("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              ExchangeRateService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -257,8 +257,8 @@ public static class MasterEndpoints
             return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
-                                                     ExchangeRateService svc, long id, CancellationToken ct) =>
+        group.MapPost("/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
+                                                     ExchangeRateService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -285,8 +285,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/product-types/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<ProductType> svc, long id, ProductTypeWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<ProductType> svc, Guid id, ProductTypeWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -317,8 +317,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/product-seasons/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<ProductSeason> svc, long id, ProductSeasonWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<ProductSeason> svc, Guid id, ProductSeasonWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -344,8 +344,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/product-groups/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<ProductGroup> svc, long id, ProductGroupWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<ProductGroup> svc, Guid id, ProductGroupWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -369,8 +369,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/colors/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<Color> svc, long id, ColorWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<Color> svc, Guid id, ColorWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -394,8 +394,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/materials/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<Material> svc, long id, MaterialWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<Material> svc, Guid id, MaterialWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -424,8 +424,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/delivery-destinations/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<DeliveryDestination> svc, long id, DeliveryDestinationWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<DeliveryDestination> svc, Guid id, DeliveryDestinationWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -451,8 +451,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/document-template-purchases/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<DocumentTemplatePurchase> svc, long id, DocumentBodyWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<DocumentTemplatePurchase> svc, Guid id, DocumentBodyWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -480,8 +480,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/document-template-confirmations/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<DocumentTemplateConfirmation> svc, long id, DocumentBodyWithFlagWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<DocumentTemplateConfirmation> svc, Guid id, DocumentBodyWithFlagWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -510,8 +510,8 @@ public static class MasterEndpoints
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
             return ApiEnvelope.Created(http, $"/api/maker/v1/masters/document-text-purchases/{created.Id}", created);
         });
-        group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
-                                              MasterService<DocumentTextPurchase> svc, long id, DocumentBodyWithFlagWriteRequest req, CancellationToken ct) =>
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<DocumentTextPurchase> svc, Guid id, DocumentBodyWithFlagWriteRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

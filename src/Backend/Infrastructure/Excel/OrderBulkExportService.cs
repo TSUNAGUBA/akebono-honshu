@@ -27,7 +27,7 @@ public class OrderBulkExportService(
     private const string ZipContentType = "application/zip";
 
     public async Task<BulkExportResult> ExportAsync(
-        BulkExportRequest request, long actorUserId, CancellationToken ct = default)
+        BulkExportRequest request, Guid actorUserId, CancellationToken ct = default)
     {
         if (request.OrderIds is null || request.OrderIds.Count == 0)
             throw DomainException.Validation("発注を 1 件以上選択してください");
@@ -37,10 +37,10 @@ public class OrderBulkExportService(
         // 入力 id の重複を除去しつつ選択順を保つ。
         var requestedIds = request.OrderIds.Distinct().ToList();
 
-        // is_deleted の発注は対象外 (skip して続行、原則4 非ブロッキング)。
+        // 削除済 (deleted_at) の発注は対象外 (skip して続行、原則4 非ブロッキング)。
         // 存在する非削除発注の id 集合を 1 クエリで取得し、選択順でフィルタする。
         var validIdSet = (await db.PurchaseOrders
-                .Where(o => requestedIds.Contains(o.Id) && !o.IsDeleted)
+                .Where(o => requestedIds.Contains(o.Id) && o.DeletedAt == null)
                 .Select(o => o.Id)
                 .ToListAsync(ct))
             .ToHashSet();
@@ -63,7 +63,7 @@ public class OrderBulkExportService(
 
     /// <summary>管理表のみ: 単一 .xlsx をそのまま返す (ZIP にしない)。</summary>
     private async Task<BulkExportResult> BuildManagementOnlyAsync(
-        IReadOnlyList<long> targetIds, long actorUserId, CancellationToken ct)
+        IReadOnlyList<Guid> targetIds, Guid actorUserId, CancellationToken ct)
     {
         var (fileName, content) = await managementExcel.ExportAsync(targetIds, actorUserId, ct);
         return new BulkExportResult(fileName, XlsxContentType, content);
@@ -77,7 +77,7 @@ public class OrderBulkExportService(
     /// 握りつぶさない。発注書が 1 件も成功しなかった場合のみ全体を失敗 (DomainException AKB-SYS-002) とする。
     /// </summary>
     private async Task<BulkExportResult> BuildOrderZipAsync(
-        IReadOnlyList<long> targetIds, long actorUserId, string stamp, bool includeManagement, CancellationToken ct)
+        IReadOnlyList<Guid> targetIds, Guid actorUserId, string stamp, bool includeManagement, CancellationToken ct)
     {
         // 出力が 1 ファイル (発注書のみ・対象 1 件) のときは ZIP にせず単一 .xlsx で返す (§3d)。
         // both (管理表を含む = 2 ファイル) は 1 件でも従来どおり ZIP。orderExcel 経由のため初回出力の副作用は保持。
@@ -89,7 +89,7 @@ public class OrderBulkExportService(
 
         using var zipStream = new MemoryStream();
         var succeeded = 0;
-        var failedIds = new List<long>();
+        var failedIds = new List<Guid>();
         // leaveOpen: true で ZipArchive Dispose 後も zipStream を読めるようにする。
         // using ブロックを抜けた時点で Zip の中央ディレクトリが flush される。
         using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
