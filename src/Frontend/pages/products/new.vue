@@ -4,11 +4,11 @@ import type { CompleteFamilyPayload, FamilyListItem, FamilyDetail } from '~/comp
 
 const { canEditMaster } = useAuth()
 const { list } = useMasters()
-// 参照コピー (PR4): 既存商品の検索 (listFamilies) と詳細取得 (getFamily) を再利用する。
+// 参照コピー (PR4): 既存商品の検索 (listFamiliesAll) と詳細取得 (getFamily) を再利用する。
 // 商品一覧 P-04 (index.vue) と同じくサーバ側検索 API を増やさず、全件取得 + クライアント側
 // 部分一致でコピー元を選ぶ。詳細はバルク登録 (createComplete) と同じ既存 endpoint。
-const { createComplete, listFamilies, getFamily, uploadImage } = useProducts()
-const { apiFetch } = useApi()
+const { createComplete, listFamiliesAll, getFamily, uploadImage } = useProducts()
+const { apiData } = useApi()
 
 // マスタ参照データ
 const productTypes = ref<MasterItem[]>([])
@@ -22,7 +22,7 @@ const colors = ref<MasterItem[]>([])
 const sizes = ref<MasterItem[]>([])
 
 // ユーザ候補 (企画者用)。orders/new.vue と同じ /users から取得。
-interface UserOption { id: number; loginId: string; displayName: string }
+interface UserOption { id: string; loginId: string; displayName: string }
 const users = ref<UserOption[]>([])
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
 // 版権対象 (1=小売価格, 2=納品価格)。AutoComplete は string 値で扱う。
@@ -37,20 +37,21 @@ const successMessage = ref('')
 const yearCodes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'N', 'Z']
 const form = ref({
   plannedYearCode: 'N',
-  productTypeId: 0,
-  productSeasonId: 0,
-  factorySupplierId: 0,
-  brandId: 0,
-  functionId: null as number | null,
-  productGroupId: 0,
-  upperMaterialId: 0,
-  insoleMaterialId: 0,
-  outsoleMaterialId: 0,
+  // ID 系は uuid 文字列 (第二段階契約)。未選択は '' で表し、送信前の必須チェックで弾く。
+  productTypeId: '',
+  productSeasonId: '',
+  factorySupplierId: '',
+  brandId: '',
+  functionId: null as string | null,
+  productGroupId: '',
+  upperMaterialId: '',
+  insoleMaterialId: '',
+  outsoleMaterialId: '',
   productName1: '',
   // 旧 品番台帳 項目 (Phase A、全て任意)
   productYear: null as number | null,
-  managementSeasonId: null as number | null,
-  plannerUserId: null as number | null,
+  managementSeasonId: null as string | null,
+  plannerUserId: null as string | null,
   provisionalNumber: '',
   sampleApprovalDate: '',
   retailPrice: null as number | null,
@@ -65,8 +66,8 @@ const form = ref({
 })
 
 const expansion = ref({
-  colorIds: [] as number[],
-  sizeIds: [] as number[],
+  colorIds: [] as string[],
+  sizeIds: [] as string[],
 })
 
 // ブランド費 自動計算 (§2c)。ブランド費 = 版権対象で選んだ価格 × 版権料率(%)。
@@ -107,7 +108,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 
 // 登録成功後に採番された family.id を保持する。二重採番防止 (canSubmit=false) と、
 // 画像が一部失敗したときの再アップロード/詳細画面導線に使う (原則 2 状態保護)。
-const registeredFamilyId = ref<number | null>(null)
+const registeredFamilyId = ref<string | null>(null)
 // アップロード成功済み枚数を区分別に保持 (サーバ保存済み枚数)。合計は imageUploadedCount。
 const imageUploadedByCat = ref<Record<number, number>>({ 0: 0, 1: 0 })
 const imageUploadedCount = computed(() => imageUploadedByCat.value[0] + imageUploadedByCat.value[1])
@@ -158,7 +159,7 @@ const removePendingImage = (img: PendingImage) => {
 // 採番済 familyId へ pendingImages を 1 枚ずつアップロードする共通処理 (登録時・再試行で共用)。
 // 各画像は自身の区分 (§2a) を付けて送る。成功分は pendingImages から除去 (object URL 解放) し
 // imageUploadedByCat を区分別に加算、失敗分は残して再試行可能にする (原則 4 非ブロッキング)。
-const uploadPendingImages = async (familyId: number): Promise<{ uploaded: number; failed: number }> => {
+const uploadPendingImages = async (familyId: string): Promise<{ uploaded: number; failed: number }> => {
   let uploaded = 0
   let lastErrorDetail = ''
   const remaining: PendingImage[] = []
@@ -170,7 +171,7 @@ const uploadPendingImages = async (familyId: number): Promise<{ uploaded: number
       URL.revokeObjectURL(img.previewUrl)
     } catch (uploadErr) {
       remaining.push(img)
-      const detail = (uploadErr as { data?: { detail?: string } }).data?.detail
+      const detail = getApiErrorMessage(uploadErr, '')
       if (detail) lastErrorDetail = detail
       console.error('画像アップロードに失敗しました:', img.file.name, uploadErr)
     }
@@ -213,15 +214,15 @@ const removeSetComponent = (idx: number) => {
 // 通貨は選択した仕入先の適用通貨 (Supplier.currencyCode) から自動決定。為替マスタから適用レートを解決し、
 // 円換算・仕入原価・仕入利益率・ドレー代を自動計算する (行には入力せず算出する)。
 // 原価明細 (見積単価/ロス費/税率) は登録後の詳細画面で追加する (新規フォームは行を高くしないため省く)。
-const today0 = new Date().toISOString().split('T')[0]
+const today0 = todayJst() // 業務日付は JST 基準
 interface PriceRow {
-  supplierId: number
-  sizeId: number | null   // §2e 全サイズ共通(null) / サイズ別
+  supplierId: string      // uuid 文字列 ('' = 未選択)
+  sizeId: string | null   // §2e 全サイズ共通(null) / サイズ別
   unitPrice: number
   effectiveFrom: string
   decidedAt: string
 }
-const makePriceRow = (): PriceRow => ({ supplierId: 0, sizeId: null, unitPrice: 0, effectiveFrom: today0, decidedAt: today0 })
+const makePriceRow = (): PriceRow => ({ supplierId: '', sizeId: null, unitPrice: 0, effectiveFrom: today0, decidedAt: today0 })
 const supplierPrices = ref<PriceRow[]>([makePriceRow()])
 const addPriceRow = () => {
   const row = makePriceRow()
@@ -235,7 +236,7 @@ interface ExchangeRateItem { yearMonth: string; currencyCode: string; rate: numb
 const exchangeRates = ref<ExchangeRateItem[]>([])
 
 // 仕入先の適用通貨/ドレー代を参照するヘルパー (suppliers は MasterItem[]、拡張列を動的保持)。
-const supplierById = (id: number) => suppliers.value.find((s) => s.id === id)
+const supplierById = (id: string) => suppliers.value.find((s) => s.id === id)
 const currencyOfRow = (row: PriceRow): string => (supplierById(row.supplierId)?.currencyCode as string) || 'JPY'
 const drayageOfRow = (row: PriceRow): number | null => {
   const d = supplierById(row.supplierId)?.drayageCost
@@ -284,16 +285,16 @@ const yen = (n: number | null): string => (n == null ? '—' : `¥${n.toLocaleSt
 //
 // コピーしない項目: SKU/品番(7桁)/legacy_id/画像/id/監査列/status (新規は採番・既定値)。
 const referenceFamilies = ref<FamilyListItem[]>([]) // 検索元 (一覧 API の全件、index.vue と同様)
-const referenceSourceId = ref<number | null>(null)   // 選択中のコピー元 family.id
+const referenceSourceId = ref<string | null>(null)   // 選択中のコピー元 family.id
 const copying = ref(false)
 const copyNotice = ref('')                            // コピー実行後の結果メッセージ (件数等)
 
 // AutoComplete のソース。品番 (itemNumber) / legacy_id / 商品名 1,2 を検索対象に含める。
-// MasterSelect は label/code 数値マスタ向けなので、ここは AutoComplete を直接使い
-// searchText に検索対象テキストを集約する。value は family.id の文字列。
+// MasterSelect は label/code マスタ向けなので、ここは AutoComplete を直接使い
+// searchText に検索対象テキストを集約する。value は family.id (uuid 文字列)。
 const referenceOptions = computed(() =>
   referenceFamilies.value.map((f) => ({
-    value: String(f.id),
+    value: f.id,
     label: `${f.itemNumber} ${f.productName1}${f.productName2 ? ` / ${f.productName2}` : ''}`,
     // 品番・他品番・legacy_id・商品名 1/2 を検索テキストに集約 (部分一致で引けるように)。
     searchText: [f.itemNumber, f.itemFamilyNumber, f.legacyId ?? '', f.productName1, f.productName2 ?? '']
@@ -305,10 +306,11 @@ const referenceOptions = computed(() =>
 
 // コピー元一覧の読込はコピー機能専用の補助処理。失敗しても新規登録本体は使えるため
 // 致命的ではない (原則 4 非ブロッキング)。削除済みは除外 (includeDeleted=false) し、
-// 生きている商品のみコピー元にする。
+// 生きている商品のみコピー元にする。ピッカーは全量が必要なためカーソルを終端まで辿る
+// (listFamiliesAll、AKB-DOC-12 §7.1 ページング対応)。
 const loadReferenceSources = async () => {
   try {
-    referenceFamilies.value = await listFamilies(false)
+    referenceFamilies.value = await listFamiliesAll(false)
   } catch (e) {
     // コピー元候補の取得失敗はコピー機能が使えなくなるだけ。新規登録フローには影響しない。
     console.error('参照コピー元の商品一覧取得に失敗しました', e)
@@ -391,8 +393,7 @@ const onCopyFromReference = async () => {
       + ` / アソート ${setComponents.value.length} 行)。`
       + ' このまま編集して登録すると新しい品番が採番されます。'
   } catch (e) {
-    const err = e as { data?: { detail?: string }; statusMessage?: string }
-    errorMessage.value = err.data?.detail ?? err.statusMessage ?? 'コピー元の取得に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, 'コピー元の取得に失敗しました')
   } finally {
     copying.value = false
   }
@@ -413,9 +414,9 @@ onMounted(async () => {
       list('materials'),
       list('colors'),
       list('sizes'),
-      apiFetch<{ data: UserOption[] }>('/users'),
+      apiData<UserOption[]>('/users'),
       // 為替マスタ (§2f)。失敗しても本体は使える (円換算は「レート未登録」表示にフォールバック)。
-      apiFetch<{ data: ExchangeRateItem[] }>('/masters/exchange-rates').catch(() => ({ data: [] as ExchangeRateItem[] })),
+      apiData<ExchangeRateItem[]>('/masters/exchange-rates').catch(() => [] as ExchangeRateItem[]),
     ])
     productTypes.value = pt
     productSeasons.value = ps
@@ -426,8 +427,8 @@ onMounted(async () => {
     materials.value = mt
     colors.value = co
     sizes.value = sz
-    users.value = usrRes.data
-    exchangeRates.value = exrRes.data
+    users.value = usrRes
+    exchangeRates.value = exrRes
 
     // 初期値設定
     if (pt.length) form.value.productTypeId = pt[0].id
@@ -450,13 +451,13 @@ onMounted(async () => {
   }
 })
 
-const toggleColor = (id: number) => {
+const toggleColor = (id: string) => {
   const i = expansion.value.colorIds.indexOf(id)
   if (i >= 0) expansion.value.colorIds.splice(i, 1)
   else expansion.value.colorIds.push(id)
 }
 
-const toggleSize = (id: number) => {
+const toggleSize = (id: string) => {
   const i = expansion.value.sizeIds.indexOf(id)
   if (i >= 0) expansion.value.sizeIds.splice(i, 1)
   else expansion.value.sizeIds.push(id)
@@ -470,7 +471,7 @@ const skuCount = computed(() => expansion.value.colorIds.length * expansion.valu
 const priceRowIssue = computed<string | null>(() => {
   const seen = new Set<string>()
   for (const r of supplierPrices.value) {
-    if (r.supplierId <= 0 || Number(r.unitPrice) <= 0) continue
+    if (r.supplierId === '' || Number(r.unitPrice) <= 0) continue
     const key = `${r.supplierId}|${r.sizeId ?? 'all'}|${r.effectiveFrom}`
     if (seen.has(key)) {
       return '仕入単価に「仕入先 × サイズ × 有効開始日」が重複した行があります。サイズ・有効開始日・仕入先のいずれかを変えるか、重複行を削除してください。'
@@ -490,7 +491,7 @@ const canSubmit = computed(() =>
   expansion.value.sizeIds.length > 0 &&
   // 全ての仕入単価行が 仕入先選択済 かつ 単価 > 0 (§2d 複数行対応)
   supplierPrices.value.length > 0 &&
-  supplierPrices.value.every((r) => r.supplierId > 0 && Number(r.unitPrice) > 0) &&
+  supplierPrices.value.every((r) => r.supplierId !== '' && Number(r.unitPrice) > 0) &&
   // 重複行・外貨レート未登録が無いこと (review #2/#4)
   priceRowIssue.value == null &&
   // 登録成功後は再送不可 (二重採番防止、原則 2)
@@ -597,8 +598,7 @@ const onSubmit = async () => {
     }
     // failed > 0 のときは遷移せず、導線パネル (registeredFamilyId + pendingImages) で残り画像の再送を促す。
   } catch (e) {
-    const err = e as { data?: { detail?: string }; statusMessage?: string }
-    errorMessage.value = err.data?.detail ?? err.statusMessage ?? '登録に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '登録に失敗しました')
   } finally {
     submitting.value = false
   }
@@ -650,12 +650,12 @@ const onSubmit = async () => {
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">コピー元の商品</span>
               <AutoComplete
-                :model-value="referenceSourceId != null ? String(referenceSourceId) : ''"
+                :model-value="referenceSourceId ?? ''"
                 :options="referenceOptions"
                 allow-empty
                 empty-label="(未選択)"
                 placeholder="品番 / 商品名 / 旧品番で検索…"
-                @update:model-value="(v) => referenceSourceId = v === '' ? null : Number(v)"
+                @update:model-value="(v) => referenceSourceId = v === '' ? null : v"
               />
             </label>
             <button
@@ -683,15 +683,15 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品タイプ <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.productTypeId" :items="productTypes" placeholder="商品タイプを検索…" @update:model-value="(v) => form.productTypeId = v ?? 0" />
+              <MasterSelect :model-value="form.productTypeId" :items="productTypes" placeholder="商品タイプを検索…" @update:model-value="(v) => form.productTypeId = v ?? ''" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品季節 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.productSeasonId" :items="productSeasons" placeholder="商品季節を検索…" @update:model-value="(v) => form.productSeasonId = v ?? 0" />
+              <MasterSelect :model-value="form.productSeasonId" :items="productSeasons" placeholder="商品季節を検索…" @update:model-value="(v) => form.productSeasonId = v ?? ''" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">工場 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? 0" />
+              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
               <span class="text-xs text-gray-500">11 桁品番の 7 桁目 (工場コード)</span>
             </label>
           </div>
@@ -767,7 +767,7 @@ const onSubmit = async () => {
           <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">ブランド <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? 0" />
+              <MasterSelect :model-value="form.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? ''" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">機能</span>
@@ -775,21 +775,21 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品群 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => form.productGroupId = v ?? 0" />
+              <MasterSelect :model-value="form.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => form.productGroupId = v ?? ''" />
             </label>
           </div>
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">甲皮素材 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => form.upperMaterialId = v ?? 0" />
+              <MasterSelect :model-value="form.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => form.upperMaterialId = v ?? ''" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">中底素材 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.insoleMaterialId" :items="materials" placeholder="中底素材を検索…" @update:model-value="(v) => form.insoleMaterialId = v ?? 0" />
+              <MasterSelect :model-value="form.insoleMaterialId" :items="materials" placeholder="中底素材を検索…" @update:model-value="(v) => form.insoleMaterialId = v ?? ''" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">底素材 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? 0" />
+              <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? ''" />
             </label>
           </div>
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
@@ -937,7 +937,7 @@ const onSubmit = async () => {
               <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
                 <label class="flex flex-col gap-1">
                   <span class="text-sm font-medium">仕入先 <span class="text-red-500">*</span></span>
-                  <MasterSelect :model-value="row.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => row.supplierId = v ?? 0" />
+                  <MasterSelect :model-value="row.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => row.supplierId = v ?? ''" />
                 </label>
                 <!-- サイズ別仕入単価 (§2e)。未選択 = 全サイズ共通の既定単価、個別サイズ = そのサイズ専用単価。 -->
                 <label class="flex flex-col gap-1">

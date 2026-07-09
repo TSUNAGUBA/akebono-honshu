@@ -8,12 +8,42 @@ const loading = ref(true)
 const errorMessage = ref('')
 const includeCancelled = ref(false)
 const search = ref('')
+// キーセットページング (AKB-DOC-12 §7.1)。limit=200 で取得し、続きは「さらに読み込む」で辿る。
+const nextCursor = ref<string | null>(null)
+const loadingMore = ref(false)
+// リロード世代。reload 開始でインクリメントし、in-flight の応答が旧世代なら破棄する
+// (フィルタ切替 reload と「さらに読み込む」の競合で、混在リスト・旧条件カーソルが残るのを防ぐ)。
+const requestSeq = ref(0)
 
 const reload = async () => {
+  const seq = ++requestSeq.value
   loading.value = true; errorMessage.value = ''
-  try { items.value = await moList(includeCancelled.value) }
-  catch (e) { const err = e as { statusCode?: number }; errorMessage.value = err.statusCode === 401 ? 'セッションが切れました。再ログインしてください。' : '素材発注書一覧の取得に失敗しました' }
-  finally { loading.value = false }
+  try {
+    const page = await moList(includeCancelled.value)
+    if (seq !== requestSeq.value) return
+    items.value = page.items
+    nextCursor.value = page.page.hasMore ? page.page.nextCursor : null
+  }
+  // 旧世代 (reload で置き換え済み) の失敗は表示を汚染しない
+  catch (e) { if (seq !== requestSeq.value) return; const err = e as { statusCode?: number }; errorMessage.value = err.statusCode === 401 ? 'セッションが切れました。再ログインしてください。' : '素材発注書一覧の取得に失敗しました' }
+  // 新しい reload が in-flight の場合、旧世代がローディング表示を先に消さない
+  finally { if (seq === requestSeq.value) loading.value = false }
+}
+
+const loadMore = async () => {
+  if (!nextCursor.value || loadingMore.value) return
+  const seq = requestSeq.value
+  loadingMore.value = true
+  try {
+    const page = await moList(includeCancelled.value, nextCursor.value)
+    if (seq !== requestSeq.value) return
+    items.value = [...items.value, ...page.items]
+    nextCursor.value = page.page.hasMore ? page.page.nextCursor : null
+  }
+  // 旧世代 (reload で置き換え済み) の失敗は表示を汚染しない
+  catch (e) { if (seq !== requestSeq.value) return; const err = e as { statusCode?: number }; errorMessage.value = err.statusCode === 401 ? 'セッションが切れました。再ログインしてください。' : '素材発注書一覧の取得に失敗しました' }
+  // loadingMore は同時実行ガードのため無条件で解除する
+  finally { loadingMore.value = false }
 }
 watch(includeCancelled, reload)
 onMounted(reload)
@@ -24,7 +54,7 @@ const filtered = computed(() => {
   return items.value.filter(i => i.orderNo.toLowerCase().includes(q) || i.materialSupplierName.toLowerCase().includes(q))
 })
 const statusBadge = (s: number) => s === 9 ? { cls: 'bg-orange-100 text-orange-700' } : s === 1 ? { cls: 'bg-green-100 text-green-700' } : { cls: 'bg-yellow-100 text-yellow-700' }
-const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `出力済 (${new Date(i.firstExportedAt).toLocaleDateString('ja-JP')})`, cls: 'bg-blue-100 text-blue-700' } : { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
+const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `出力済 (${formatJstDate(i.firstExportedAt)})`, cls: 'bg-blue-100 text-blue-700' } : { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
 </script>
 
 <template>
@@ -47,7 +77,7 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
     </FilterPanel>
 
     <div class="mb-3 flex items-center gap-4">
-      <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件</span>
+      <span class="ml-auto text-xs text-gray-500">{{ filtered.length }} 件{{ nextCursor ? ' (続きあり)' : '' }}</span>
     </div>
 
     <div v-if="errorMessage" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ errorMessage }}</div>
@@ -80,6 +110,11 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
         </tbody>
       </table>
     </section>
-    <p class="mt-3 text-xs text-gray-400">API: GET /api/v1/material-orders</p>
+    <div v-if="nextCursor && !loading" class="mt-3 text-center">
+      <button type="button" :disabled="loadingMore" class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50" @click="loadMore">
+        {{ loadingMore ? '読み込み中…' : 'さらに読み込む' }}
+      </button>
+    </div>
+    <p class="mt-3 text-xs text-gray-400">API: GET /api/maker/v1/material-orders</p>
   </main>
 </template>

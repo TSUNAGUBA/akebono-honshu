@@ -3,14 +3,22 @@
  * 業務拡張モジュール（販売管理/出荷/在庫管理）の一覧表示。
  * constants/ops-data.ts の dataset 定義を表形式で表示する。
  * モバイルは横スクロール（原則8）。状態列はバッジ表示。
- * 表示元は DB の対応テーブル（07-ops-data.sql）と同内容のサンプル（API 連携は次段階）。
+ * 表示元は DB の対応テーブル（07-ops-data.sql、正規化再設計後）と同内容のサンプル（API 連携は次段階）。
+ * ステータス等のコード列 (英 snake_case) は、列定義の codeLabels 対応表を
+ * ラベル関数 opsCodeLabel() 経由で日本語ラベルに変換して表示する。
  */
-import { OPS_DATASETS } from '~/constants/ops-data'
+import { OPS_DATASETS, opsCodeLabel } from '~/constants/ops-data'
+import type { OpsColumn } from '~/constants/ops-data'
 
 const props = defineProps<{ dataset: string }>()
 
 const ds = computed(() => OPS_DATASETS[props.dataset])
 
+// セルの表示値。codeLabels を持つ列はコード → 日本語ラベルに変換 (それ以外はそのまま)。
+const cellText = (row: Record<string, string | number>, c: OpsColumn): string =>
+  c.codeLabels ? opsCodeLabel(c.codeLabels, String(row[c.key] ?? '')) : String(row[c.key] ?? '')
+
+// バッジ配色は変換後の日本語ラベルで判定する (従来の見た目を維持)。
 const badgeClass = (s: string): string => {
   if (['出荷済', '取込済', '送信済', '完了', '入金済', '消込済', '正常'].includes(s)) return 'bg-green-100 text-green-700'
   if (['エラー', '取消', '督促中'].includes(s)) return 'bg-red-100 text-red-700'
@@ -56,11 +64,11 @@ const badgeClass = (s: string): string => {
                 <span
                   v-if="c.key === 'status'"
                   class="rounded-full px-2 py-0.5 text-xs font-medium"
-                  :class="badgeClass(String(row[c.key]))"
+                  :class="badgeClass(cellText(row, c))"
                 >
-                  {{ row[c.key] }}
+                  {{ cellText(row, c) }}
                 </span>
-                <template v-else>{{ row[c.key] }}</template>
+                <template v-else>{{ cellText(row, c) }}</template>
               </td>
             </tr>
           </tbody>

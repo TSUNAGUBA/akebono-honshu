@@ -4,12 +4,12 @@ namespace Akebono.Application.Production;
 public interface IProductionInstructionExcelService
 {
     Task<(string FileName, byte[] Content)> ExportAsync(
-        long productionInstructionId, long actorUserId, CancellationToken ct = default);
+        Guid productionInstructionId, Guid actorUserId, CancellationToken ct = default);
 }
 
 /// <summary>素材発注書 Excel 出力 (MO-04)。Infrastructure 層で ClosedXML 実装。</summary>
 public interface IMaterialOrderExcelService
 {
     Task<(string FileName, byte[] Content)> ExportAsync(
-        long materialOrderId, long actorUserId, CancellationToken ct = default);
+        Guid materialOrderId, Guid actorUserId, CancellationToken ct = default);
 }

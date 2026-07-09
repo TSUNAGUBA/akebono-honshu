@@ -7,12 +7,18 @@ services:
       POSTGRES_USER: akebono_honshu
       POSTGRES_PASSWORD: localdev
       POSTGRES_DB: akebono_honshu
-      TZ: Asia/Tokyo
-      PGTZ: Asia/Tokyo
+      # プラットフォーム統合改修: timestamptz(UTC) 統一 (旧 Asia/Tokyo 設定を廃止)。
+      # 表示の JST 変換はアプリケーション層で行う。
+      TZ: UTC
+      PGTZ: UTC
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # init は初回 (空ボリューム) のみ実行される。プラットフォーム統合改修 (tenant_id/RLS 導入) は
+      # 破壊的変更のため、既存ボリュームは `docker compose down -v` で再作成すること (稼働前 MVP 限り)。
+      # バックエンドの接続ユーザは akebono_app (08-tenancy-rls.sql が作成。スーパーユーザは RLS を
+      # バイパスするため akebono_honshu で接続しないこと)。
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U akebono_honshu -d akebono_honshu"]

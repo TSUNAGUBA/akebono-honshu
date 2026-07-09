@@ -15,8 +15,12 @@ import {
 interface AkebonoUser {
   firebaseUid: string
   email: string | null
-  userId: number
+  // 第二段階契約: users.id は uuid 文字列 (JSON では文字列で受け渡し)
+  userId: string
   displayName: string
+  // マルチテナント (AKB-DOC-12)。/auth/sync 応答から取得し、useApi が X-Tenant-Id ヘッダーに使う。
+  tenantId: string
+  tenantCode: string
   // C-02 4 権限カテゴリ (Phase 5 §3.18)
   productLedgerPermission: number       // 0=なし, 1=更新可能, 2=参照のみ, 3=参照のみ制限
   purchaseOrderCreatePermission: number // 0=なし, 1=更新可能, 2=参照のみ
@@ -25,7 +29,7 @@ interface AkebonoUser {
 }
 
 interface SyncApiResponse {
-  userId: number
+  userId: string
   employeeNo: string
   displayName: string
   isActive: boolean
@@ -33,6 +37,9 @@ interface SyncApiResponse {
   purchaseOrderCreatePermission: number
   purchaseOrderInfoPermission: number
   processRecordPermission: number
+  // マルチテナント (AKB-DOC-12)
+  tenantId: string
+  tenantCode: string
 }
 
 // onAuthStateChanged の初回発火 (+ Backend 同期) 完了を表すゲート Promise。
@@ -60,18 +67,22 @@ export const useAuth = () => {
   const syncWithBackend = async (firebaseUser: FirebaseUser): Promise<void> => {
     const config = useRuntimeConfig()
     const idToken = await firebaseUser.getIdToken()
-    const res = await $fetch<SyncApiResponse>(
+    // 成功応答はエンベロープ { data, meta } (AKB-DOC-12)。$fetch 直叩きのためここで unwrap する。
+    const envelope = await $fetch<{ data: SyncApiResponse; meta: unknown }>(
       `${config.public.apiBase}/auth/sync`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${idToken}` },
       },
     )
+    const res = envelope.data
     auth.value = {
       firebaseUid: firebaseUser.uid,
       email: firebaseUser.email,
       userId: res.userId,
       displayName: res.displayName,
+      tenantId: res.tenantId,
+      tenantCode: res.tenantCode,
       productLedgerPermission: res.productLedgerPermission,
       purchaseOrderCreatePermission: res.purchaseOrderCreatePermission,
       purchaseOrderInfoPermission: res.purchaseOrderInfoPermission,

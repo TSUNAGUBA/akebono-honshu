@@ -4,13 +4,13 @@ namespace Akebono.Application.Products;
 // BOM 一覧 (GET /products/families/{id}/materials、B-01)
 // ─────────────────────────────────────────────────
 public record ProductMaterialItem(
-    long Id,
+    Guid Id,
     short MaterialRole,
-    long MaterialId,
+    Guid MaterialId,
     string MaterialName,
     decimal RequiredQtyPerUnit,
     string Unit,
-    long? RecommendedSupplierId,
+    Guid? RecommendedSupplierId,
     string? RecommendedSupplierName,
     decimal LossRate,
     string? Remark);
@@ -22,10 +22,10 @@ public record ReplaceBomRequest(List<BomLineInput> Materials);
 
 public record BomLineInput(
     short MaterialRole,
-    long MaterialId,
+    Guid MaterialId,
     decimal RequiredQtyPerUnit,
     string Unit,
-    long? RecommendedSupplierId,
+    Guid? RecommendedSupplierId,
     decimal LossRate,
     string? Remark);
 
@@ -34,17 +34,17 @@ public record BomLineInput(
 // 金額は含まない (純粋に数量のみ)
 // ─────────────────────────────────────────────────
 public record MaterialRequirements(
-    long FamilyId,
+    Guid FamilyId,
     int TotalQuantity,
     List<MaterialRequirementGroup> Groups);
 
 public record MaterialRequirementGroup(
-    long? RecommendedSupplierId,
+    Guid? RecommendedSupplierId,
     string? RecommendedSupplierName,
     List<MaterialRequirementLine> Lines);
 
 public record MaterialRequirementLine(
-    long MaterialId,
+    Guid MaterialId,
     string MaterialName,
     short MaterialRole,
     decimal RequiredQuantity,

@@ -1,5 +1,7 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Products;
 
 /// <summary>
@@ -10,17 +12,18 @@ namespace Akebono.Domain.Products;
 ///
 /// 機密度 中-高 (NFR §6.2): 監査ログには金額本体ではなくマスク値 ("***") のみ記録。
 /// </summary>
-public class ProductSupplierPrice
+public class ProductSupplierPrice : ITenantScoped
 {
-    public long Id { get; set; }
-    public long ProductFamilyId { get; set; }
-    public long SupplierId { get; set; }
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid ProductFamilyId { get; set; }
+    public Guid SupplierId { get; set; }
     /// <summary>
     /// サイズ別仕入単価 (PR2、設計判断Q4)。NULL = 全サイズ共通の既定単価 (従来挙動、既存行は NULL の
     /// まま下位互換)。非NULL = そのサイズ専用単価 (既定をオーバーライド)。現単価解決は
     /// 「サイズ専用の有効行があればそれを、無ければ NULL-size 既定行」のフォールバック (Application 層)。
     /// </summary>
-    public long? SizeId { get; set; }
+    public Guid? SizeId { get; set; }
     public decimal UnitPrice { get; set; }
     public string CurrencyCode { get; set; } = "JPY";
     public decimal? ExchangeRate { get; set; }
@@ -39,11 +42,11 @@ public class ProductSupplierPrice
     public DateOnly? EffectiveTo { get; set; }
     public DateOnly DecidedAt { get; set; }
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     public ProductFamily? ProductFamily { get; set; }
     public Supplier? Supplier { get; set; }

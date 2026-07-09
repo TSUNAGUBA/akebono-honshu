@@ -4,7 +4,8 @@ import { productStatusLabel } from '~/composables/useProducts'
 import type { MasterItem } from '~/composables/useMasters'
 
 const route = useRoute()
-const familyId = computed(() => Number(route.params.familyId))
+// 第二段階契約: family id は uuid 文字列。数値変換せず文字列のまま使う。
+const familyId = computed(() => String(route.params.familyId))
 const { user, canEditMaster } = useAuth()
 // 操作導線（次アクション）の権限: 生産指示・発注書の作成は発注書作成権限が必要。
 const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
@@ -13,7 +14,7 @@ const {
   addSupplierPrice, uploadImage, deleteImage,
 } = useProducts()
 const { list } = useMasters()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 
 const detail = ref<FamilyDetail | null>(null)
 const loading = ref(true)
@@ -23,19 +24,20 @@ const successMessage = ref('')
 // 編集用フォーム
 const editing = ref(false)
 const editForm = ref({
-  brandId: 0,
-  functionId: null as number | null,
-  productGroupId: 0,
-  upperMaterialId: 0,
-  insoleMaterialId: 0,
-  outsoleMaterialId: 0,
+  // ID 系は uuid 文字列 (第二段階契約)。未選択は '' で表す (reload で既存値がロードされる)。
+  brandId: '',
+  functionId: null as string | null,
+  productGroupId: '',
+  upperMaterialId: '',
+  insoleMaterialId: '',
+  outsoleMaterialId: '',
   productName1: '',
   productName2: '',
   status: 1,
   // 旧 品番台帳 項目 (Phase A、全て任意)
   productYear: null as number | null,
-  managementSeasonId: null as number | null,
-  plannerUserId: null as number | null,
+  managementSeasonId: null as string | null,
+  plannerUserId: null as string | null,
   provisionalNumber: '',
   sampleApprovalDate: '',
   retailPrice: null as number | null,
@@ -62,14 +64,15 @@ const removeSetComponent = (idx: number) => {
 // 単価追加フォーム
 const showPriceForm = ref(false)
 const priceForm = ref({
-  supplierId: 0,
+  supplierId: '',
   // サイズ別仕入単価 (PR2)。null = 全サイズ共通の既定単価 (未選択)。
-  sizeId: null as number | null,
+  sizeId: null as string | null,
   unitPrice: 0,
   currencyCode: 'JPY',
   exchangeRate: null as number | null,
-  effectiveFrom: new Date().toISOString().split('T')[0],
-  decidedAt: new Date().toISOString().split('T')[0],
+  // 業務日付は JST 基準 (effectiveFrom は BR-04 単価履歴のクローズ日に直結するためずれ厳禁)
+  effectiveFrom: todayJst(),
+  decidedAt: todayJst(),
   // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
   estimateUnitPrice: null as number | null,
   estimateReceivedDate: '',
@@ -92,7 +95,7 @@ const suppliers = ref<MasterItem[]>([])
 const sizes = ref<MasterItem[]>([])
 // 旧 品番台帳 項目 (Phase A): 管理季節・企画者の選択肢
 const productSeasons = ref<MasterItem[]>([])
-interface UserOption { id: number; loginId: string; displayName: string }
+interface UserOption { id: string; loginId: string; displayName: string }
 const users = ref<UserOption[]>([])
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
 const royaltyTargetOptions = [{ value: '1', label: '小売価格' }, { value: '2', label: '納品価格' }]
@@ -167,7 +170,7 @@ onMounted(async () => {
         list('materials'), list('suppliers'),
         list('sizes'),
         list('product-seasons'),
-        apiFetch<{ data: UserOption[] }>('/users'),
+        apiData<UserOption[]>('/users'),
       ])
       brands.value = br
       functions_.value = fn
@@ -176,7 +179,7 @@ onMounted(async () => {
       suppliers.value = sup
       sizes.value = sz
       productSeasons.value = ps
-      users.value = usrRes.data
+      users.value = usrRes
       if (sup.length) priceForm.value.supplierId = sup[0].id
     })(),
   ])
@@ -290,8 +293,7 @@ const onAddPrice = async () => {
     priceForm.value.taxRate = null
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '単価追加に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '単価追加に失敗しました')
   }
 }
 
@@ -307,8 +309,7 @@ const onFileSelect = async (event: Event) => {
     successMessage.value = '画像をアップロードしました'
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '画像アップロードに失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '画像アップロードに失敗しました')
   } finally {
     uploading.value = false
     if (target) target.value = ''
@@ -445,16 +446,16 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 
         <!-- 登録/更新 情報 (旧 spec No.27/28、PR1)。編集不可の表示のみ。 -->
         <div v-if="!editing" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-gray-100 pt-3 text-sm sm:grid-cols-4">
-          <div><span class="text-gray-500">登録日:</span> {{ new Date(detail.family.createdAt).toLocaleString('ja-JP') }}</div>
+          <div><span class="text-gray-500">登録日:</span> {{ formatJstDateTime(detail.family.createdAt) }}</div>
           <div><span class="text-gray-500">登録者:</span> {{ detail.family.createdByUserName ?? '—' }}</div>
-          <div><span class="text-gray-500">最終更新日:</span> {{ new Date(detail.family.updatedAt).toLocaleString('ja-JP') }}</div>
+          <div><span class="text-gray-500">最終更新日:</span> {{ formatJstDateTime(detail.family.updatedAt) }}</div>
           <div><span class="text-gray-500">最終更新者:</span> {{ detail.family.updatedByUserName ?? '—' }}</div>
         </div>
 
         <form v-else class="grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3" @submit.prevent="onSaveEdit">
           <label class="flex flex-col gap-1">
             <span class="font-medium">ブランド</span>
-            <MasterSelect :model-value="editForm.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => editForm.brandId = v ?? 0" />
+            <MasterSelect :model-value="editForm.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => editForm.brandId = v ?? ''" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">機能</span>
@@ -462,7 +463,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">商品群</span>
-            <MasterSelect :model-value="editForm.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => editForm.productGroupId = v ?? 0" />
+            <MasterSelect :model-value="editForm.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => editForm.productGroupId = v ?? ''" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">状態</span>
@@ -470,15 +471,15 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">甲皮素材</span>
-            <MasterSelect :model-value="editForm.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => editForm.upperMaterialId = v ?? 0" />
+            <MasterSelect :model-value="editForm.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => editForm.upperMaterialId = v ?? ''" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">中底素材</span>
-            <MasterSelect :model-value="editForm.insoleMaterialId" :items="materials" placeholder="中底素材を検索…" @update:model-value="(v) => editForm.insoleMaterialId = v ?? 0" />
+            <MasterSelect :model-value="editForm.insoleMaterialId" :items="materials" placeholder="中底素材を検索…" @update:model-value="(v) => editForm.insoleMaterialId = v ?? ''" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="font-medium">底素材</span>
-            <MasterSelect :model-value="editForm.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => editForm.outsoleMaterialId = v ?? 0" />
+            <MasterSelect :model-value="editForm.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => editForm.outsoleMaterialId = v ?? ''" />
           </label>
 
           <!-- 旧 品番台帳 項目 (Phase A、全て任意) -->
@@ -675,7 +676,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
         <form v-if="showPriceForm" class="mb-4 grid grid-cols-4 gap-3 rounded-md bg-gray-50 p-4 text-sm" @submit.prevent="onAddPrice">
           <label class="flex flex-col gap-1">
             <span class="font-medium">仕入先</span>
-            <MasterSelect :model-value="priceForm.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => priceForm.supplierId = v ?? 0" />
+            <MasterSelect :model-value="priceForm.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => priceForm.supplierId = v ?? ''" />
           </label>
           <!-- サイズ別仕入単価 (PR2)。未選択 = 全サイズ共通の既定単価、個別サイズ = そのサイズ専用単価。 -->
           <label class="flex flex-col gap-1">
@@ -877,7 +878,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <p class="mt-3 text-xs text-gray-400">
-        API: GET/PATCH/DELETE /api/v1/products/families/{{ familyId }} + 画像 + 単価
+        API: GET/PATCH/DELETE /api/maker/v1/products/families/{{ familyId }} + 画像 + 単価
       </p>
     </template>
   </main>

@@ -17,7 +17,7 @@
 | Let's Encrypt メール | `yamashita@tsunaguba.co.jp` |
 | RDS | `tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com` / DB `akebono_honshu` |
 | Frontend（Firebase Hosting） | `https://akebono-honshu-e388e.web.app`（project `akebono-honshu-e388e`） |
-| API ベース URL | `https://akebono-honshu-api.akebono.work/api/v1` |
+| API ベース URL | `https://akebono-honshu-api.akebono.work/api/maker/v1` |
 | GitHub リポジトリ | `tsunaguba/akebono-honshu` |
 
 > **AWS の設定（OIDC/IAM）は不要**です。EC2 は固定 IP のため `EC2_HOST` を直接使い、AWS 認証なしでデプロイします。
@@ -72,12 +72,17 @@ docker run --rm -it postgres:16-alpine psql \
   -U <MASTER_USER> -d postgres
 ```
 
-`Password:` と出たらマスターパスワードを入力。psql に入ったら、**2 か所のパスワードを決めて**以下を貼り付け（`__MIGRATOR_PW__` / `__APP_PW__` を強固なパスワードに置換）:
+`Password:` と出たらマスターパスワードを入力。psql に入ったら、**migrator のパスワードを決めて**以下を貼り付け（`__MIGRATOR_PW__` を強固なパスワードに置換。アプリ用 `akebono_app` のパスワードは後述の `APP_DB_PASSWORD` secret で管理する）:
+
+> **akebono_app (アプリ実行ユーザ) は手動作成不要** (プラットフォーム統合改修):
+> `db/init/08-tenancy-rls.sql` が init/reinit 時に冪等作成し、DML 権限 + RLS +
+> 記録系保護 (audit_logs は INSERT のみ等) まで自動配線する。パスワードは
+> repository secret `APP_DB_PASSWORD` から `run-migrations.sh` が `ALTER ROLE` で設定する。
+> (先に手動作成しても 08 は既存ロールを尊重するため二重作成にはならない。)
 
 ```sql
--- DDL 用（マイグレーション実行ユーザ）と DML 用（アプリ実行ユーザ）を分離
+-- DDL 用（マイグレーション実行ユーザ）のみ手動作成する
 CREATE ROLE akebono_migrator LOGIN PASSWORD '__MIGRATOR_PW__';
-CREATE ROLE akebono_app      LOGIN PASSWORD '__APP_PW__';
 
 -- 【RDS 必須】マスターは「真の superuser」ではないため、別ロール所有の DB を作るには
 -- 先にそのロールのメンバーになる必要がある。これが無いと CREATE/ALTER ... OWNER が
@@ -91,12 +96,8 @@ CREATE DATABASE akebono_honshu OWNER akebono_migrator;
 -- 対象 DB に切り替えて権限設定
 \connect akebono_honshu
 ALTER SCHEMA public OWNER TO akebono_migrator;
-GRANT USAGE ON SCHEMA public TO akebono_app;
--- migrator が今後作るテーブル/シーケンスに、app の DML を自動付与
-ALTER DEFAULT PRIVILEGES FOR ROLE akebono_migrator IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO akebono_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE akebono_migrator IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO akebono_app;
+-- akebono_app への GRANT / DEFAULT PRIVILEGES は db/init/08-tenancy-rls.sql が
+-- init/reinit 時に自動配線するため手動設定不要。
 
 -- 検証: 両方とも akebono_migrator であること（master のままなら GRANT が効いていない）
 SELECT 'DB owner=' || pg_catalog.pg_get_userbyid(datdba) FROM pg_database WHERE datname='akebono_honshu';
@@ -175,7 +176,8 @@ unset PGPASSWORD
 | `DB_NAME` | `akebono_honshu` |
 | `DB_ADMIN_USER` | `akebono_migrator` |
 | `DB_ADMIN_PASSWORD` | `<MIGRATOR_PW>`（手順 2 で決めた値） |
-| `NUXT_PUBLIC_API_BASE` | `https://akebono-honshu-api.akebono.work/api/v1` |
+| `APP_DB_PASSWORD` | `<APP_PW>`（アプリ用 `akebono_app` のパスワード。init/reinit 時に `run-migrations.sh` が ALTER ROLE で設定） |
+| `NUXT_PUBLIC_API_BASE` | `https://akebono-honshu-api.akebono.work/api/maker/v1` |
 | `NUXT_PUBLIC_FIREBASE_API_KEY` | （手順 4-3 の `apiKey`） |
 | `NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `akebono-honshu-e388e.firebaseapp.com` |
 | `NUXT_PUBLIC_FIREBASE_PROJECT_ID` | `akebono-honshu-e388e` |
@@ -184,7 +186,7 @@ unset PGPASSWORD
 | `NUXT_PUBLIC_FIREBASE_APP_ID` | （手順 4-3 の `appId`） |
 | `FIREBASE_SERVICE_ACCOUNT` | `C:\key\firebase-sa.json` の中身（全文） |
 
-> `<APP_PW>` は手順 2 のアプリ用パスワード。`PROXY_NETWORK` は既定 `tsunaguba-dev-001` のため登録不要。AWS 系（`AWS_ROLE_ARN` 等）も不要です。
+> `<APP_PW>` はアプリ用 `akebono_app` のパスワードとしてここで新しく決める値 (`APP_DB_PASSWORD` と `PROD_DB_CONNECTION` の Password に同じ値を使う)。`PROXY_NETWORK` は既定 `tsunaguba-dev-001` のため登録不要。AWS 系（`AWS_ROLE_ARN` 等）も不要です。
 
 ### 方法 A: gh CLI（PowerShell）
 
@@ -201,7 +203,7 @@ gh secret set CORS_ORIGINS                     --repo $repo --body "https://akeb
 gh secret set DB_HOST                          --repo $repo --body "tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com"
 gh secret set DB_NAME                          --repo $repo --body "akebono_honshu"
 gh secret set DB_ADMIN_USER                    --repo $repo --body "akebono_migrator"
-gh secret set NUXT_PUBLIC_API_BASE             --repo $repo --body "https://akebono-honshu-api.akebono.work/api/v1"
+gh secret set NUXT_PUBLIC_API_BASE             --repo $repo --body "https://akebono-honshu-api.akebono.work/api/maker/v1"
 gh secret set NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN --repo $repo --body "akebono-honshu-e388e.firebaseapp.com"
 gh secret set NUXT_PUBLIC_FIREBASE_PROJECT_ID  --repo $repo --body "akebono-honshu-e388e"
 
@@ -210,6 +212,7 @@ gh secret set NUXT_PUBLIC_FIREBASE_PROJECT_ID  --repo $repo --body "akebono-hons
 $migPw = Read-Host "akebono_migrator のパスワード"
 gh secret set DB_ADMIN_PASSWORD  --repo $repo --body $migPw
 $appPw = Read-Host "akebono_app のパスワード"
+gh secret set APP_DB_PASSWORD    --repo $repo --body $appPw
 gh secret set PROD_DB_CONNECTION --repo $repo --body "Host=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=$appPw;SSL Mode=Require;Trust Server Certificate=true"
 
 # Firebase Web config は公開情報のため --body で可
@@ -246,7 +249,7 @@ GitHub の **Actions** タブから手動実行します。
 
 ### 6-1. DB 初期化
 `Actions → DB Init / Migrate (RDS) → Run workflow` → `action` で **`init`** を選択 → Run。
-- 空 DB に `db/init/*.sql`（01..06、06 はリアルなデモ業務データ）を番号順に投入し、現行マイグレーションを baseline 記録します。
+- 空 DB に `db/init/*.sql`（01..09。06 はリアルなデモ業務データ、07 は業務拡張モジュール、08 はテナント分離 RLS + アプリロール akebono_app、09 は updated_at トリガ汎用配線）を番号順に投入し、現行マイグレーションを baseline 記録します。`APP_DB_PASSWORD` secret が未設定だとエラー終了します（手順 5 参照）。
 - 緑（成功）になったら次へ。
 
 ### 6-2. Backend デプロイ
@@ -268,14 +271,16 @@ read -rs -p "akebono_migrator のパスワード: " PGPASSWORD; export PGPASSWOR
 RDS=tsunaguba-dev-001.ct60hj9szuti.ap-northeast-1.rds.amazonaws.com
 
 # (1) owner に Firebase UID を紐付け
+# (users は RLS 適用除外テーブルのためテナントコンテキスト設定は不要)
 docker run --rm -e PGPASSWORD postgres:16-alpine psql -h "$RDS" \
   -U akebono_migrator -d akebono_honshu \
   -c "UPDATE users SET firebase_uid = '<FIREBASE_UID>', updated_at = NOW() WHERE login_id = 'owner';"
 
-# (2) 監査ログを追記専用に（改竄防止・必須。db/init/01-schema.sql の設計: audit_logs は INSERT 専用）
+# (2) 監査ログの追記専用化 (REVOKE UPDATE/DELETE) は db/init/08-tenancy-rls.sql が
+#     init/reinit 時に自動適用済み。以下は検証のみ (f/f が期待値):
 docker run --rm -e PGPASSWORD postgres:16-alpine psql -h "$RDS" \
   -U akebono_migrator -d akebono_honshu \
-  -c "REVOKE UPDATE, DELETE ON audit_logs FROM akebono_app;"
+  -c "SELECT has_table_privilege('akebono_app','audit_logs','UPDATE'), has_table_privilege('akebono_app','audit_logs','DELETE');"
 
 unset PGPASSWORD
 ```

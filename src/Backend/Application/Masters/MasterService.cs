@@ -13,12 +13,12 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
     where TEntity : MasterEntityBase, new()
 {
     public async Task<List<TEntity>> ListAsync(
-        long actorUserId,
+        Guid actorUserId,
         bool includeDeleted,
         CancellationToken ct = default)
     {
         var query = db.Set<TEntity>().AsQueryable();
-        if (!includeDeleted) query = query.Where(e => !e.DeleteFlag);
+        if (!includeDeleted) query = query.Where(e => e.DeletedAt == null);
 
         var items = await query.OrderBy(e => e.Code).ToListAsync(ct);
 
@@ -30,18 +30,18 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
         return items;
     }
 
-    public Task<TEntity?> GetAsync(long id, CancellationToken ct = default)
+    public Task<TEntity?> GetAsync(Guid id, CancellationToken ct = default)
         => db.Set<TEntity>().FirstOrDefaultAsync(e => e.Id == id, ct);
 
     /// <summary>新規作成。Code 重複は呼び出し側で事前チェック必須 (DB UNIQUE 制約違反でも検知可)。</summary>
-    public async Task<TEntity> CreateAsync(TEntity entity, long actorUserId, CancellationToken ct = default)
+    public async Task<TEntity> CreateAsync(TEntity entity, Guid actorUserId, CancellationToken ct = default)
     {
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         entity.CreatedAt = now;
         entity.UpdatedAt = now;
         entity.CreatedByUserId = actorUserId;
         entity.UpdatedByUserId = actorUserId;
-        entity.DeleteFlag = false;
+        entity.DeletedAt = null;
 
         db.Set<TEntity>().Add(entity);
         await db.SaveChangesAsync(ct);
@@ -57,16 +57,16 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
 
     /// <summary>更新 (mutator で拡張プロパティも書き換え可)。Id 不在は null 返却。</summary>
     public async Task<TEntity?> UpdateAsync(
-        long id,
+        Guid id,
         Action<TEntity> mutator,
-        long actorUserId,
+        Guid actorUserId,
         CancellationToken ct = default)
     {
         var entity = await db.Set<TEntity>().FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return null;
 
         mutator(entity);
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
 
         await db.SaveChangesAsync(ct);
@@ -80,14 +80,14 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
         return entity;
     }
 
-    /// <summary>論理削除 (delete_flag = true)。</summary>
-    public async Task<bool> SoftDeleteAsync(long id, long actorUserId, CancellationToken ct = default)
+    /// <summary>論理削除 (deleted_at SET)。</summary>
+    public async Task<bool> SoftDeleteAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.Set<TEntity>().FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return false;
 
-        entity.DeleteFlag = true;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.DeletedAt = SystemTime.UtcNow;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -101,13 +101,13 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
     }
 
     /// <summary>論理削除取消。</summary>
-    public async Task<bool> RestoreAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> RestoreAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.Set<TEntity>().FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return false;
 
-        entity.DeleteFlag = false;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.DeletedAt = null;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -119,6 +119,4 @@ public class MasterService<TEntity>(IAkebonoDbContext db, IAuditLogger audit)
         return true;
     }
 
-    public static MasterListItem ToListItem(TEntity e)
-        => new(e.Id, e.Code, e.Name, e.DeleteFlag, e.CreatedAt, e.UpdatedAt);
 }

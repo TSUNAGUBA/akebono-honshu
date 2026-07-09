@@ -14,6 +14,7 @@ public class ProductFamilyService(
     IAkebonoDbContext db,
     IAuditLogger audit,
     IImageStorageService imageStorage,
+    ITenantContext tenantContext,
     ILogger<ProductFamilyService> logger)
 {
     /// <summary>
@@ -31,52 +32,69 @@ public class ProductFamilyService(
     }
 
     /// <summary>
-    /// バルク登録 (POST /api/v1/products/families/complete)。
+    /// バルク登録 (POST /api/maker/v1/products/families/complete)。
     /// family + products (色×サイズ全組合せ) + supplier_prices を 1 トランザクション。
     /// </summary>
     public async Task<CompleteFamilyResponse> CreateCompleteAsync(
         CompleteFamilyRequest req,
-        long actorUserId,
+        Guid actorUserId,
+        string? idempotencyKey = null, string? idempotencyPayloadHash = null,
         CancellationToken ct = default)
     {
+        // Idempotency-Key (AKB-DOC-12 §8): 同一キー・同一ペイロードの再送は初回結果を再返却、
+        // 同一キー・異なるペイロードは 409 AKB-SYS-005。
+        if (idempotencyKey is not null)
+        {
+            var replayed = await FindByIdempotencyKeyAsync(idempotencyKey, idempotencyPayloadHash, ct);
+            if (replayed is not null) return replayed;
+        }
+
         // バリデーション (最小限)
         if (req.Expansion.ColorIds.Count == 0 || req.Expansion.SizeIds.Count == 0)
-            throw new ArgumentException("色とサイズを少なくとも 1 件ずつ指定してください (PROD-002)");
+            throw DomainException.Validation("色とサイズを少なくとも 1 件ずつ指定してください");
         // アソート/セット明細 (PR3)。null/空は許容 (通常商品)、行があれば各行を検証。
         ValidateSetComponents(req.SetComponents);
 
         // FK 参照先を一括取得 (Sku 組立に必要)
         var productType = await db.ProductTypes.FirstOrDefaultAsync(x => x.Id == req.Family.ProductTypeId, ct)
-            ?? throw new ArgumentException($"product_type_id={req.Family.ProductTypeId} 不在");
+            ?? throw DomainException.Validation($"product_type_id={req.Family.ProductTypeId} 不在");
         var season = await db.ProductSeasons.FirstOrDefaultAsync(x => x.Id == req.Family.ProductSeasonId, ct)
-            ?? throw new ArgumentException($"product_season_id={req.Family.ProductSeasonId} 不在");
+            ?? throw DomainException.Validation($"product_season_id={req.Family.ProductSeasonId} 不在");
         var factory = await db.Suppliers.FirstOrDefaultAsync(x => x.Id == req.Family.FactorySupplierId, ct)
-            ?? throw new ArgumentException($"factory_supplier_id={req.Family.FactorySupplierId} 不在");
+            ?? throw DomainException.Validation($"factory_supplier_id={req.Family.FactorySupplierId} 不在");
 
         var colors = await db.Colors.Where(c => req.Expansion.ColorIds.Contains(c.Id)).ToListAsync(ct);
         if (colors.Count != req.Expansion.ColorIds.Count)
-            throw new ArgumentException("指定された color_id の一部が見つかりません");
+            throw DomainException.Validation("指定された color_id の一部が見つかりません");
         var sizes = await db.Sizes.Where(s => req.Expansion.SizeIds.Contains(s.Id)).ToListAsync(ct);
         if (sizes.Count != req.Expansion.SizeIds.Count)
-            throw new ArgumentException("指定された size_id の一部が見つかりません");
-
-        // sequence_no 自動採番 (同一 planned_year + type + season + factory 内の最大 + 1)
-        var maxSeq = await db.ProductFamilies
-            .Where(pf => pf.PlannedYearCode == req.Family.PlannedYearCode
-                      && pf.ProductTypeId == req.Family.ProductTypeId
-                      && pf.ProductSeasonId == req.Family.ProductSeasonId
-                      && pf.FactorySupplierId == req.Family.FactorySupplierId)
-            .Select(pf => pf.SequenceNo)
-            .ToListAsync(ct);
-        var nextSeq = (maxSeq.Count == 0 ? 1 : maxSeq.Select(s => int.TryParse(s, out var n) ? n : 0).Max() + 1)
-            .ToString("D3");
+            throw DomainException.Validation("指定された size_id の一部が見つかりません");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var now = SystemTime.Now;
+            // sequence_no 自動採番 (同一 planned_year + type + season + factory 内の最大 + 1)。
+            // トランザクション内で tenant_id を含む advisory lock を取得して直列化する
+            // (AKB-DOC-05 採番フロー。同時作成での連番衝突を防ぎ、UNIQUE 制約が最終防壁)。
+            var seqLockKey = $"{tenantContext.RequireTenantId()}:FAM-{req.Family.PlannedYearCode}-" +
+                             $"{req.Family.ProductTypeId}-{req.Family.ProductSeasonId}-{req.Family.FactorySupplierId}";
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtext({seqLockKey})::bigint)", ct);
+            var maxSeq = await db.ProductFamilies
+                .Where(pf => pf.PlannedYearCode == req.Family.PlannedYearCode
+                          && pf.ProductTypeId == req.Family.ProductTypeId
+                          && pf.ProductSeasonId == req.Family.ProductSeasonId
+                          && pf.FactorySupplierId == req.Family.FactorySupplierId)
+                .Select(pf => pf.SequenceNo)
+                .ToListAsync(ct);
+            var nextSeq = (maxSeq.Count == 0 ? 1 : maxSeq.Select(s => int.TryParse(s, out var n) ? n : 0).Max() + 1)
+                .ToString("D3");
+
+            var now = SystemTime.UtcNow;
             var family = new ProductFamily
             {
+                IdempotencyKey = idempotencyKey,
+                IdempotencyPayloadHash = idempotencyPayloadHash,
                 PlannedYearCode = req.Family.PlannedYearCode,
                 ProductTypeId = req.Family.ProductTypeId,
                 ProductSeasonId = req.Family.ProductSeasonId,
@@ -187,7 +205,7 @@ public class ProductFamilyService(
                     p.SizeId,
                     sizes.First(s => s.Id == p.SizeId).Code,
                     sizes.First(s => s.Id == p.SizeId).Name,
-                    p.IsDeleted)).ToList(),
+                    p.DeletedAt != null)).ToList(),
                 prices.Select(p => new SupplierPriceSummary(p.Id, p.SupplierId, p.UnitPrice, p.EffectiveFrom, p.SizeId)).ToList());
         }
         catch
@@ -197,8 +215,14 @@ public class ProductFamilyService(
         }
     }
 
-    /// <summary>商品企画一覧 (P-04)。N+1 対策で Include + 集計を SQL レベルで実行。</summary>
-    public async Task<List<FamilyListItem>> ListAsync(long actorUserId, bool includeDeleted, CancellationToken ct = default)
+    /// <summary>
+    /// 商品企画一覧 (P-04)。N+1 対策で Include + 集計を SQL レベルで実行。
+    /// キーセットページング (AKB-DOC-12 §7.1): ソートは (created_at, id) 降順に統一。
+    /// 旧実装の updated_at 順は更新でページ間を行が移動しカーソルが不安定になるため、
+    /// 不変キーの created_at 順へ変更した (更新日順の並べ替えはフロント側で実施可能)。
+    /// </summary>
+    public async Task<PagedResult<FamilyListItem>> ListAsync(
+        Guid actorUserId, bool includeDeleted, PageRequest page, CancellationToken ct = default)
     {
         var query = db.ProductFamilies
             .Include(pf => pf.Brand)
@@ -208,19 +232,26 @@ public class ProductFamilyService(
             // 企画者名 (Phase A) を一覧フィルタ/表示用に解決。未設定 (PlannerUserId == null) の family は null のまま。
             .Include(pf => pf.Planner)
             .AsQueryable();
-        if (!includeDeleted) query = query.Where(pf => !pf.IsDeleted);
+        if (!includeDeleted) query = query.Where(pf => pf.DeletedAt == null);
+
+        // キーセット: 前ページ末尾 (created_at, id) より「後ろ」(降順) の行のみ。
+        // Guid.CompareTo は Npgsql EF が uuid 比較へ翻訳する (実機検証済)。
+        if (page.AfterCreatedAt is { } afterCreatedAt && page.AfterId is { } afterId)
+            query = query.Where(pf => pf.CreatedAt < afterCreatedAt
+                || (pf.CreatedAt == afterCreatedAt && pf.Id.CompareTo(afterId) < 0));
 
         var items = await query
-            .OrderByDescending(pf => pf.UpdatedAt)
+            .OrderByDescending(pf => pf.CreatedAt)
+            .ThenByDescending(pf => pf.Id)
             .Select(pf => new
             {
                 Family = pf,
-                SkuCount = pf.Products.Count(p => !p.IsDeleted),
-                ImageCount = pf.Images.Count(i => !i.IsDeleted),
+                SkuCount = pf.Products.Count(p => p.DeletedAt == null),
+                ImageCount = pf.Images.Count(i => i.DeletedAt == null),
                 // 画像利用シーンの代表画像 (§2a): 本番画像 (image_category=1) があればその order_no 最小、
                 // 無ければ企画画像 (image_category=0) の order_no 最小。区分降順→order_no 昇順の先頭で解決する。
                 PrimaryImageS3Key = pf.Images
-                    .Where(i => !i.IsDeleted)
+                    .Where(i => i.DeletedAt == null)
                     .OrderByDescending(i => i.ImageCategory)
                     .ThenBy(i => i.OrderNo)
                     .Select(i => i.S3Key)
@@ -228,9 +259,9 @@ public class ProductFamilyService(
                 // PR2: 現在有効な単価行の最小/最大。size 専用行 (size_id 非NULL) と全サイズ既定行
                 // (size_id NULL) の両方を含む = 商品の実際の価格レンジを表す。サイズ別単価が無い商品では
                 // 全サイズ既定のみが対象となり従来と同じ値 (下位互換)。
-                MinPrice = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null).Min(p => (decimal?)p.UnitPrice),
-                MaxPrice = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null).Max(p => (decimal?)p.UnitPrice),
-                Currency = pf.SupplierPrices.Where(p => !p.IsDeleted && p.EffectiveTo == null)
+                MinPrice = pf.SupplierPrices.Where(p => p.DeletedAt == null && p.EffectiveTo == null).Min(p => (decimal?)p.UnitPrice),
+                MaxPrice = pf.SupplierPrices.Where(p => p.DeletedAt == null && p.EffectiveTo == null).Max(p => (decimal?)p.UnitPrice),
+                Currency = pf.SupplierPrices.Where(p => p.DeletedAt == null && p.EffectiveTo == null)
                                             .Select(p => p.CurrencyCode).FirstOrDefault() ?? "JPY",
                 // 旧 11 桁 SKU (例: FA2071F4010) の前 7 桁 = 旧品番 7 桁。
                 // MIG-3 で factory_supplier がフォールバック解決された family でも、
@@ -239,7 +270,13 @@ public class ProductFamilyService(
                     .Where(p => p.LegacyId != null)
                     .Select(p => p.LegacyId)
                     .FirstOrDefault(),
-            }).ToListAsync(ct);
+            })
+            .Take(page.Limit + 1)
+            .ToListAsync(ct);
+
+        // limit+1 件目が取れたら次ページあり。返却は limit 件に切り詰める。
+        var hasMore = items.Count > page.Limit;
+        if (hasMore) items.RemoveAt(page.Limit);
 
         await audit.LogAsync(actorUserId, "ProductFamily.List",
             entityType: "ProductFamily", note: $"count={items.Count}", cancellationToken: ct);
@@ -285,7 +322,53 @@ public class ProductFamilyService(
                 x.Family.PlannerUserId,
                 x.Family.Planner?.DisplayName));
         }
-        return result;
+
+        var last = items.Count > 0 ? items[^1].Family : null;
+        return new PagedResult<FamilyListItem>(
+            result, hasMore, hasMore ? last?.CreatedAt : null, hasMore ? last?.Id : null);
+    }
+
+    /// <summary>
+    /// Idempotency-Key による既存行の引当 (AKB-DOC-12 §8)。
+    /// 同一キー・同一ペイロード → 初回作成時と同形の応答 (family/products/prices) を再構築して返す。
+    /// 同一キー・異なるペイロード → 409 AKB-SYS-005。
+    /// 同時二重送信は UNIQUE(tenant_id, idempotency_key) が最終防壁 (23505 → AKB-SYS-007)。
+    /// </summary>
+    private async Task<CompleteFamilyResponse?> FindByIdempotencyKeyAsync(
+        string idempotencyKey, string? payloadHash, CancellationToken ct)
+    {
+        var existing = await db.ProductFamilies
+            .FirstOrDefaultAsync(f => f.IdempotencyKey == idempotencyKey, ct);
+        if (existing is null) return null;
+        if (existing.IdempotencyPayloadHash != payloadHash)
+            throw new DomainException(AkbErrorCodes.SysIdempotencyKeyConflict, 409,
+                "同一の Idempotency-Key が異なる内容のリクエストで再利用されました",
+                userAction: "新しい Idempotency-Key を生成して再実行してください");
+
+        // 初回応答と同形にする: 初回の prices は新規作成行のみ (全行 有効・EffectiveTo == null)。
+        // リプレイまでに単価改定 (旧行 close) や論理削除が挟まっても履歴行を混ぜないよう
+        // 現行有効行に絞り、順序も安定ソートで確定させる (初回はループ順のため完全一致は
+        // 保証しないが、集合として同一 + 決定的順序を保証する)。
+        var products = await db.Products
+            .Include(p => p.Color)
+            .Include(p => p.Size)
+            .Where(p => p.ProductFamilyId == existing.Id)
+            .OrderBy(p => p.Sku)
+            .ToListAsync(ct);
+        var prices = await db.ProductSupplierPrices
+            .Where(p => p.ProductFamilyId == existing.Id && p.DeletedAt == null && p.EffectiveTo == null)
+            .OrderBy(p => p.SupplierId).ThenBy(p => p.SizeId).ThenBy(p => p.EffectiveFrom)
+            .ToListAsync(ct);
+
+        return new CompleteFamilyResponse(
+            new FamilySummary(existing.Id, existing.SequenceNo, existing.PlannedYearCode),
+            products.Select(p => new SkuSummary(
+                p.Id, p.Sku, p.ColorId,
+                p.Color?.Code ?? "?", p.Color?.Name ?? "?",
+                p.SizeId,
+                p.Size?.Code ?? "?", p.Size?.Name ?? "?",
+                p.DeletedAt != null)).ToList(),
+            prices.Select(p => new SupplierPriceSummary(p.Id, p.SupplierId, p.UnitPrice, p.EffectiveFrom, p.SizeId)).ToList());
     }
 
     /// <summary>
@@ -299,11 +382,11 @@ public class ProductFamilyService(
         foreach (var c in components)
         {
             if (string.IsNullOrWhiteSpace(c.ChildItemNumber))
-                throw new ArgumentException("アソート/セット明細の子品番は必須です (SETC-001)");
+                throw DomainException.Validation("アソート/セット明細の子品番は必須です");
             if (c.ChildItemNumber.Trim().Length > 32)
-                throw new ArgumentException("アソート/セット明細の子品番は 32 文字以内です (SETC-001)");
+                throw DomainException.Validation("アソート/セット明細の子品番は 32 文字以内です");
             if (c.Quantity <= 0)
-                throw new ArgumentException("アソート/セット明細の数量は正の整数で指定してください (SETC-002)");
+                throw DomainException.Validation("アソート/セット明細の数量は正の整数で指定してください");
         }
     }
 
@@ -313,7 +396,7 @@ public class ProductFamilyService(
     /// 呼び出し前に <see cref="ValidateSetComponents"/> で検証済であることを前提とする。
     /// </summary>
     private static List<ProductSetComponent> BuildSetComponentEntities(
-        long familyId, List<SetComponentInput>? components, DateTime now, long actorUserId)
+        Guid familyId, List<SetComponentInput>? components, DateTime now, Guid actorUserId)
     {
         if (components is null || components.Count == 0) return new List<ProductSetComponent>();
         var result = new List<ProductSetComponent>(components.Count);
@@ -372,7 +455,7 @@ public class ProductFamilyService(
     }
 
     /// <summary>商品企画詳細 (P-05)。1 リクエストで family + products + images + 現在有効単価を返却。</summary>
-    public async Task<FamilyDetail?> GetDetailAsync(long familyId, long actorUserId, CancellationToken ct = default)
+    public async Task<FamilyDetail?> GetDetailAsync(Guid familyId, Guid actorUserId, CancellationToken ct = default)
     {
         var family = await db.ProductFamilies
             .Include(pf => pf.ProductType)
@@ -399,7 +482,7 @@ public class ProductFamilyService(
 
         // §2a: 区分 (企画→本番) ごとに order_no 昇順で返す。フロントは image_category でグルーピング表示する。
         var images = await db.ProductImages
-            .Where(i => i.ProductFamilyId == familyId && !i.IsDeleted)
+            .Where(i => i.ProductFamilyId == familyId && i.DeletedAt == null)
             .OrderBy(i => i.ImageCategory)
             .ThenBy(i => i.OrderNo)
             .ToListAsync(ct);
@@ -407,7 +490,7 @@ public class ProductFamilyService(
         var currentPrices = await db.ProductSupplierPrices
             .Include(p => p.Supplier)
             .Include(p => p.Size)  // PR2: サイズ別単価の表示名解決 (NULL-size 既定行では null)
-            .Where(p => p.ProductFamilyId == familyId && !p.IsDeleted && p.EffectiveTo == null)
+            .Where(p => p.ProductFamilyId == familyId && p.DeletedAt == null && p.EffectiveTo == null)
             .ToListAsync(ct);
 
         // アソート/セット明細 (PR3、旧 spec No.37/38)。line_no 昇順 (表示順)。明細なしの商品では空リスト。
@@ -419,7 +502,7 @@ public class ProductFamilyService(
 
         // 登録者/最終更新者名 (PR1、spec No.27/28)。created_by_user_id / updated_by_user_id は
         // scalar FK (ナビ無し) のため、users を 1 クエリで引いて display_name を解決する。
-        // 削除済ユーザでも表示は維持したいので IsDeleted で絞らない (監査表示の性質)。
+        // 削除済ユーザでも表示は維持したいので DeletedAt で絞らない (監査表示の性質)。
         var actorIds = new[] { family.CreatedByUserId, family.UpdatedByUserId };
         var userNames = await db.Users
             .Where(u => actorIds.Contains(u.Id))
@@ -459,7 +542,7 @@ public class ProductFamilyService(
                 family.InsoleMaterialId, family.InsoleMaterial?.Name ?? "?",
                 family.OutsoleMaterialId, family.OutsoleMaterial?.Name ?? "?",
                 family.ProductName1, family.ProductName2,
-                family.Status, family.IsDeleted,
+                family.Status, family.DeletedAt != null,
                 family.CreatedAt, family.UpdatedAt,
                 // 旧 品番台帳 項目 (Phase A)。管理季節名・企画者名は Include 済ナビから解決 (未設定時 null)。
                 family.ProductYear,
@@ -475,7 +558,7 @@ public class ProductFamilyService(
                 createdByUserName, updatedByUserName),
             products.Select(p => new SkuSummary(
                 p.Id, p.Sku, p.ColorId, p.Color?.Code ?? "?", p.Color?.Name ?? "?",
-                p.SizeId, p.Size?.Code ?? "?", p.Size?.Name ?? "?", p.IsDeleted)).ToList(),
+                p.SizeId, p.Size?.Code ?? "?", p.Size?.Name ?? "?", p.DeletedAt != null)).ToList(),
             imageSummaries,
             currentPrices.Select(p => new CurrentSupplierPrice(
                 p.Id, p.SupplierId, p.Supplier?.Code ?? "?", p.Supplier?.Name ?? "?",
@@ -499,7 +582,7 @@ public class ProductFamilyService(
     ///     (BOM ReplaceAsync と同パターン)。空リストは「明細なし (通常商品)」として全削除のみ。
     /// 明細を変更する場合は family 更新と同一トランザクションで delete→insert する。
     /// </summary>
-    public async Task<ProductFamily?> UpdateAsync(long familyId, UpdateFamilyRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<ProductFamily?> UpdateAsync(Guid familyId, UpdateFamilyRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == familyId, ct);
         if (family is null) return null;
@@ -508,7 +591,7 @@ public class ProductFamilyService(
         if (req.SetComponents is not null)
             ValidateSetComponents(req.SetComponents);
 
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -575,20 +658,21 @@ public class ProductFamilyService(
     }
 
     /// <summary>商品企画論理削除 (P-05)。配下 SKU も連動で論理削除。</summary>
-    public async Task<bool> SoftDeleteAsync(long familyId, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> SoftDeleteAsync(Guid familyId, Guid actorUserId, CancellationToken ct = default)
     {
         var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == familyId, ct);
         if (family is null) return false;
 
-        family.IsDeleted = true;
-        family.UpdatedAt = SystemTime.Now;
+        var now = SystemTime.UtcNow;
+        family.DeletedAt = now;
+        family.UpdatedAt = now;
         family.UpdatedByUserId = actorUserId;
 
-        var skus = await db.Products.Where(p => p.ProductFamilyId == familyId && !p.IsDeleted).ToListAsync(ct);
+        var skus = await db.Products.Where(p => p.ProductFamilyId == familyId && p.DeletedAt == null).ToListAsync(ct);
         foreach (var sku in skus)
         {
-            sku.IsDeleted = true;
-            sku.UpdatedAt = SystemTime.Now;
+            sku.DeletedAt = now;
+            sku.UpdatedAt = now;
             sku.UpdatedByUserId = actorUserId;
         }
 

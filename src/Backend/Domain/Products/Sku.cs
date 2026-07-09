@@ -12,7 +12,7 @@ namespace Akebono.Domain.Products;
 ///   [8-9] colors.item_conversion_code     2 桁
 ///   [10-11] sizes.item_conversion_code 末尾 2 桁 (例: "110M" → "10", "AS" → "AS")
 ///
-/// Application 層は本 record の Build() で組み立て、UNIQUE 制約 (products.sku)
+/// Application 層は本 record の Build() で組み立て、UNIQUE 制約 (products の (tenant_id, sku))
 /// で 2 重生成を防ぐ (CLAUDE.md 原則 2 冪等性)。
 /// </summary>
 public readonly record struct Sku(string Value)

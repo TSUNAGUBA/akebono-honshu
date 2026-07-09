@@ -97,7 +97,7 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
             {{ initial ? `${def.label} を編集` : `${def.label} を新規追加` }}
           </h2>
           <p v-if="initial" class="mt-0.5 text-xs text-gray-500">
-            ID: {{ initial.id }} / 更新: {{ new Date(initial.updatedAt).toLocaleString('ja-JP') }}
+            ID: {{ initial.id }} / 更新: {{ formatJstDateTime(initial.updatedAt) }}
           </p>
         </header>
 
@@ -150,9 +150,9 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
 
             <MasterSelect
               v-else-if="f.type === 'select-master'"
-              :model-value="(form[f.key] as number | null)"
+              :model-value="(form[f.key] as string | null)"
               :items="referenceItemsFor(f.master ?? '')"
-              @update:model-value="(v) => form[f.key] = v ?? 0"
+              @update:model-value="(v) => form[f.key] = v ?? null"
             />
 
             <!-- 参照先マスタの code (文字列) を選ぶドロップダウン (通貨等)。id ではなく code を保存する。 -->

@@ -1,3 +1,5 @@
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Entities;
 
 /// <summary>
@@ -6,9 +8,10 @@ namespace Akebono.Domain.Entities;
 /// 商品⑤仕入単価で円換算価格を表示する。code/name を持たないため MasterEntityBase は継承せず
 /// 独自の監査列を持つ (bespoke master、M-04 仕入先と同様の個別対応)。
 /// </summary>
-public class ExchangeRate
+public class ExchangeRate : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
 
     /// <summary>対象年月 (YYYY-MM 形式、例: "2026-07")</summary>
     public string YearMonth { get; set; } = string.Empty;
@@ -19,10 +22,10 @@ public class ExchangeRate
     /// <summary>対円レート (1 通貨単位 = Rate 円)。例: USD=150.00, CNY=21.50</summary>
     public decimal Rate { get; set; }
 
-    public bool DeleteFlag { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 }

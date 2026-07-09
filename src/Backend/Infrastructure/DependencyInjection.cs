@@ -12,6 +12,7 @@ using Akebono.Infrastructure.Excel;
 using Akebono.Infrastructure.Audit;
 using Akebono.Infrastructure.Persistence;
 using Akebono.Infrastructure.Storage;
+using Akebono.Infrastructure.Tenancy;
 using Amazon.Extensions.NETCore.Setup;
 using Amazon.S3;
 using Microsoft.EntityFrameworkCore;
@@ -28,10 +29,21 @@ public static class DependencyInjection
         var connection = config.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres 未設定");
 
-        services.AddDbContext<AkebonoDbContext>(opt => opt.UseNpgsql(connection));
+        // テナントコンテキスト (リクエストスコープ)。TenantResolutionMiddleware が
+        // 認証クレームから確定し、DbContext のクエリフィルタ / RLS GUC / TenantId スタンプに伝搬する。
+        services.AddScoped<ITenantContext, TenantContext>();
+        services.AddScoped<TenantSessionInterceptor>();
+
+        services.AddDbContext<AkebonoDbContext>((sp, opt) => opt
+            .UseNpgsql(connection)
+            // 接続オープンごとに SET set_config('app.tenant_id', ...) を発行し RLS へ伝搬
+            .AddInterceptors(sp.GetRequiredService<TenantSessionInterceptor>()));
         services.AddScoped<IAkebonoDbContext>(sp => sp.GetRequiredService<AkebonoDbContext>());
 
         services.AddScoped<IAuditLogger, AuditLogger>();
+        // audit_logs 月次パーティションの先行作成 (起動時 + 24h ごと、失敗は warning のみで継続。
+        // DEFAULT パーティションが安全網 — AuditPartitionMaintenanceService 参照)。
+        services.AddHostedService<AuditPartitionMaintenanceService>();
         services.AddScoped<AuthService>();
         services.AddScoped<UserQueryService>();
 

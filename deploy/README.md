@@ -71,9 +71,17 @@ flowchart LR
 
 - RDS のセキュリティグループに **EC2 の SG からの 5432 接続** を許可。
 - RDS に DB `akebono_honshu` を作成 (db/init スクリプトは DB 名 `akebono_honshu` を前提)。
-- 2 種のユーザを作成 (最小権限):
-  - **アプリ用** (`PROD_DB_CONNECTION` で使用): DML 権限のみ。`audit_logs` は INSERT のみ等。
-  - **マイグレーション用** (`DB_ADMIN_*` で使用): DDL 権限あり (CREATE/ALTER TABLE)。
+- 2 種のユーザ (最小権限):
+  - **アプリ用 `akebono_app`** (`PROD_DB_CONNECTION` で使用): **手動作成は不要**。
+    `db/init/08-tenancy-rls.sql` が init/reinit 時に冪等作成し、DML 権限 + RLS
+    (`audit_logs` は INSERT のみ、`tenant` は SELECT のみ) を配線する。
+    パスワードは repository secret `APP_DB_PASSWORD` から `run-migrations.sh` が
+    `ALTER ROLE` で設定する (未設定だとローカル既定値のままになるため本番では必須)。
+    NOSUPERUSER / NOBYPASSRLS であること (RLS によるテナント分離の前提)。
+  - **マイグレーション用** (`DB_ADMIN_*` で使用): DDL 権限あり (CREATE/ALTER TABLE、ロール作成)。
+- **プラットフォーム統合改修 (tenant_id/RLS/TIMESTAMPTZ) の適用**は破壊的変更のため、
+  稼働前環境では「DB Init / Migrate (RDS)」を `action=reinit` (+`CONFIRM_REINIT=yes`) で実行して
+  再初期化する (`deploy/db/run-migrations.sh` 参照)。
 
 ### 1.3 AWS OIDC (GitHub Actions → AWS) — **任意 (固定 IP なら不要)**
 
@@ -177,7 +185,7 @@ flowchart LR
 | `AWS_ROLE_ARN` *(任意)* | backend, db | `arn:aws:iam::123…:role/akebono-gha` | OIDC ロール。未設定なら AWS 認証スキップ |
 | `AWS_REGION` *(任意)* | backend, db | `ap-northeast-1` | OIDC 使用時のみ |
 | `EC2_INSTANCE_ID` *(任意)* | backend, db | `i-0abc…` | 動的 IP を OIDC で解決する場合のみ |
-| `PROD_DB_CONNECTION` | backend | `Host=…;Port=5432;Database=akebono_honshu;Username=…;Password=…` | アプリ用 Npgsql 接続文字列 |
+| `PROD_DB_CONNECTION` | backend | `Host=…;Port=5432;Database=akebono_honshu;Username=akebono_app;Password=…` | アプリ用 Npgsql 接続文字列 (**Username は akebono_app**。RLS 適用の一般ロール) |
 | `FIREBASE_PROJECT_ID` | backend, frontend | `akebono-honshu-prod` | Backend の Audience / Firebase deploy 先 |
 | `CORS_ORIGINS` | backend | `https://akebono-honshu-prod.web.app` | 許可オリジン (カンマ区切り) |
 | `IMAGE_STORAGE_PROVIDER` *(任意)* | backend | `Local` / `S3` | 既定 `Local` |
@@ -187,7 +195,8 @@ flowchart LR
 | `DB_NAME` | db | `akebono_honshu` | DB 名 |
 | `DB_ADMIN_USER` | db | `akebono_migrator` | DDL 権限ユーザ |
 | `DB_ADMIN_PASSWORD` | db | (パスワード) | DDL 権限ユーザのパスワード |
-| `NUXT_PUBLIC_API_BASE` | frontend | `https://api.example.jp/api/v1` | Backend API URL |
+| `APP_DB_PASSWORD` | db | (パスワード) | アプリ用ロール `akebono_app` のパスワード (**init/reinit では必須**。`run-migrations.sh` が ALTER ROLE で設定。`PROD_DB_CONNECTION` の Password と一致させる) |
+| `NUXT_PUBLIC_API_BASE` | frontend | `https://api.example.jp/api/maker/v1` | Backend API URL (プラットフォーム統合でパスが `/api/maker/v1` に変更) |
 | `NUXT_PUBLIC_FIREBASE_API_KEY` | frontend | `AIza…` | Firebase Web config (公開情報) |
 | `NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | frontend | `akebono-honshu-prod.firebaseapp.com` | 〃 |
 | `NUXT_PUBLIC_FIREBASE_PROJECT_ID` | frontend | `akebono-honshu-prod` | 〃 |
@@ -209,12 +218,18 @@ flowchart LR
 
 ### 3.2 DB 初期化 / マイグレーション (手動)
 1. **初回のみ:** Actions → *DB Init / Migrate (RDS)* → Run workflow → `action = init`。
-   - 空 DB に `db/init/*.sql` (01..07。06=リアルなデモ業務データ、07=業務拡張モジュール(販売管理/出荷/在庫管理)のテーブル+サンプル) を番号順に投入し、現行マイグレーションを baseline 記録する。
+   - 空 DB に `db/init/*.sql` (01..09。06=リアルなデモ業務データ、07=業務拡張モジュール(販売管理/出荷/在庫管理)のテーブル+サンプル、08=テナント分離 RLS + アプリロール akebono_app、09=updated_at トリガ汎用配線) を番号順に投入し、現行マイグレーションを baseline 記録する。
    - 既に `public.users` がある DB では **安全のため中止**する (データ保護)。
+   - `APP_DB_PASSWORD` secret は **必須** (未設定はエラー終了)。akebono_app のパスワードとして ALTER ROLE で自動反映される。
 2. **以後のスキーマ変更:** `db/migration/` に `mig-3-*` 以外の `*.sql` を追加 → `action = migrate`。
    - 台帳 (`schema_migrations`) に無いものだけを順に適用する (再実行で二重適用しない)。
    - **既存(稼働中)DB へデモ業務データ・業務拡張モジュールを反映**する場合も本 migrate を使う。`init` は既存 DB で中止されるため、`db/init/06-demo-data.sql` / `07-ops-data.sql` の内容は `iter6-demo-data.sql` / `iter7-ops-data.sql`（各 `\ir` で 06/07 を取り込む。冪等）が migrate 時に適用する。
-3. **MIG-3 (既存 CSV データ取込)** は本ワークフロー対象外。UI `/admin/legacy-import` から実施する
+   - **RLS 注意 (プラットフォーム統合後):** テナントスコープ表のデータを操作する migration は
+     冒頭で `SET app.tenant_id = '<uuid>';` を行うこと (`db/migration/README.md`)。
+3. **破壊的スキーマ再編 (稼働前環境専用):** `action = reinit` + `confirm_reinit = true`。
+   public スキーマを DROP CASCADE して init と同手順で再構築する。プラットフォーム統合改修
+   (tenant_id/RLS/TIMESTAMPTZ) の適用はこれを使う。**保護すべきデータがある DB では実行しない**。
+4. **MIG-3 (既存 CSV データ取込)** は本ワークフロー対象外。UI `/admin/legacy-import` から実施する
    (`db/migration/README.md`)。
 
 ### 3.3 デプロイ順序 (初回)

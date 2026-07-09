@@ -9,7 +9,55 @@
 
 ---
 
+## 0-P. プラットフォーム統合改修 (2026-07-09) による変更点
+
+> **SoT:** 改修の全体像・設計判断は [docs/platform-integration/README.md](./docs/platform-integration/README.md)。
+> 本節はローカル開発者向けの差分手順のみ。
+
+| 項目 | 旧 | 新 (プラットフォーム統合) |
+|---|---|---|
+| API ベースパス | `/api/v1` | **`/api/maker/v1`** (あけぼの SCM プラットフォーム AKB-DOC-12) |
+| レスポンス封筒 | 一覧のみ `{data}` / 単一は素の JSON / エラー RFC7807 | 成功 `{data, meta}` / エラー `{error: {code, message, userAction?, traceId, details[]}}` |
+| エラーコード | `AUTH-001` 等をメッセージ末尾に埋め込み | `AKB-<AREA>-<NNN>` を `error.code` で返す |
+| DB スキーマ | 単一テナント (tenant_id なし)・TIMESTAMP (JST naive) | **tenant_id uuid + RLS**・**TIMESTAMPTZ (UTC)** |
+| Backend DB 接続ユーザ | `akebono_honshu` (docker スーパーユーザ) | **`akebono_app`** (RLS 適用の一般ロール。08-tenancy-rls.sql が作成) |
+| 現在時刻 | `SystemTime.Now` (JST naive) | 格納 `SystemTime.UtcNow` / 表示・採番年度 `SystemTime.JstNow` |
+| 作成系 API | – | `Idempotency-Key` ヘッダ必須 (orders / production-instructions / material-orders / products/families/complete の POST。第二段階で families を追加) |
+| テナントヘッダ | – | 業務 API は `X-Tenant-Id` **必須** (欠如 400 AKB-SYS-003。第二段階で必須化、`/auth/*` は適用除外)。Frontend が自動付与 (auth/sync の応答 `tenantId` を使用) |
+| 一覧 API | 全件返却 | **カーソルページング** (第二段階)。`?limit=` 既定 50・上限 200、`meta.page = {nextCursor, limit, hasMore}`。curl 疎通時は `nextCursor` を辿る |
+| PK / 論理削除 | BIGSERIAL / delete_flag・is_deleted | **uuid PK / deleted_at** (第二段階。エンティティ ID は API/FE で uuid 文字列) |
+
+**既存ローカル環境の追従手順 (破壊的変更・データ再作成):**
+
+1. `git pull` でブランチ最新化
+2. **DB 再作成** (tenant_id/RLS/TIMESTAMPTZ は既存ボリュームへ追従適用しない。稼働前 MVP のため再作成):
+   ```bash
+   docker compose down -v   # akebono-postgres-data ボリューム破棄
+   docker compose up -d     # db/init 01〜09 が番号順に自動適用される
+   ```
+3. **Firebase UID 再紐付け** (§0 手順 4 と同じ):
+   ```sql
+   UPDATE users SET firebase_uid = '<UID>' WHERE login_id = 'owner';
+   ```
+4. **Backend:** 接続文字列は `appsettings.Development.json` が `Username=akebono_app;Password=localdev` に更新済。`dotnet run --project Presentation` で起動
+5. **Frontend:** `.env` の `NUXT_PUBLIC_API_BASE` を `http://localhost:5000/api/maker/v1` へ更新 (`.env.example` 参照) → `pnpm dev`
+6. **RLS 検証 (推奨):**
+   ```bash
+   psql "host=localhost dbname=akebono_honshu user=akebono_app password=localdev" -f db/verify/rls-smoke.sql
+   # 期待: RLS smoke test: ALL PASSED
+   ```
+
+> **注意:** pgAdmin 等でスーパーユーザ (akebono_honshu) として覗くと RLS を素通しして全行見えます
+> (PostgreSQL 仕様)。分離の確認は必ず `akebono_app` で接続してください。
+> 手動 SQL でテナントスコープ表へ INSERT する場合は先に `SET app.tenant_id = '<uuid>';`
+> (Honshu 既定テナント: `00000000-0000-4000-8000-000000000001`)。
+
+---
+
 ## 0. Iter 4 段階 B 完了 (2026-05-20) による変更点
+
+> **注:** 本節の「新」列は 2026-05-20 時点。API パス (`/api/v1` → `/api/maker/v1`) と
+> timestamp 方針 (JST naive → TIMESTAMPTZ/UTC) は **§0-P のプラットフォーム統合改修で更新済み**。
 
 | 項目 | 旧 (Iter 0 ダミー) | 新 (Iter 4 段階 B) |
 |---|---|---|
@@ -176,7 +224,10 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 ##### Step 2. スキーマ初期化 (db/init/*.sql を番号順に投入)
 
 ```bash
-# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..06)
+# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..09)
+# ※プラットフォーム統合改修後は 08-tenancy-rls.sql (テナント分離 RLS + アプリロール
+#   akebono_app) と 09-updated-at-triggers.sql (updated_at トリガ汎用配線) まで
+#   必ず適用すること。アプリの接続ユーザは akebono_app (§0-P 参照)。
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
@@ -200,6 +251,16 @@ psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=re
 # 業務拡張モジュール (販売管理/出荷/在庫管理) のテーブル + サンプルデータ。冪等 (再実行可)
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/07-ops-data.sql
+
+# テナント分離 RLS + アプリロール akebono_app (プラットフォーム統合改修)。冪等 (再実行可)
+# 適用後、akebono_app のパスワードを必ず変更する:
+#   ALTER ROLE akebono_app WITH PASSWORD '<強固なパスワード>';
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/08-tenancy-rls.sql
+
+# updated_at トリガの汎用配線 (プラットフォーム統合 第二段階)。冪等 (再実行可)
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/09-updated-at-triggers.sql
 
 # 動作確認
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
@@ -245,7 +306,27 @@ cd ../../Frontend && pnpm dev
 | `password authentication failed` | pguser のパスワードを再確認 (RDS console から再リセット可能) |
 | `SSL is not enabled on the server` | RDS の `rds.force_ssl` パラメータ確認、Connection String の `SslMode=Require` |
 | Backend 起動時 EF Core エラー | スキーマ未投入。Step 2 を再実行 |
-| `relation "..." does not exist` | スキーマファイルの投入順序ミス (01 → 02 → 03 → 04 の順) |
+| `relation "..." does not exist` | スキーマファイルの投入順序ミス (01 → 02 → … → 09 の番号順) |
+| 起動ログに `audit_logs パーティション先行作成に失敗しました` が毎回出る | audit_logs の DEFAULT パーティションに行が落ちている (長期停止後の再開直後等)。DEFAULT に対象月の行があると `CREATE TABLE ... PARTITION OF` が失敗し続けるため、下記の回復 SQL で行を月次パーティションへ移送する |
+
+**audit_logs_default からの回復 SQL** (スーパーユーザで実行。`<YYYY>` `<MM>` は default に落ちた行の月):
+
+```sql
+BEGIN;
+-- 1. 対象月の行を一時退避して default から削除
+CREATE TEMP TABLE audit_default_moved AS
+  SELECT * FROM audit_logs_default
+  WHERE occurred_at >= DATE '<YYYY>-<MM>-01'
+    AND occurred_at <  DATE '<YYYY>-<MM>-01' + INTERVAL '1 month';
+DELETE FROM audit_logs_default
+  WHERE occurred_at >= DATE '<YYYY>-<MM>-01'
+    AND occurred_at <  DATE '<YYYY>-<MM>-01' + INTERVAL '1 month';
+-- 2. 月次パーティションを作成 (default が空になったので成功する)
+SELECT ensure_audit_log_partitions(3);
+-- 3. 退避した行を戻す (ルーティングで新パーティションに入る)
+INSERT INTO audit_logs SELECT * FROM audit_default_moved;
+COMMIT;
+```
 
 ---
 
@@ -444,31 +525,31 @@ pnpm dev
 |---|---|---|---|---|
 | GET | `/health` | ヘルスチェック | なし | – |
 | GET | `/swagger` | Swagger UI (API ドキュメント + 動作確認画面) | なし | – |
-| POST | `/api/v1/auth/sync` | Firebase Auth ログイン直後の業務情報同期 (Iter 4 段階 B、`/auth/login` から置換) | Bearer (Firebase ID Token) | – |
-| GET | `/api/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer (Firebase ID Token) | – |
-| GET | `/api/v1/users` | ユーザ一覧 | Bearer | – |
-| GET | `/api/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
-| POST/PATCH/DELETE | `/api/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
-| POST | `/api/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission >= 1` |
-| GET | `/api/v1/products/families` | 商品企画一覧 (P-04) | Bearer | – |
-| GET | `/api/v1/products/families/{id}` | 商品企画詳細 (P-05) | Bearer | – |
-| POST | `/api/v1/products/families/complete` | バルク登録 (P-01〜P-03) | Bearer | `product_ledger_permission >= 1` |
-| PATCH | `/api/v1/products/families/{id}` | 企画更新 (P-05) | Bearer | `product_ledger_permission >= 1` |
-| DELETE | `/api/v1/products/families/{id}` | 企画論理削除 (配下 SKU 連動) | Bearer | `product_ledger_permission >= 1` |
-| GET | `/api/v1/products/families/{id}/supplier-prices` | 仕入単価履歴 | Bearer | – |
-| POST | `/api/v1/products/families/{id}/supplier-prices` | 新単価追加 (BR-04) | Bearer | `product_ledger_permission >= 1` |
-| POST | `/api/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission >= 1` |
-| PATCH | `/api/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
-| DELETE | `/api/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/auth/sync` | Firebase Auth ログイン直後の業務情報同期 (Iter 4 段階 B、`/auth/login` から置換) | Bearer (Firebase ID Token) | – |
+| GET | `/api/maker/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer (Firebase ID Token) | – |
+| GET | `/api/maker/v1/users` | ユーザ一覧 | Bearer | – |
+| GET | `/api/maker/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
+| POST/PATCH/DELETE | `/api/maker/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission >= 1` |
+| GET | `/api/maker/v1/products/families` | 商品企画一覧 (P-04) | Bearer | – |
+| GET | `/api/maker/v1/products/families/{id}` | 商品企画詳細 (P-05) | Bearer | – |
+| POST | `/api/maker/v1/products/families/complete` | バルク登録 (P-01〜P-03) | Bearer | `product_ledger_permission >= 1` |
+| PATCH | `/api/maker/v1/products/families/{id}` | 企画更新 (P-05) | Bearer | `product_ledger_permission >= 1` |
+| DELETE | `/api/maker/v1/products/families/{id}` | 企画論理削除 (配下 SKU 連動) | Bearer | `product_ledger_permission >= 1` |
+| GET | `/api/maker/v1/products/families/{id}/supplier-prices` | 仕入単価履歴 | Bearer | – |
+| POST | `/api/maker/v1/products/families/{id}/supplier-prices` | 新単価追加 (BR-04) | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission >= 1` |
+| PATCH | `/api/maker/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
+| DELETE | `/api/maker/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
 | GET | `/uploads/product-images/{familyId}/{filename}` | 画像配信 (Local モード時のみ。S3 モード時は Pre-signed URL 経由で `https://<bucket>.s3.<region>.amazonaws.com/...` から直接配信) | なし | – |
-| GET | `/api/v1/orders` | 発注書一覧 (O-03) | Bearer | – |
-| GET | `/api/v1/orders/{id}` | 発注書詳細 (O-04) | Bearer | – |
-| POST | `/api/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |
-| PATCH | `/api/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/v1/orders/{id}/export` | 帳票出力フォーム (O-06、発注日/出荷指示番号/発注番号 を手入力 + 帳票選択。初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/v1/orders/bulk-export` | 一括ダウンロード (#3b、発注書 ZIP / 管理表 xlsx / 両方 ZIP) | Bearer | `purchase_order_create_permission >= 1` |
-| GET | `/api/v1/orders/communication-suggestions` | 連絡文章テンプレ (O-07) | Bearer | – |
+| GET | `/api/maker/v1/orders` | 発注書一覧 (O-03) | Bearer | – |
+| GET | `/api/maker/v1/orders/{id}` | 発注書詳細 (O-04) | Bearer | – |
+| POST | `/api/maker/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |
+| PATCH | `/api/maker/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/maker/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/maker/v1/orders/{id}/export` | 帳票出力フォーム (O-06、発注日/出荷指示番号/発注番号 を手入力 + 帳票選択。初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/maker/v1/orders/bulk-export` | 一括ダウンロード (#3b、発注書 ZIP / 管理表 xlsx / 両方 ZIP) | Bearer | `purchase_order_create_permission >= 1` |
+| GET | `/api/maker/v1/orders/communication-suggestions` | 連絡文章テンプレ (O-07) | Bearer | – |
 
 `{master}` は: brands / sizes / functions / countries / suppliers / departments / product-types / product-seasons / product-groups / colors / materials / material-classifications / warehouses / delivery-destinations / document-template-purchases / document-template-confirmations / document-text-purchases
 
@@ -529,7 +610,7 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 | Frontend で `Failed to fetch http://localhost:5000` | Backend が起動していない / CORS 不整合 / Connection String が DB に届いていない (`appsettings.Development.json` で上書き確認) |
 | `audit_logs` が記録されない | Backend が DB に接続できていない。`appsettings.json` または `appsettings.Development.json` の `ConnectionStrings:Postgres` を確認、pgAdmin4 で対象ロールが該当 DB へのアクセス権限を持つか確認 |
 | `pnpm install` で `EACCES` | Node のパーミッション問題。Volta or nvm 経由で Node を入れ直す |
-| ログイン失敗 (Iter 4 段階 B 以降) | Firebase Console のテストユーザ Email + パスワードを使う。`users.firebase_uid` が紐付け済か確認 (`SELECT firebase_uid, is_active, is_deleted FROM users WHERE login_id='owner'`)。失敗時の audit 記録は: 未紐付け UID → `Auth.UidUnboundProbe` (actor_user_id=NULL)、inactive ユーザ → `Auth.LoginRejected.Inactive` (actor_user_id 付き)。**いずれも 5 分に 1 回しか記録されない**ので連続テスト時は Backend 再起動で cache flush。 |
+| ログイン失敗 (Iter 4 段階 B 以降) | Firebase Console のテストユーザ Email + パスワードを使う。`users.firebase_uid` が紐付け済か確認 (`SELECT firebase_uid, is_active, deleted_at FROM users WHERE login_id='owner'`)。失敗時の audit 記録は: 未紐付け UID → `Auth.UidUnboundProbe` (actor_user_id=NULL)、inactive ユーザ → `Auth.LoginRejected.Inactive` (actor_user_id 付き)。**いずれも 5 分に 1 回しか記録されない**ので連続テスト時は Backend 再起動で cache flush。 |
 | `pnpm dev` でポート 3000 衝突 | 別アプリ使用中、`pnpm dev --port 3001` で代替 (`.env` の NUXT_PUBLIC_API_BASE は変更不要) |
 
 ---

@@ -1,8 +1,13 @@
 -- Iteration 1: 17 マスタ + users 拡張
 -- Phase 5 data-design.md §3.1-3.18
 -- pgAdmin4 で akebono_honshu DB に対して実行 (docker 利用者は再構築で自動投入)
+-- プラットフォーム統合改修: tenant_id (uuid) 導入・UNIQUE を (tenant_id, ...) へ差替・TIMESTAMPTZ(UTC) 化
+-- プラットフォーム統合 第二段階: uuid PK / deleted_at 統一 / 監査パーティション
 
-SET TIMEZONE = 'Asia/Tokyo';
+SET TIMEZONE = 'UTC';
+
+-- シード用テナントコンテキスト (tenant_id 列の DEFAULT がこの GUC から解決される)
+SET app.tenant_id = '00000000-0000-4000-8000-000000000001';
 
 -- ─────────────────────────────────────────────────
 -- §3.18 users テーブル拡張 (Iteration 0 最小スキーマからの拡張)
@@ -17,8 +22,8 @@ ALTER TABLE users
     ADD COLUMN IF NOT EXISTS purchase_order_create_permission SMALLINT    NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS purchase_order_info_permission  SMALLINT     NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS process_record_permission       SMALLINT     NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS created_by_user_id              BIGINT       NULL,
-    ADD COLUMN IF NOT EXISTS updated_by_user_id              BIGINT       NULL,
+    ADD COLUMN IF NOT EXISTS created_by_user_id              UUID         NULL,
+    ADD COLUMN IF NOT EXISTS updated_by_user_id              UUID         NULL,
     ADD COLUMN IF NOT EXISTS legacy_id                       VARCHAR(64)  NULL;
 
 -- UNIQUE 制約 (Iteration 0 で employee_no / login_id は付与済)
@@ -49,320 +54,379 @@ WHERE login_id = 'owner';
 -- §3.1 sizes — サイズマスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sizes (
-    id                    BIGSERIAL PRIMARY KEY,
-    code                  VARCHAR(3)   NOT NULL UNIQUE,
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                  VARCHAR(3)   NOT NULL,
     name                  VARCHAR(255) NOT NULL,
     item_conversion_code  VARCHAR(4)   NOT NULL,
-    delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id             VARCHAR(64)  NULL
+    deleted_at            TIMESTAMPTZ  NULL,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    legacy_id             VARCHAR(64)  NULL,
+    CONSTRAINT uq_sizes_tenant_code UNIQUE (tenant_id, code)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sizes_conv_active ON sizes (item_conversion_code) WHERE delete_flag = FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sizes_conv_active ON sizes (tenant_id, item_conversion_code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sizes_tenant ON sizes (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_sizes_legacy_id ON sizes (legacy_id) WHERE legacy_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────
 -- §3.2 brands — ブランドマスタ (拡張カラムなし)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS brands (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_brands_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_brands_tenant ON brands (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.3 functions — 機能マスタ (拡張なし)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS functions (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_functions_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_functions_tenant ON functions (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.4 countries — 国マスタ (拡張なし)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS countries (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_countries_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_countries_tenant ON countries (tenant_id);
 
 -- 通貨マスタ (標準マスタ)。code = ISO 4217 3 文字コード (JPY/USD/CNY 等)。
 -- 為替マスタの対象通貨・仕入先の適用通貨が本 code を参照する (文字列一致の整合性を集中管理)。
 CREATE TABLE IF NOT EXISTS currencies (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_currencies_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_currencies_tenant ON currencies (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.5 suppliers — 仕入先マスタ (工場兼用、F-22 official_name 帳票印字)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS suppliers (
-    id                    BIGSERIAL PRIMARY KEY,
-    code                  VARCHAR(3)   NOT NULL UNIQUE,
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                  VARCHAR(3)   NOT NULL,
     name                  VARCHAR(255) NOT NULL,
     official_name         VARCHAR(255) NULL,
     item_conversion_code  CHAR(1)      NOT NULL,
-    country_id            BIGINT       NOT NULL REFERENCES countries(id),
+    country_id            UUID         NOT NULL REFERENCES countries(id),
     supplier_type         SMALLINT     NOT NULL,
     alert_target          SMALLINT     NOT NULL DEFAULT 0,
     currency_code         CHAR(3)      NOT NULL DEFAULT 'JPY',   -- 適用通貨 (§2f)
     drayage_cost          NUMERIC(12,2) NULL,                    -- ドレー代 (§2i、仕入先ごと)
-    delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id             VARCHAR(64)  NULL
+    deleted_at            TIMESTAMPTZ  NULL,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    legacy_id             VARCHAR(64)  NULL,
+    CONSTRAINT uq_suppliers_tenant_code UNIQUE (tenant_id, code)
 );
 CREATE INDEX IF NOT EXISTS idx_suppliers_country ON suppliers (country_id);
-CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers (delete_flag) WHERE delete_flag = FALSE;
+CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers (deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_suppliers_tenant ON suppliers (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_suppliers_legacy_id ON suppliers (legacy_id) WHERE legacy_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────
 -- §3.6 departments — 事業部マスタ (拡張なし)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS departments (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_departments_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_departments_tenant ON departments (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.7 product_types — 商品タイプマスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_types (
-    id                       BIGSERIAL PRIMARY KEY,
-    code                     VARCHAR(3)   NOT NULL UNIQUE,
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                     VARCHAR(3)   NOT NULL,
     name                     VARCHAR(255) NOT NULL,
     item_conversion_code     CHAR(1)      NOT NULL,
     size_demographic_code    CHAR(1)      NOT NULL,
-    delete_flag              BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
-    updated_at               TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id       BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id                VARCHAR(64)  NULL
+    deleted_at               TIMESTAMPTZ  NULL,
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id       UUID         NOT NULL REFERENCES users(id),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id       UUID         NOT NULL REFERENCES users(id),
+    legacy_id                VARCHAR(64)  NULL,
+    CONSTRAINT uq_product_types_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_product_types_tenant ON product_types (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.8 product_seasons — 商品季節マスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_seasons (
-    id                    BIGSERIAL PRIMARY KEY,
-    code                  VARCHAR(3)   NOT NULL UNIQUE,
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                  VARCHAR(3)   NOT NULL,
     name                  VARCHAR(255) NOT NULL,
     item_conversion_code  CHAR(1)      NOT NULL,
     conversion_order      VARCHAR(64)  NULL,
-    delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id             VARCHAR(64)  NULL
+    deleted_at            TIMESTAMPTZ  NULL,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    legacy_id             VARCHAR(64)  NULL,
+    CONSTRAINT uq_product_seasons_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_product_seasons_tenant ON product_seasons (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.9 product_groups — 商品群マスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_groups (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)    NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID          NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)    NOT NULL,
     name                VARCHAR(255)  NOT NULL,
     planning_fee        NUMERIC(12,2) NOT NULL DEFAULT 0,
-    delete_flag         BOOLEAN       NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP     NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT        NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP     NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT        NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)   NULL
+    deleted_at          TIMESTAMPTZ   NULL,
+    created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID          NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID          NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)   NULL,
+    CONSTRAINT uq_product_groups_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_product_groups_tenant ON product_groups (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.10 colors — 色マスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS colors (
-    id                    BIGSERIAL PRIMARY KEY,
-    code                  VARCHAR(3)   NOT NULL UNIQUE,
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                  VARCHAR(3)   NOT NULL,
     name                  VARCHAR(255) NOT NULL,
     item_conversion_code  CHAR(2)      NOT NULL,
-    delete_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id             VARCHAR(64)  NULL
+    deleted_at            TIMESTAMPTZ  NULL,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    legacy_id             VARCHAR(64)  NULL,
+    CONSTRAINT uq_colors_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_colors_tenant ON colors (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_colors_legacy_id ON colors (legacy_id) WHERE legacy_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────
 -- §3.12 material_classifications — 素材分類マスタ (materials の FK 参照先、先に作る)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS material_classifications (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_material_classifications_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_material_classifications_tenant ON material_classifications (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.11 materials — 素材マスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS materials (
-    id                              BIGSERIAL PRIMARY KEY,
-    code                            VARCHAR(3)   NOT NULL UNIQUE,
+    id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                       UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                            VARCHAR(3)   NOT NULL,
     name                            VARCHAR(255) NOT NULL,
-    material_classification_id      BIGINT       NOT NULL REFERENCES material_classifications(id),
-    delete_flag                     BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at                      TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
-    updated_at                      TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id              BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id                       VARCHAR(64)  NULL
+    material_classification_id      UUID         NOT NULL REFERENCES material_classifications(id),
+    deleted_at                      TIMESTAMPTZ  NULL,
+    created_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id              UUID         NOT NULL REFERENCES users(id),
+    updated_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id              UUID         NOT NULL REFERENCES users(id),
+    legacy_id                       VARCHAR(64)  NULL,
+    CONSTRAINT uq_materials_tenant_code UNIQUE (tenant_id, code)
 );
 CREATE INDEX IF NOT EXISTS idx_materials_classification ON materials (material_classification_id);
+CREATE INDEX IF NOT EXISTS idx_materials_tenant ON materials (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.13 warehouses — 倉庫コードマスタ (拡張なし)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS warehouses (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_warehouses_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_warehouses_tenant ON warehouses (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.14 delivery_destinations — 納品先マスタ (F-22 customer_name は内部識別用)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS delivery_destinations (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
     customer_name       VARCHAR(255) NULL,
     remark_1            VARCHAR(255) NULL,
     remark_2            VARCHAR(255) NULL,
     remark_3            VARCHAR(255) NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_delivery_destinations_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_delivery_destinations_tenant ON delivery_destinations (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.15 document_template_purchases — 連絡文書定型・発注書
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS document_template_purchases (
-    id                  BIGSERIAL PRIMARY KEY,
-    code                VARCHAR(3)   NOT NULL UNIQUE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
     name                VARCHAR(255) NOT NULL,
     body                TEXT         NOT NULL,
-    delete_flag         BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id  BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id           VARCHAR(64)  NULL
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_document_template_purchases_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_document_template_purchases_tenant ON document_template_purchases (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.16 document_template_confirmations — 連絡文章・確認表
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS document_template_confirmations (
-    id                   BIGSERIAL PRIMARY KEY,
-    code                 VARCHAR(3)   NOT NULL UNIQUE,
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id            UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                 VARCHAR(3)   NOT NULL,
     name                 VARCHAR(255) NOT NULL,
     body                 TEXT         NOT NULL,
     standard_print_flag  BOOLEAN      NOT NULL DEFAULT FALSE,
-    delete_flag          BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
-    updated_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id            VARCHAR(64)  NULL
+    deleted_at           TIMESTAMPTZ  NULL,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id   UUID         NOT NULL REFERENCES users(id),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id   UUID         NOT NULL REFERENCES users(id),
+    legacy_id            VARCHAR(64)  NULL,
+    CONSTRAINT uq_document_template_confirmations_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_document_template_confirmations_tenant ON document_template_confirmations (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.17 document_text_purchases — 連絡文章・発注書
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS document_text_purchases (
-    id                   BIGSERIAL PRIMARY KEY,
-    code                 VARCHAR(3)   NOT NULL UNIQUE,
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id            UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                 VARCHAR(3)   NOT NULL,
     name                 VARCHAR(255) NOT NULL,
     body                 TEXT         NOT NULL,
     standard_print_flag  BOOLEAN      NOT NULL DEFAULT FALSE,
-    delete_flag          BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
-    updated_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
-    legacy_id            VARCHAR(64)  NULL
+    deleted_at           TIMESTAMPTZ  NULL,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id   UUID         NOT NULL REFERENCES users(id),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id   UUID         NOT NULL REFERENCES users(id),
+    legacy_id            VARCHAR(64)  NULL,
+    CONSTRAINT uq_document_text_purchases_tenant_code UNIQUE (tenant_id, code)
 );
+CREATE INDEX IF NOT EXISTS idx_document_text_purchases_tenant ON document_text_purchases (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- 為替マスタ (§2f、bespoke master)。年月 (YYYY-MM) × 通貨ごとの対円レート。
 -- code/name を持たず (year_month, currency_code) が業務キー。有効行の一意は部分 UNIQUE で保証。
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS exchange_rates (
-    id                   BIGSERIAL PRIMARY KEY,
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id            UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
     year_month           CHAR(7)      NOT NULL,                -- 'YYYY-MM'
     currency_code        CHAR(3)      NOT NULL,                -- USD/CNY 等
     rate                 NUMERIC(12,4) NOT NULL,               -- 1 通貨単位 = rate 円
-    delete_flag          BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
-    updated_at           TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by_user_id   BIGINT       NOT NULL REFERENCES users(id),
+    deleted_at           TIMESTAMPTZ  NULL,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id   UUID         NOT NULL REFERENCES users(id),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id   UUID         NOT NULL REFERENCES users(id),
     legacy_id            VARCHAR(64)  NULL,
     CONSTRAINT chk_exr_year_month CHECK (year_month ~ '^[0-9]{4}-[0-9]{2}$'),
     CONSTRAINT chk_exr_rate CHECK (rate > 0)
 );
 -- 有効行 (未削除) の (年月, 通貨) 一意。削除済みは重複を許容 (再登録可)。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_exr_year_month_currency
-    ON exchange_rates (year_month, currency_code) WHERE delete_flag = FALSE;
+    ON exchange_rates (tenant_id, year_month, currency_code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_exchange_rates_tenant ON exchange_rates (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- Seed: Iteration 1 動作確認用に最小データ投入
@@ -370,10 +434,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_exr_year_month_currency
 -- ─────────────────────────────────────────────────
 DO $$
 DECLARE
-    owner_id BIGINT;
-    jp_id    BIGINT;
-    cn_id    BIGINT;
-    mc_natural BIGINT;
+    owner_id UUID;
+    jp_id    UUID;
+    cn_id    UUID;
+    mc_natural UUID;
 BEGIN
     SELECT id INTO owner_id FROM users WHERE login_id = 'owner';
     IF owner_id IS NULL THEN
@@ -385,14 +449,14 @@ BEGIN
         ('001', '日本',     owner_id, owner_id),
         ('002', '中国',     owner_id, owner_id),
         ('003', 'ベトナム', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- currencies (為替マスタ / 仕入先 適用通貨 の参照先)。code = ISO 4217 3 文字。
     INSERT INTO currencies (code, name, created_by_user_id, updated_by_user_id) VALUES
         ('JPY', '日本円',   owner_id, owner_id),
         ('USD', '米ドル',   owner_id, owner_id),
         ('CNY', '人民元',   owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     SELECT id INTO jp_id FROM countries WHERE code = '001';
     SELECT id INTO cn_id FROM countries WHERE code = '002';
@@ -401,7 +465,7 @@ BEGIN
     INSERT INTO material_classifications (code, name, created_by_user_id, updated_by_user_id) VALUES
         ('001', '天然素材',   owner_id, owner_id),
         ('002', '合成素材',   owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     SELECT id INTO mc_natural FROM material_classifications WHERE code = '001';
 
@@ -416,7 +480,7 @@ BEGIN
         ('011', 'ガチャピン',         owner_id, owner_id),
         ('013', 'ONE PIECE',         owner_id, owner_id),
         ('017', 'HKWL(ヒロココシノ)', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- functions (旧確定値 §A-2 を反映)
     INSERT INTO functions (code, name, created_by_user_id, updated_by_user_id) VALUES
@@ -427,27 +491,27 @@ BEGIN
         ('005', 'むじゅうりょく', owner_id, owner_id),
         ('006', '超軽量',         owner_id, owner_id),
         ('007', 'メタボリッパ',   owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- departments
     INSERT INTO departments (code, name, created_by_user_id, updated_by_user_id) VALUES
         ('001', '第1事業部', owner_id, owner_id),
         ('002', '第2事業部', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- product_types
     INSERT INTO product_types (code, name, item_conversion_code, size_demographic_code, created_by_user_id, updated_by_user_id) VALUES
         ('001', '吊込W底婦人', 'A', 'R', owner_id, owner_id),
         ('002', '吊込W底紳士', 'A', 'M', owner_id, owner_id),
         ('003', 'クッション',  'C', 'R', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- product_seasons
     INSERT INTO product_seasons (code, name, item_conversion_code, created_by_user_id, updated_by_user_id) VALUES
         ('001', '春夏', '1', owner_id, owner_id),
         ('002', '秋冬', '2', owner_id, owner_id),
         ('003', '通年', '0', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- product_groups (旧確定値 §A-2 を反映。planning_fee は本確定値に含まれないため
     --   既存サンプル額を踏襲し、追加分は DEFAULT 0)
@@ -458,7 +522,7 @@ BEGIN
         ('004', '第2他商品',   0.00,    owner_id, owner_id),
         ('005', '第1バーゲン', 0.00,    owner_id, owner_id),
         ('999', 'その他',       0.00,    owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- colors
     INSERT INTO colors (code, name, item_conversion_code, created_by_user_id, updated_by_user_id) VALUES
@@ -466,7 +530,7 @@ BEGIN
         ('040', 'ブラウン', '40', owner_id, owner_id),
         ('080', 'グレー',  '80', owner_id, owner_id),
         ('090', 'ブラック', '90', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- sizes
     INSERT INTO sizes (code, name, item_conversion_code, created_by_user_id, updated_by_user_id) VALUES
@@ -475,48 +539,48 @@ BEGIN
         ('003', 'L',  '110L', owner_id, owner_id),
         ('004', 'LL', '110X', owner_id, owner_id),
         ('005', 'フリー', 'AS', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- materials
     INSERT INTO materials (code, name, material_classification_id, created_by_user_id, updated_by_user_id) VALUES
         ('001', '綿',       mc_natural, owner_id, owner_id),
         ('002', 'ポリエステル', (SELECT id FROM material_classifications WHERE code='002'), owner_id, owner_id),
         ('003', '麻',       mc_natural, owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- warehouses
     INSERT INTO warehouses (code, name, created_by_user_id, updated_by_user_id) VALUES
         ('007', '本社倉庫',     owner_id, owner_id),
         ('717', 'しまむらセンター', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- suppliers (F-22 sample: official_name=DEPARTURES, code=336)
     INSERT INTO suppliers (code, name, official_name, item_conversion_code, country_id, supplier_type, created_by_user_id, updated_by_user_id) VALUES
         ('336', 'デパーチャーズ',         'DEPARTURES',     'A', jp_id, 0, owner_id, owner_id),
         ('404', '安徽拓馳鞋業有限公司',     'AN-HUI TUO-CHI', 'B', cn_id, 1, owner_id, owner_id),
         ('437', '南通本州貿易有限公司',     'NAN-TONG HONSHU','C', cn_id, 1, owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- delivery_destinations (Phase 6 サンプル準拠)
     INSERT INTO delivery_destinations (code, name, customer_name, remark_1, remark_2, remark_3, created_by_user_id, updated_by_user_id) VALUES
         ('001', 'しまむらセンター', 'しまむら', '埼玉県さいたま市', '048-XXX-XXXX', '048-XXX-XXXY', owner_id, owner_id),
         ('002', 'AEONセンター',    'AEON',    '千葉県千葉市',   '043-XXX-XXXX', '043-XXX-XXXY', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- document_template_purchases
     INSERT INTO document_template_purchases (code, name, body, created_by_user_id, updated_by_user_id) VALUES
         ('001', '標準発注', '発注書を作成いたします。よろしくお願いいたします。', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- document_template_confirmations
     INSERT INTO document_template_confirmations (code, name, body, standard_print_flag, created_by_user_id, updated_by_user_id) VALUES
         ('001', '確認表標準', 'ご確認のほどよろしくお願いいたします。', TRUE, owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- document_text_purchases
     INSERT INTO document_text_purchases (code, name, body, standard_print_flag, created_by_user_id, updated_by_user_id) VALUES
         ('001', '注意書き標準', '分納、遅納、訂正等は、商品管理部宛 FAX:03-5850-4720 までご連絡ください。', TRUE, owner_id, owner_id),
         ('002', '納品書記載',   '納品書には発注番号を記載してください。発注番号がないものは支払対象になっておりません。', TRUE, owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
 END $$;

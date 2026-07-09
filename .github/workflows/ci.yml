@@ -53,3 +53,26 @@ jobs:
       - name: Type check (nuxi typecheck)
         working-directory: src/Frontend
         run: pnpm run typecheck
+
+  # OpenAPI 仕様と実装の一致検証 (AKB-DOC-12 §4-1)。
+  # scripts/generate-openapi.sh がアプリをスタブ構成で起動し swagger.json を取得、
+  # コミット済み docs/api/openapi.json と diff。乖離があれば fail
+  # (API を変更したらスクリプトを再実行して openapi.json を更新・コミットする)。
+  openapi-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Generate OpenAPI spec from implementation
+        run: |
+          cp docs/api/openapi.json /tmp/openapi-committed.json
+          bash scripts/generate-openapi.sh
+      - name: Diff against committed spec
+        run: |
+          if ! diff -u /tmp/openapi-committed.json docs/api/openapi.json; then
+            echo "::error::docs/api/openapi.json が実装と乖離しています。scripts/generate-openapi.sh を実行してコミットしてください" >&2
+            exit 1
+          fi
+          echo "OpenAPI spec is in sync with the implementation."

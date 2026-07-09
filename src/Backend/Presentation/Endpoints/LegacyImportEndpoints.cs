@@ -15,7 +15,7 @@ public static class LegacyImportEndpoints
 
     public static IEndpointRouteBuilder MapLegacyImportEndpoints(this IEndpointRouteBuilder app)
     {
-        var admin = app.MapGroup("/api/v1/admin");
+        var admin = app.MapGroup("/api/maker/v1/admin");
 
         admin.MapPost("/legacy-import", async (
             HttpContext http,
@@ -26,51 +26,38 @@ public static class LegacyImportEndpoints
         {
             // 認可: process_record_permission = 1 (Owner) のみ
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
 
             var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == actorId, ct);
-            if (actor is null || !actor.IsActive || actor.IsDeleted)
-                return Results.Problem(statusCode: 401, title: "Unauthorized",
-                    detail: "ユーザが無効化されています");
+            if (actor is null || !actor.IsActive || actor.DeletedAt != null)
+                // 台帳 (AKB-DOC-12 §14.5) の AUTH-005 代表ステータスに合わせ 403
+                return ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                    "ユーザが無効化されています");
 
             if (actor.ProcessRecordPermission < 1)
-                return Results.Problem(statusCode: 403, title: "Forbidden",
-                    detail: "この操作にはオーナー権限 (process_record_permission = 1) が必要です");
+                return ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                    "この操作にはオーナー権限 (process_record_permission = 1) が必要です");
 
             // バリデーション
             if (file is null || file.Length == 0)
-                return Results.Problem(statusCode: 400, title: "Bad Request",
-                    detail: "CSV ファイルが添付されていません");
+                return ApiEnvelope.Error(http, 400, AkbErrorCodes.SysMalformedBody,
+                    "CSV ファイルが添付されていません");
 
             if (file.Length > MaxCsvBytes)
-                return Results.Problem(statusCode: 413, title: "Payload Too Large",
-                    detail: $"ファイルサイズが上限 ({MaxCsvBytes / 1024 / 1024} MB) を超えています");
+                return ApiEnvelope.Error(http, 413, AkbErrorCodes.SysPayloadTooLarge,
+                    $"ファイルサイズが上限 ({MaxCsvBytes / 1024 / 1024} MB) を超えています");
 
             // CSV を MemoryStream にコピー (DetectEncoding が seek を要求するため)
             using var ms = new MemoryStream();
             await file.CopyToAsync(ms, ct);
             ms.Position = 0;
 
-            try
-            {
-                var result = await svc.ExecuteAsync(ms, file.FileName, ct);
-                return Results.Ok(result);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(statusCode: 422, title: "CSV 取込エラー",
-                    detail: ex.Message);
-            }
-            catch (DbUpdateException ex)
-            {
-                return Results.Problem(statusCode: 500, title: "DB 更新エラー",
-                    detail: ex.InnerException?.Message ?? ex.Message);
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem(statusCode: 500, title: "取込中に予期せぬエラー",
-                    detail: ex.Message);
-            }
+            // 想定エラー (空 CSV 等) は LegacyImportService が DomainException で表現し、
+            // 想定外 (DB 障害等) は中央 ApiExceptionMiddleware が固定メッセージ + traceId 付き
+            // サーバーログへ変換する (AKB-DOC-12 §6.3: 生の例外メッセージ = 内部識別子・
+            // 取込データ由来の値をレスポンスへ載せない)。ここで catch しない。
+            var result = await svc.ExecuteAsync(ms, file.FileName, ct);
+            return ApiEnvelope.Ok(http, result);
         })
         .DisableAntiforgery()
         .Accepts<IFormFile>("multipart/form-data")

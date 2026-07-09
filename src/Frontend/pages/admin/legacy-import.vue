@@ -2,7 +2,7 @@
 /**
  * MIG-3 既存生産管理システム CSV 取込画面 (Phase 7 Iteration 4 Hardening)。
  *
- * ファイル添付 → 取込実行 → 結果表示。Backend は POST /api/v1/admin/legacy-import。
+ * ファイル添付 → 取込実行 → 結果表示。Backend は POST /api/maker/v1/admin/legacy-import。
  * 認可: process_record_permission = 1 (Owner) のみ。
  */
 interface PhaseResult { applied: boolean; detail: string }
@@ -20,7 +20,7 @@ interface ApiResult {
 }
 
 const { user, logout } = useAuth()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
@@ -63,21 +63,19 @@ const execute = async () => {
   formData.append('file', selectedFile.value)
 
   try {
-    const res = await apiFetch<ApiResult>('/admin/legacy-import', {
+    const res = await apiData<ApiResult>('/admin/legacy-import', {
       method: 'POST',
       body: formData,
     })
     result.value = res
   } catch (e: unknown) {
-    const err = e as { statusCode?: number; data?: { detail?: string; title?: string } }
+    const err = e as { statusCode?: number }
     if (err.statusCode === 401) {
       await logout()
       await navigateTo('/login')
       return
     }
-    errorMessage.value = err.data?.detail
-      ?? err.data?.title
-      ?? '取込に失敗しました (詳細不明)'
+    errorMessage.value = getApiErrorMessage(e, '取込に失敗しました (詳細不明)')
   } finally {
     loading.value = false
   }

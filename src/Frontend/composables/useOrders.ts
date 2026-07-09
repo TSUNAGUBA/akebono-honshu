@@ -15,7 +15,8 @@ export const editReasonLabel = (r: EditReason): string => {
 }
 
 export interface OrderListItem {
-  id: number
+  // 第二段階契約: エンティティ ID は uuid 文字列 (JSON では文字列で受け渡し)
+  id: string
   mgmtNo: string
   orderNo: string | null
   status: number
@@ -38,8 +39,8 @@ export interface OrderListItem {
   orderedAt: string | null
   deliveredAt: string | null
   isDeleted: boolean
-  supplierId: number
-  ordererUserId: number
+  supplierId: string
+  ordererUserId: string
   customerName: string | null
   hasUndecidedPrice: boolean
 }
@@ -47,8 +48,8 @@ export interface OrderListItem {
 // 分納×倉庫の多次元明細 (PR5b)。1 発注明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
 // warehouseId / deliveryDate は null 許容 (倉庫未指定 / 発注明細日未指定)。seq は表示順。
 export interface OrderLineDeliverySummary {
-  id: number
-  warehouseId: number | null
+  id: string
+  warehouseId: string | null
   warehouseName: string | null
   deliveryDate: string | null
   quantity: number
@@ -57,9 +58,9 @@ export interface OrderLineDeliverySummary {
 }
 
 export interface OrderLineDetail {
-  id: number
+  id: string
   lineNo: number
-  productId: number
+  productId: string
   sku: string
   productName: string
   colorName: string
@@ -79,7 +80,7 @@ export interface OrderLineDetail {
 }
 
 export interface OrderDetail {
-  id: number
+  id: string
   mgmtNo: string
   orderNo: string | null
   // 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力フォームの初期表示に使う。
@@ -88,29 +89,29 @@ export interface OrderDetail {
   status: number
   cancelledAt: string | null
   cancelReason: string | null
-  supplierId: number
+  supplierId: string
   supplierCode: string
   supplierName: string
   supplierOfficialNameSnapshot: string | null
   supplierCodeSnapshot: string | null
-  deliveryDestinationId: number
+  deliveryDestinationId: string
   deliveryDestinationName: string
   customerNameSnapshot: string | null
-  departmentId: number
+  departmentId: string
   departmentName: string
-  warehouseId: number
+  warehouseId: string
   warehouseName: string
   dueDate: string
-  ordererUserId: number
+  ordererUserId: string
   ordererName: string
-  managerUserId: number
+  managerUserId: string
   managerName: string
-  subOrderer1UserId: number | null
-  subOrderer2UserId: number | null
-  subOrderer3UserId: number | null
-  subOrderer4UserId: number | null
-  subOrderer5UserId: number | null
-  subOrderer6UserId: number | null
+  subOrderer1UserId: string | null
+  subOrderer2UserId: string | null
+  subOrderer3UserId: string | null
+  subOrderer4UserId: string | null
+  subOrderer5UserId: string | null
+  subOrderer6UserId: string | null
   communicationText: string | null
   // 連絡文書 6 行 (構造化、PR6)。新フローの SoT。6 列が全て空の旧発注は communicationText を
   // 改行分割してブリッジ表示する (編集ロード時、フロント側で実施)。
@@ -132,9 +133,9 @@ export interface OrderDetail {
   factoryShippingDate: string | null
   deliveryPlaceShippingDate: string | null
   overseasDepartureDate: string | null
-  warehouse2Id: number | null
+  warehouse2Id: string | null
   warehouse2Name: string | null
-  warehouse3Id: number | null
+  warehouse3Id: string | null
   warehouse3Name: string | null
   // 発注状態 4 値モデル (§3b)。orderedAt(発注済)/status(発注中止)/isDeleted(発注削除) の状態表示・操作可否判定に使う。
   // deliveredAt は §3b で状態導出から除外 (後方互換のため残すが未使用)。
@@ -148,22 +149,22 @@ export interface CreateOrderPayload {
   // 発注書番号 (§5)。作成時に手入力可能 (任意)。空欄 (null) は初回 Excel 出力時に自動採番される。
   // 編集 (UpdateOrderPayload) では送らないため optional。
   orderNo?: string | null
-  supplierId: number
-  deliveryDestinationId: number
-  departmentId: number
-  warehouseId: number
+  supplierId: string
+  deliveryDestinationId: string
+  departmentId: string
+  warehouseId: string
   dueDate: string
-  ordererUserId: number
-  managerUserId: number
-  subOrderer1UserId: number | null
-  subOrderer2UserId: number | null
-  subOrderer3UserId: number | null
-  subOrderer4UserId: number | null
-  subOrderer5UserId: number | null
-  subOrderer6UserId: number | null
+  ordererUserId: string
+  managerUserId: string
+  subOrderer1UserId: string | null
+  subOrderer2UserId: string | null
+  subOrderer3UserId: string | null
+  subOrderer4UserId: string | null
+  subOrderer5UserId: string | null
+  subOrderer6UserId: string | null
   communicationText: string | null
   lines: {
-    productId: number
+    productId: string
     quantity: number
     unitPriceSnapshot: number
     currencyCodeSnapshot: string
@@ -175,7 +176,7 @@ export interface CreateOrderPayload {
     // 分納×倉庫の多次元明細 (PR5b、任意)。null/空 = 分納なし (単一明細、従来挙動)。
     // 1 件以上あればサーバ側で line.quantity = 分納 quantity 合計 (SUM) に再計算される。
     deliveries?: {
-      warehouseId: number | null
+      warehouseId: string | null
       deliveryDate: string | null
       quantity: number
       packQuantity: number | null
@@ -188,8 +189,8 @@ export interface CreateOrderPayload {
   factoryShippingDate: string | null
   deliveryPlaceShippingDate: string | null
   overseasDepartureDate: string | null
-  warehouse2Id: number | null
-  warehouse3Id: number | null
+  warehouse2Id: string | null
+  warehouse3Id: string | null
   // 連絡文書 6 行 (構造化、PR6)。新フローは本 6 列を SoT として送る。各行は空欄なら null。
   // communicationText は新フロントから書かない (旧データのみ保持) が、I/F 互換のため従来値を
   // そのまま送り返す (作成時は null)。
@@ -232,46 +233,55 @@ export interface PriceSuggestion {
   currencyCode: string | null
   exchangeRate: number | null
   /** 解決に使われた行のサイズ (sizes.id)。全サイズ既定で解決された場合は null */
-  resolvedSizeId: number | null
+  resolvedSizeId: string | null
   /** size 専用単価で解決されたか (false = 全サイズ既定 fallback) */
   isSizeSpecific: boolean
 }
 
 export const useOrders = () => {
-  const { apiFetch } = useApi()
+  const { apiFetch, apiData, apiPaged } = useApi()
   const config = useRuntimeConfig()
 
-  const list = async (includeCancelled = false): Promise<OrderListItem[]> => {
-    const res = await apiFetch<{ data: OrderListItem[] }>(
-      `/orders?includeCancelled=${includeCancelled}`,
-    )
-    return res.data
+  // 一覧はキーセットページング (AKB-DOC-12 §7.1)。limit=200 で取得し、
+  // page.hasMore の間 nextCursor を渡して「さらに読み込む」で続きを取得する。
+  const list = async (includeCancelled = false, cursor: string | null = null): Promise<PagedItems<OrderListItem>> => {
+    return await apiPaged<OrderListItem>(`/orders?includeCancelled=${includeCancelled}&${pageQuery(cursor)}`)
   }
 
-  const get = (id: number): Promise<OrderDetail> => apiFetch<OrderDetail>(`/orders/${id}`)
+  const get = (id: string): Promise<OrderDetail> => apiData<OrderDetail>(`/orders/${id}`)
 
-  const create = async (payload: CreateOrderPayload): Promise<{ id: number; mgmtNo: string }> =>
-    await apiFetch<{ id: number; mgmtNo: string }>('/orders', { method: 'POST', body: payload })
+  // 作成 POST は Idempotency-Key 必須 (AKB-DOC-12 §8.1、欠落は 400 AKB-SYS-004)。
+  // 同一ペイロードの再試行には同じキーを使い回し、サーバ側リプレイで二重作成を防ぐ。
+  const createIdem = createIdempotencySession()
+  const create = async (payload: CreateOrderPayload): Promise<{ id: string; mgmtNo: string }> => {
+    const res = await apiData<{ id: string; mgmtNo: string }>('/orders', {
+      method: 'POST',
+      body: payload,
+      headers: { 'Idempotency-Key': createIdem.keyFor(payload) },
+    })
+    createIdem.complete(payload)
+    return res
+  }
 
-  const update = async (id: number, payload: UpdateOrderPayload): Promise<{ id: number; mgmtNo: string }> =>
-    await apiFetch<{ id: number; mgmtNo: string }>(`/orders/${id}`, { method: 'PATCH', body: payload })
+  const update = async (id: string, payload: UpdateOrderPayload): Promise<{ id: string; mgmtNo: string }> =>
+    await apiData<{ id: string; mgmtNo: string }>(`/orders/${id}`, { method: 'PATCH', body: payload })
 
-  const cancel = async (id: number, cancelReason: string): Promise<void> => {
+  const cancel = async (id: string, cancelReason: string): Promise<void> => {
     await apiFetch<void>(`/orders/${id}/cancel`, { method: 'POST', body: { cancelReason } })
   }
 
   /** 発注済にする (§3b)。未発注 → 発注済 (ordered_at を SET)。ダウンロードとは独立したユーザー操作。 */
-  const markOrdered = async (id: number): Promise<void> => {
+  const markOrdered = async (id: string): Promise<void> => {
     await apiFetch<void>(`/orders/${id}/mark-ordered`, { method: 'POST' })
   }
 
   /** 未発注に戻す (§3b)。発注済 → 未発注 (ordered_at を NULL)。 */
-  const unmarkOrdered = async (id: number): Promise<void> => {
+  const unmarkOrdered = async (id: string): Promise<void> => {
     await apiFetch<void>(`/orders/${id}/unmark-ordered`, { method: 'POST' })
   }
 
-  /** 発注削除 (§3b)。論理削除 (is_deleted=true)。 */
-  const softDelete = async (id: number): Promise<void> => {
+  /** 発注削除 (§3b)。論理削除 (deleted_at を SET、第二段階規約)。 */
+  const softDelete = async (id: string): Promise<void> => {
     await apiFetch<void>(`/orders/${id}/delete`, { method: 'POST' })
   }
 
@@ -280,11 +290,11 @@ export const useOrders = () => {
    * 終端状態で変更できない発注はスキップされ、{ updated, skipped } を返す。
    */
   const bulkStatus = async (
-    orderIds: number[],
+    orderIds: string[],
     targetState: OrderState,
     cancelReason?: string,
   ): Promise<{ updated: number; skipped: number }> =>
-    await apiFetch<{ updated: number; skipped: number }>('/orders/bulk-status', {
+    await apiData<{ updated: number; skipped: number }>('/orders/bulk-status', {
       method: 'POST',
       body: { orderIds, targetState, cancelReason: cancelReason ?? null },
     })
@@ -311,15 +321,19 @@ export const useOrders = () => {
    *   - 'order' / 'management' → 単一 .xlsx
    *   - 'both'                 → 発注書+管理表 を ZIP
    */
-  const exportOrder = async (id: number, payload: ExportOrderPayload): Promise<void> => {
-    const { getIdToken } = useAuth()
+  const exportOrder = async (id: string, payload: ExportOrderPayload): Promise<void> => {
+    const { getIdToken, user } = useAuth()
     const token = await getIdToken()
     if (!token) throw new Error('未認証')
+    const tenantId = user.value?.tenantId
     const response = await $fetch.raw<Blob>(
       `${config.public.apiBase}/orders/${id}/export`,
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+        },
         body: payload,
         responseType: 'blob',
       },
@@ -336,17 +350,21 @@ export const useOrders = () => {
    *   - 'both'       → 管理表 + 各発注の発注書 を ZIP で
    */
   const bulkExport = async (
-    orderIds: number[],
+    orderIds: string[],
     format: 'order' | 'management' | 'both',
   ): Promise<void> => {
-    const { getIdToken } = useAuth()
+    const { getIdToken, user } = useAuth()
     const token = await getIdToken()
     if (!token) throw new Error('未認証')
+    const tenantId = user.value?.tenantId
     const response = await $fetch.raw<Blob>(
       `${config.public.apiBase}/orders/bulk-export`,
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+        },
         body: { orderIds, format },
         responseType: 'blob',
       },
@@ -357,16 +375,15 @@ export const useOrders = () => {
   }
 
   const communicationSuggestions = async (): Promise<CommunicationSuggestion[]> => {
-    const res = await apiFetch<{ data: CommunicationSuggestion[] }>('/orders/communication-suggestions')
-    return res.data
+    return await apiData<CommunicationSuggestion[]>('/orders/communication-suggestions')
   }
 
   /**
    * 単価サジェスト (PR2、size-aware)。SKU と発注先から現単価を解決して返す (入力補助)。
    * サーバ側で snapshot を上書きしないため、本値はフォームの初期値/補完にのみ使う。
    */
-  const priceSuggestion = async (productId: number, supplierId: number): Promise<PriceSuggestion> =>
-    await apiFetch<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
+  const priceSuggestion = async (productId: string, supplierId: string): Promise<PriceSuggestion> =>
+    await apiData<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
 
   return { list, get, create, update, cancel, markOrdered, unmarkOrdered, softDelete, bulkStatus, exportOrder, bulkExport, communicationSuggestions, priceSuggestion }
 }

@@ -1,7 +1,7 @@
 namespace Akebono.Application.Products;
 
 // ─────────────────────────────────────────────────
-// バルク登録 (POST /api/v1/products/families/complete、P-01〜P-03)
+// バルク登録 (POST /api/maker/v1/products/families/complete、P-01〜P-03)
 // ─────────────────────────────────────────────────
 
 public record CompleteFamilyRequest(
@@ -14,21 +14,21 @@ public record CompleteFamilyRequest(
 
 public record FamilyInput(
     char PlannedYearCode,
-    long ProductTypeId,
-    long ProductSeasonId,
-    long FactorySupplierId,
-    long BrandId,
-    long? FunctionId,
-    long ProductGroupId,
-    long UpperMaterialId,
-    long InsoleMaterialId,
-    long OutsoleMaterialId,
+    Guid ProductTypeId,
+    Guid ProductSeasonId,
+    Guid FactorySupplierId,
+    Guid BrandId,
+    Guid? FunctionId,
+    Guid ProductGroupId,
+    Guid UpperMaterialId,
+    Guid InsoleMaterialId,
+    Guid OutsoleMaterialId,
     string ProductName1,
     string? ProductName2,
     // 旧 品番台帳 項目 (Phase A、全て任意)
     short? ProductYear = null,
-    long? ManagementSeasonId = null,
-    long? PlannerUserId = null,
+    Guid? ManagementSeasonId = null,
+    Guid? PlannerUserId = null,
     string? ProvisionalNumber = null,
     DateOnly? SampleApprovalDate = null,
     decimal? RetailPrice = null,
@@ -42,11 +42,11 @@ public record FamilyInput(
     string? ColorRemark = null);  // 備考（色）(spec No.33、商品単位の単一テキスト)
 
 public record ExpansionInput(
-    List<long> ColorIds,
-    List<long> SizeIds);
+    List<Guid> ColorIds,
+    List<Guid> SizeIds);
 
 public record SupplierPriceInput(
-    long SupplierId,
+    Guid SupplierId,
     decimal UnitPrice,
     string CurrencyCode,
     decimal? ExchangeRate,
@@ -63,7 +63,7 @@ public record SupplierPriceInput(
     decimal? DrayageCost = null,  // ドレー代 (旧「トレー代」、設計判断Q6)
     decimal? TaxRate = null,
     // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)。NULL = 全サイズ共通の既定単価。
-    long? SizeId = null);
+    Guid? SizeId = null);
 
 // アソート/セット明細 1 行の入力 (PR3、旧 spec No.37 品番 / No.38 数量)。
 // ChildItemNumber は手入力テキスト (FK なし)。Quantity は正の整数 (CHECK quantity > 0)。
@@ -77,11 +77,11 @@ public record CompleteFamilyResponse(
     List<SupplierPriceSummary> SupplierPrices);
 
 // ─────────────────────────────────────────────────
-// 一覧 (GET /api/v1/products/families、P-04)
+// 一覧 (GET /api/maker/v1/products/families、P-04)
 // ─────────────────────────────────────────────────
 
 public record FamilyListItem(
-    long Id,
+    Guid Id,
     string Sku9Digit,
     /// <summary>品番 7 桁 (planned_year + type + season + sequence_no + factory)。新規企画品の業務キー。</summary>
     string ItemNumber,
@@ -114,24 +114,24 @@ public record FamilyListItem(
     // 一覧の SPLIT フィルタ用 ID / 値 (P-04 商品一覧の絞込をクライアント側で行うために追加。全て末尾追加 = 下位互換)。
     // 既存の *Name 列は表示用、以下の *Id 列はフィルタの一致判定用 (MasterSelect の数値 ID と突合)。
     /// <summary>商品タイプ (product_types.id)。一覧フィルタ「商品タイプ」用。</summary>
-    long ProductTypeId = 0,
+    Guid ProductTypeId = default,
     /// <summary>商品季節 (product_seasons.id)。一覧フィルタ「商品季節」用。</summary>
-    long ProductSeasonId = 0,
+    Guid ProductSeasonId = default,
     /// <summary>仕入先 = 工場 (suppliers.id)。一覧フィルタ「仕入先」用。</summary>
-    long FactorySupplierId = 0,
+    Guid FactorySupplierId = default,
     /// <summary>ブランド (brands.id)。一覧フィルタ「ブランド」用。</summary>
-    long BrandId = 0,
+    Guid BrandId = default,
     /// <summary>商品年度 (9999=通年、Phase A)。一覧フィルタ「商品年度」用 (前方/部分一致)。未設定時 null。</summary>
     short? ProductYear = null,
     /// <summary>仮番号 (Phase A)。一覧フィルタ「仮番号」用 (部分一致)。未設定時 null。</summary>
     string? ProvisionalNumber = null,
     /// <summary>企画者 (users.id、Phase A)。一覧フィルタ「企画者」用。未設定時 null。</summary>
-    long? PlannerUserId = null,
+    Guid? PlannerUserId = null,
     /// <summary>企画者名 (表示用、Phase A)。未設定時 null。</summary>
     string? PlannerName = null);
 
 // ─────────────────────────────────────────────────
-// 詳細 (GET /api/v1/products/families/{id}、P-05)
+// 詳細 (GET /api/maker/v1/products/families/{id}、P-05)
 // ─────────────────────────────────────────────────
 
 public record FamilyDetail(
@@ -144,13 +144,13 @@ public record FamilyDetail(
 
 // アソート/セット明細 1 行の返却 (PR3、旧 spec No.37/38)。LineNo は表示順 (配列順で採番)。
 public record SetComponentSummary(
-    long Id,
+    Guid Id,
     string ChildItemNumber,
     int Quantity,
     short LineNo);
 
 public record FamilyFullInfo(
-    long Id,
+    Guid Id,
     char PlannedYearCode,
     string SequenceNo,
     /// <summary>品番 7 桁 (planned_year + type + season + sequence_no + factory)。新規企画品の業務キー。</summary>
@@ -159,23 +159,23 @@ public record FamilyFullInfo(
     string ItemFamilyNumber,
     /// <summary>既存システム由来の品番 (例: FA2071F)。新規企画品では null。</summary>
     string? LegacyId,
-    long ProductTypeId,
+    Guid ProductTypeId,
     string ProductTypeName,
-    long ProductSeasonId,
+    Guid ProductSeasonId,
     string ProductSeasonName,
-    long FactorySupplierId,
+    Guid FactorySupplierId,
     string FactorySupplierName,
-    long BrandId,
+    Guid BrandId,
     string BrandName,
-    long? FunctionId,
+    Guid? FunctionId,
     string? FunctionName,
-    long ProductGroupId,
+    Guid ProductGroupId,
     string ProductGroupName,
-    long UpperMaterialId,
+    Guid UpperMaterialId,
     string UpperMaterialName,
-    long InsoleMaterialId,
+    Guid InsoleMaterialId,
     string InsoleMaterialName,
-    long OutsoleMaterialId,
+    Guid OutsoleMaterialId,
     string OutsoleMaterialName,
     string ProductName1,
     string? ProductName2,
@@ -185,9 +185,9 @@ public record FamilyFullInfo(
     DateTime UpdatedAt,
     // 旧 品番台帳 項目 (Phase A、全て任意)。表示用に管理季節名・企画者名も解決して返す。
     short? ProductYear,
-    long? ManagementSeasonId,
+    Guid? ManagementSeasonId,
     string? ManagementSeasonName,
-    long? PlannerUserId,
+    Guid? PlannerUserId,
     string? PlannerName,
     string? ProvisionalNumber,
     DateOnly? SampleApprovalDate,
@@ -206,18 +206,18 @@ public record FamilyFullInfo(
     string? UpdatedByUserName = null);
 
 public record SkuSummary(
-    long Id,
+    Guid Id,
     string Sku,
-    long ColorId,
+    Guid ColorId,
     string ColorCode,
     string ColorName,
-    long SizeId,
+    Guid SizeId,
     string SizeCode,
     string SizeName,
     bool IsDeleted);
 
 public record ImageSummary(
-    long Id,
+    Guid Id,
     short OrderNo,
     /// <summary>画像区分 (§2a)。0=企画画像 / 1=本番画像。末尾ではなく OrderNo 直後に追加。</summary>
     short ImageCategory,
@@ -236,8 +236,8 @@ public record ImageSummary(
     string? Url);
 
 public record CurrentSupplierPrice(
-    long Id,
-    long SupplierId,
+    Guid Id,
+    Guid SupplierId,
     string SupplierCode,
     string SupplierName,
     decimal UnitPrice,
@@ -258,31 +258,31 @@ public record CurrentSupplierPrice(
     decimal? TaxRate,
     // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)。SizeId=NULL は全サイズ共通の既定単価。
     // SizeName は sizes を join して解決 (表示用)。既定行 (SizeId=NULL) では null。
-    long? SizeId = null,
+    Guid? SizeId = null,
     string? SizeName = null);
 
-public record FamilySummary(long Id, string SequenceNo, char PlannedYearCode);
+public record FamilySummary(Guid Id, string SequenceNo, char PlannedYearCode);
 // SizeId は PR2 で末尾追加 (下位互換)。NULL = 全サイズ共通の既定単価。
-public record SupplierPriceSummary(long Id, long SupplierId, decimal UnitPrice, DateOnly EffectiveFrom, long? SizeId = null);
+public record SupplierPriceSummary(Guid Id, Guid SupplierId, decimal UnitPrice, DateOnly EffectiveFrom, Guid? SizeId = null);
 
 // ─────────────────────────────────────────────────
-// 更新 (PATCH /api/v1/products/families/{id}、P-05)
+// 更新 (PATCH /api/maker/v1/products/families/{id}、P-05)
 // ─────────────────────────────────────────────────
 
 public record UpdateFamilyRequest(
-    long BrandId,
-    long? FunctionId,
-    long ProductGroupId,
-    long UpperMaterialId,
-    long InsoleMaterialId,
-    long OutsoleMaterialId,
+    Guid BrandId,
+    Guid? FunctionId,
+    Guid ProductGroupId,
+    Guid UpperMaterialId,
+    Guid InsoleMaterialId,
+    Guid OutsoleMaterialId,
     string ProductName1,
     string? ProductName2,
     short Status,
     // 旧 品番台帳 項目 (Phase A、全て任意)
     short? ProductYear = null,
-    long? ManagementSeasonId = null,
-    long? PlannerUserId = null,
+    Guid? ManagementSeasonId = null,
+    Guid? PlannerUserId = null,
     string? ProvisionalNumber = null,
     DateOnly? SampleApprovalDate = null,
     decimal? RetailPrice = null,
@@ -299,11 +299,11 @@ public record UpdateFamilyRequest(
     List<SetComponentInput>? SetComponents = null);
 
 // ─────────────────────────────────────────────────
-// 新単価追加 (POST /api/v1/products/families/{id}/supplier-prices、BR-04 履歴管理)
+// 新単価追加 (POST /api/maker/v1/products/families/{id}/supplier-prices、BR-04 履歴管理)
 // ─────────────────────────────────────────────────
 
 public record AddSupplierPriceRequest(
-    long SupplierId,
+    Guid SupplierId,
     decimal UnitPrice,
     string CurrencyCode,
     decimal? ExchangeRate,
@@ -320,4 +320,4 @@ public record AddSupplierPriceRequest(
     decimal? DrayageCost = null,  // ドレー代 (旧「トレー代」、設計判断Q6)
     decimal? TaxRate = null,
     // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)。NULL = 全サイズ共通の既定単価。
-    long? SizeId = null);
+    Guid? SizeId = null);

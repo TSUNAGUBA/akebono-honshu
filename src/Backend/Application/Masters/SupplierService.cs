@@ -13,18 +13,18 @@ namespace Akebono.Application.Masters;
 public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
 {
     public async Task<List<SupplierListItem>> ListAsync(
-        long actorUserId,
+        Guid actorUserId,
         bool includeDeleted,
         CancellationToken ct = default)
     {
         var query = db.Suppliers.Include(s => s.Country).AsQueryable();
-        if (!includeDeleted) query = query.Where(s => !s.DeleteFlag);
+        if (!includeDeleted) query = query.Where(s => s.DeletedAt == null);
 
         var items = await query.OrderBy(s => s.Code).Select(s => new SupplierListItem(
             s.Id, s.Code, s.Name, s.OfficialName, s.ItemConversionCode,
             s.CountryId, s.Country != null ? s.Country.Name : null,
             s.SupplierType, s.AlertTarget,
-            s.DeleteFlag, s.CreatedAt, s.UpdatedAt,
+            s.DeletedAt, s.CreatedAt, s.UpdatedAt,
             s.CurrencyCode, s.DrayageCost)).ToListAsync(ct);
 
         await audit.LogAsync(actorUserId, "Supplier.List",
@@ -34,12 +34,12 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         return items;
     }
 
-    public async Task<Supplier?> GetAsync(long id, CancellationToken ct = default)
+    public async Task<Supplier?> GetAsync(Guid id, CancellationToken ct = default)
         => await db.Suppliers.Include(s => s.Country).FirstOrDefaultAsync(s => s.Id == id, ct);
 
-    public async Task<Supplier> CreateAsync(SupplierWriteRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<Supplier> CreateAsync(SupplierWriteRequest req, Guid actorUserId, CancellationToken ct = default)
     {
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         var entity = new Supplier
         {
             Code = req.Code,
@@ -67,7 +67,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         return entity;
     }
 
-    public async Task<Supplier?> UpdateAsync(long id, SupplierWriteRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<Supplier?> UpdateAsync(Guid id, SupplierWriteRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.Suppliers.FirstOrDefaultAsync(s => s.Id == id, ct);
         if (entity is null) return null;
@@ -81,7 +81,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         entity.AlertTarget = req.AlertTarget;
         entity.CurrencyCode = string.IsNullOrWhiteSpace(req.CurrencyCode) ? "JPY" : req.CurrencyCode.Trim().ToUpperInvariant();
         entity.DrayageCost = req.DrayageCost;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
 
         await db.SaveChangesAsync(ct);
@@ -93,13 +93,13 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         return entity;
     }
 
-    public async Task<bool> SoftDeleteAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> SoftDeleteAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.Suppliers.FirstOrDefaultAsync(s => s.Id == id, ct);
         if (entity is null) return false;
 
-        entity.DeleteFlag = true;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.DeletedAt = SystemTime.UtcNow;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -110,13 +110,13 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         return true;
     }
 
-    public async Task<bool> RestoreAsync(long id, long actorUserId, CancellationToken ct = default)
+    public async Task<bool> RestoreAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
     {
         var entity = await db.Suppliers.FirstOrDefaultAsync(s => s.Id == id, ct);
         if (entity is null) return false;
 
-        entity.DeleteFlag = false;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.DeletedAt = null;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 

@@ -4,15 +4,17 @@ import { materialRoleLabel } from '~/composables/useProduction'
 import type { MasterItem } from '~/composables/useMasters'
 
 const route = useRoute()
-const piId = computed(() => route.query.piId ? Number(route.query.piId) : null)
-const familyId = computed(() => route.query.familyId ? Number(route.query.familyId) : null)
+// 第二段階契約: piId / familyId は uuid 文字列。数値変換せず文字列のまま使う (quantity は数値のまま)。
+const piId = computed(() => route.query.piId ? String(route.query.piId) : null)
+const familyId = computed(() => route.query.familyId ? String(route.query.familyId) : null)
 const quantity = computed(() => route.query.quantity ? Number(route.query.quantity) : null)
 
 const { prepareMaterialOrder, moCreate } = useProduction()
 const { list } = useMasters()
 
-interface EditLine { materialId: number; materialName: string; requiredQuantity: number; unit: string; unitPrice: number | null }
-interface EditGroup { supplierId: number; supplierName: string | null; dueDate: string; currency: string; lines: EditLine[] }
+interface EditLine { materialId: string; materialName: string; requiredQuantity: number; unit: string; unitPrice: number | null }
+// supplierId は uuid 文字列。未選択 (推奨仕入先なし) は null で表し、!g.supplierId で判定する。
+interface EditGroup { supplierId: string | null; supplierName: string | null; dueDate: string; currency: string; lines: EditLine[] }
 
 const req = ref<MaterialRequirements | null>(null)
 const groups = ref<EditGroup[]>([])
@@ -22,7 +24,7 @@ const errorMessage = ref('')
 const bomMissing = ref(false)
 const submittingIdx = ref<number | null>(null)
 
-const defaultDue = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
+const defaultDue = todayJstPlusDays(30) // 業務日付は JST 基準
 
 const reload = async () => {
   loading.value = true; errorMessage.value = ''; bomMissing.value = false
@@ -34,16 +36,17 @@ const reload = async () => {
       quantity: quantity.value,
     })
     groups.value = req.value.groups.map(g => ({
-      supplierId: g.recommendedSupplierId ?? 0,
+      supplierId: g.recommendedSupplierId ?? null,
       supplierName: g.recommendedSupplierName,
       dueDate: defaultDue,
       currency: 'JPY',
       lines: g.lines.map(l => ({ materialId: l.materialId, materialName: l.materialName, requiredQuantity: l.requiredQuantity, unit: l.unit, unitPrice: null as number | null })),
     }))
   } catch (e) {
-    const err = e as { statusCode?: number; data?: { detail?: string } }
-    if (err.data?.detail?.includes('MORD-001')) { bomMissing.value = true }
-    else errorMessage.value = err.data?.detail ?? '所要量展開に失敗しました'
+    // BOM 未登録 (所要量未定義) は error.code = AKB-MAKER-011 で判定する
+    // (旧 MORD-001 の写像先。docs/platform-integration/README.md §6 参照)。
+    if (getApiErrorCode(e) === 'AKB-MAKER-011') { bomMissing.value = true }
+    else errorMessage.value = getApiErrorMessage(e, '所要量展開に失敗しました')
   } finally { loading.value = false }
 }
 onMounted(reload)
@@ -51,11 +54,13 @@ onMounted(reload)
 const createGroup = async (gi: number) => {
   errorMessage.value = ''
   const g = groups.value[gi]
-  if (!g.supplierId) { errorMessage.value = '素材仕入先を選択してください'; return }
+  // 未選択 (null) は弾く。以降は非 null 確定値 (supplierId) を使う。
+  const supplierId = g.supplierId
+  if (!supplierId) { errorMessage.value = '素材仕入先を選択してください'; return }
   submittingIdx.value = gi
   try {
     const res = await moCreate({
-      materialSupplierId: g.supplierId,
+      materialSupplierId: supplierId,
       productionInstructionId: piId.value,
       dueDate: g.dueDate,
       communicationText: null,
@@ -71,8 +76,7 @@ const createGroup = async (gi: number) => {
     })
     await navigateTo(`/production/material-orders/${res.id}`)
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '素材発注書の作成に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '素材発注書の作成に失敗しました')
   } finally { submittingIdx.value = null }
 }
 </script>
@@ -100,7 +104,7 @@ const createGroup = async (gi: number) => {
           <label class="block text-sm">
             <span class="text-gray-600">素材仕入先</span>
             <div class="mt-1">
-              <MasterSelect :model-value="g.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => g.supplierId = v ?? 0" />
+              <MasterSelect :model-value="g.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => g.supplierId = v" />
             </div>
           </label>
           <label class="block text-sm"><span class="text-gray-600">納入希望日</span><input v-model="g.dueDate" type="date" class="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" /></label>
@@ -136,6 +140,6 @@ const createGroup = async (gi: number) => {
       </section>
       <NuxtLink to="/production/material-orders" class="text-sm text-blue-600 hover:underline">← 素材発注書一覧へ</NuxtLink>
     </template>
-    <p class="mt-3 text-xs text-gray-400">API: POST /api/v1/material-orders/prepare → POST /api/v1/material-orders</p>
+    <p class="mt-3 text-xs text-gray-400">API: POST /api/maker/v1/material-orders/prepare → POST /api/maker/v1/material-orders</p>
   </main>
 </template>

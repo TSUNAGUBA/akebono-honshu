@@ -5,7 +5,8 @@ import type { MasterItem } from '~/composables/useMasters'
 import type { FamilyDetail } from '~/composables/useProducts'
 
 const route = useRoute()
-const familyId = computed(() => Number(route.params.familyId))
+// 第二段階契約: family id は uuid 文字列。数値変換せず文字列のまま使う。
+const familyId = computed(() => String(route.params.familyId))
 const { getBom, replaceBom } = useProduction()
 const { getFamily } = useProducts()
 const { list } = useMasters()
@@ -53,7 +54,7 @@ const reload = async () => {
 }
 onMounted(reload)
 
-const addRow = () => rows.value.push({ _key: keySeq++, materialRole: 3, materialId: materials.value[0]?.id ?? 0, requiredQtyPerUnit: 1, unit: '個', recommendedSupplierId: null, lossRate: 0, remark: null })
+const addRow = () => rows.value.push({ _key: keySeq++, materialRole: 3, materialId: materials.value[0]?.id ?? '', requiredQtyPerUnit: 1, unit: '個', recommendedSupplierId: null, lossRate: 0, remark: null })
 const removeRow = (k: number) => { rows.value = rows.value.filter(r => r._key !== k) }
 
 const save = async () => {
@@ -68,8 +69,7 @@ const save = async () => {
     successMessage.value = 'BOM を保存しました'
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? 'BOM の保存に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, 'BOM の保存に失敗しました')
   } finally { saving.value = false }
 }
 </script>
@@ -107,7 +107,7 @@ const save = async () => {
             <tr v-if="rows.length === 0"><td colspan="8" class="px-2 py-6 text-center text-sm text-gray-500">行を追加してください</td></tr>
             <tr v-for="r in rows" :key="r._key" class="border-b border-gray-100 last:border-0">
               <td class="px-2 py-1.5"><div class="w-28"><AutoComplete :model-value="String(r.materialRole)" :options="ROLES.map((ro) => ({ value: String(ro), label: materialRoleLabel(ro) }))" :allow-empty="false" :disabled="!canEdit" @update:model-value="(v) => r.materialRole = Number(v)" /></div></td>
-              <td class="px-2 py-1.5"><div class="w-44 lg:w-56"><MasterSelect :model-value="r.materialId" :items="materials" :disabled="!canEdit" placeholder="素材を検索…" @update:model-value="(v) => r.materialId = v ?? 0" /></div></td>
+              <td class="px-2 py-1.5"><div class="w-44 lg:w-56"><MasterSelect :model-value="r.materialId" :items="materials" :disabled="!canEdit" placeholder="素材を検索…" @update:model-value="(v) => r.materialId = v ?? ''" /></div></td>
               <td class="px-2 py-1.5 text-right"><input v-model.number="r.requiredQtyPerUnit" :disabled="!canEdit" type="number" min="0" step="0.0001" class="w-24 rounded-md border border-gray-300 px-2 py-1 text-right text-sm" /></td>
               <td class="px-2 py-1.5"><div class="w-20"><AutoComplete :model-value="r.unit" :options="UNITS.map((u) => ({ value: u, label: u }))" :allow-empty="false" :disabled="!canEdit" @update:model-value="(v) => r.unit = v" /></div></td>
               <td class="px-2 py-1.5"><div class="w-40 lg:w-52"><MasterSelect :model-value="r.recommendedSupplierId" :items="suppliers" :disabled="!canEdit" allow-empty empty-label="(未指定)" placeholder="仕入先を検索…" @update:model-value="(v) => r.recommendedSupplierId = v" /></div></td>

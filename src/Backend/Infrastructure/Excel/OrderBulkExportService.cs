@@ -27,29 +27,29 @@ public class OrderBulkExportService(
     private const string ZipContentType = "application/zip";
 
     public async Task<BulkExportResult> ExportAsync(
-        BulkExportRequest request, long actorUserId, CancellationToken ct = default)
+        BulkExportRequest request, Guid actorUserId, CancellationToken ct = default)
     {
         if (request.OrderIds is null || request.OrderIds.Count == 0)
-            throw new ArgumentException("発注を 1 件以上選択してください (BULK-001)");
+            throw DomainException.Validation("発注を 1 件以上選択してください");
 
         var format = ParseFormat(request.Format);
 
         // 入力 id の重複を除去しつつ選択順を保つ。
         var requestedIds = request.OrderIds.Distinct().ToList();
 
-        // is_deleted の発注は対象外 (skip して続行、原則4 非ブロッキング)。
+        // 削除済 (deleted_at) の発注は対象外 (skip して続行、原則4 非ブロッキング)。
         // 存在する非削除発注の id 集合を 1 クエリで取得し、選択順でフィルタする。
         var validIdSet = (await db.PurchaseOrders
-                .Where(o => requestedIds.Contains(o.Id) && !o.IsDeleted)
+                .Where(o => requestedIds.Contains(o.Id) && o.DeletedAt == null)
                 .Select(o => o.Id)
                 .ToListAsync(ct))
             .ToHashSet();
         var targetIds = requestedIds.Where(validIdSet.Contains).ToList();
 
         if (targetIds.Count == 0)
-            throw new ArgumentException("選択された発注に有効な (削除されていない) 発注がありません (BULK-002)");
+            throw DomainException.Validation("選択された発注に有効な (削除されていない) 発注がありません");
 
-        var now = SystemTime.Now;
+        var now = SystemTime.JstNow; // ファイル名スタンプは業務時刻 (JST)
         var stamp = now.ToString("yyyyMMdd");
 
         return format switch
@@ -57,13 +57,13 @@ public class OrderBulkExportService(
             BulkExportFormat.Management => await BuildManagementOnlyAsync(targetIds, actorUserId, ct),
             BulkExportFormat.Order => await BuildOrderZipAsync(targetIds, actorUserId, stamp, includeManagement: false, ct),
             BulkExportFormat.Both => await BuildOrderZipAsync(targetIds, actorUserId, stamp, includeManagement: true, ct),
-            _ => throw new ArgumentException($"未対応の format です: {request.Format} (BULK-003)"),
+            _ => throw DomainException.Validation($"未対応の format です: {request.Format}"),
         };
     }
 
     /// <summary>管理表のみ: 単一 .xlsx をそのまま返す (ZIP にしない)。</summary>
     private async Task<BulkExportResult> BuildManagementOnlyAsync(
-        IReadOnlyList<long> targetIds, long actorUserId, CancellationToken ct)
+        IReadOnlyList<Guid> targetIds, Guid actorUserId, CancellationToken ct)
     {
         var (fileName, content) = await managementExcel.ExportAsync(targetIds, actorUserId, ct);
         return new BulkExportResult(fileName, XlsxContentType, content);
@@ -74,10 +74,10 @@ public class OrderBulkExportService(
     /// 出力が 1 ファイルのとき (発注書のみ・対象 1 件) は ZIP にせず単一 .xlsx で返す (§3d)。
     /// 各発注の Excel 生成は既存サービス経由 = 初回出力の副作用 (凍結/採番/ログ) を発注ごとに保持する。
     /// 1 発注の生成に失敗しても他発注は続行する (原則4 非ブロッキング)。失敗は ILogger + 監査ログに記録し
-    /// 握りつぶさない。発注書が 1 件も成功しなかった場合のみ全体を失敗 (BULK-004) とする。
+    /// 握りつぶさない。発注書が 1 件も成功しなかった場合のみ全体を失敗 (DomainException AKB-SYS-002) とする。
     /// </summary>
     private async Task<BulkExportResult> BuildOrderZipAsync(
-        IReadOnlyList<long> targetIds, long actorUserId, string stamp, bool includeManagement, CancellationToken ct)
+        IReadOnlyList<Guid> targetIds, Guid actorUserId, string stamp, bool includeManagement, CancellationToken ct)
     {
         // 出力が 1 ファイル (発注書のみ・対象 1 件) のときは ZIP にせず単一 .xlsx で返す (§3d)。
         // both (管理表を含む = 2 ファイル) は 1 件でも従来どおり ZIP。orderExcel 経由のため初回出力の副作用は保持。
@@ -89,7 +89,7 @@ public class OrderBulkExportService(
 
         using var zipStream = new MemoryStream();
         var succeeded = 0;
-        var failedIds = new List<long>();
+        var failedIds = new List<Guid>();
         // leaveOpen: true で ZipArchive Dispose 後も zipStream を読めるようにする。
         // using ブロックを抜けた時点で Zip の中央ディレクトリが flush される。
         using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
@@ -142,7 +142,7 @@ public class OrderBulkExportService(
         // 発注書が 1 件も生成できなかった場合は ZIP の発注書が空になるため全体を失敗扱いとする
         // (both で管理表のみ ZIP に入って発注書ゼロ、という分かりにくい成功を避ける)。
         if (succeeded == 0)
-            throw new InvalidOperationException("発注書を 1 件も生成できませんでした (BULK-004)");
+            throw DomainException.Validation("発注書を 1 件も生成できませんでした");
 
         // ZipArchive Dispose 完了後にバイト列を取り出す (position を先頭に戻す必要はなく ToArray は全域を返す)。
         var fileName2 = includeManagement ? $"発注一括_{stamp}.zip" : $"発注書_{stamp}.zip";
@@ -174,6 +174,6 @@ public class OrderBulkExportService(
         "order" => BulkExportFormat.Order,
         "management" => BulkExportFormat.Management,
         "both" => BulkExportFormat.Both,
-        _ => throw new ArgumentException($"format は order / management / both のいずれかです: '{format}' (BULK-003)"),
+        _ => throw DomainException.Validation($"format は order / management / both のいずれかです: '{format}'"),
     };
 }

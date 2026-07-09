@@ -4,7 +4,7 @@
  * akebono-warehouse の AutoComplete を本州向けに移植（Tailwind prefix 無し・blue 系）。
  * - 入力で部分一致フィルタ（全角半角・大小文字・ハイフンを正規化）
  * - キーボード操作（↑↓/Enter/Esc）、クリア、Teleport で z 重なり回避
- * 値は string。数値 ID のマスタ選択は MasterSelect.vue 経由で使う。
+ * 値は string。uuid 文字列 ID のマスタ選択は MasterSelect.vue 経由で使う。
  */
 interface Option {
   value: string

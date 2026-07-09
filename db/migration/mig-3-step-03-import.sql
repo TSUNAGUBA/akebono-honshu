@@ -27,12 +27,13 @@ BEGIN;
 -- ────────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-    v_owner_id          BIGINT;
-    v_default_type_id   BIGINT;
-    v_default_season_id BIGINT;
-    v_default_brand_id  BIGINT;
-    v_default_group_id  BIGINT;
-    v_default_material  BIGINT;
+    -- プラットフォーム統合 第二段階: 各テーブル id が BIGSERIAL → UUID になったため変数型を追随
+    v_owner_id          UUID;
+    v_default_type_id   UUID;
+    v_default_season_id UUID;
+    v_default_brand_id  UUID;
+    v_default_group_id  UUID;
+    v_default_material  UUID;
     v_inserted_families INTEGER;
     v_inserted_products INTEGER;
     v_inserted_prices   INTEGER;
@@ -97,7 +98,7 @@ BEGIN
       v_owner_id, v_owner_id,
       fu.legacy_family_code
     FROM family_unique fu
-    ON CONFLICT (planned_year_code, product_type_id, product_season_id, sequence_no, factory_supplier_id)
+    ON CONFLICT (tenant_id, planned_year_code, product_type_id, product_season_id, sequence_no, factory_supplier_id)  -- プラットフォーム統合改修: UNIQUE 先頭に tenant_id
       DO NOTHING;
 
     GET DIAGNOSTICS v_inserted_families = ROW_COUNT;

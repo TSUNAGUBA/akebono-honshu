@@ -1,10 +1,11 @@
 /**
  * 商品関連 (P-01〜P-06) API ラッパー。
- * Backend /api/v1/products/families/** の各 endpoint を叩く。
+ * Backend /api/maker/v1/products/families/** の各 endpoint を叩く。
  */
 
 export interface FamilyListItem {
-  id: number
+  // 第二段階契約: エンティティ ID は uuid 文字列 (JSON では文字列で受け渡し)
+  id: string
   /** @deprecated 命名ミス。実体は 7 桁の品番。`itemNumber` を使用すること。 */
   sku9Digit: string
   /** 品番 7 桁 (例: NA1001A) — 新規企画品の業務キー */
@@ -37,39 +38,39 @@ export interface FamilyListItem {
   currencyCode: string
   updatedAt: string
   // 一覧の SPLIT フィルタ用 ID / 値 (P-04 商品一覧の絞込をクライアント側で行うために追加)。
-  // *Name は表示用、以下の *Id は MasterSelect の数値 ID と突合してフィルタ一致判定に使う。
+  // *Name は表示用、以下の *Id は MasterSelect の uuid 文字列 ID と突合してフィルタ一致判定に使う。
   /** 商品タイプ (product_types.id)。フィルタ「商品タイプ」用 */
-  productTypeId: number
+  productTypeId: string
   /** 商品季節 (product_seasons.id)。フィルタ「商品季節」用 */
-  productSeasonId: number
+  productSeasonId: string
   /** 仕入先 = 工場 (suppliers.id)。フィルタ「仕入先」用 */
-  factorySupplierId: number
+  factorySupplierId: string
   /** ブランド (brands.id)。フィルタ「ブランド」用 */
-  brandId: number
+  brandId: string
   /** 商品年度 (9999=通年、Phase A)。フィルタ「商品年度」用 (前方/部分一致)。未設定時 null */
   productYear: number | null
   /** 仮番号 (Phase A)。フィルタ「仮番号」用 (部分一致)。未設定時 null */
   provisionalNumber: string | null
   /** 企画者 (users.id、Phase A)。フィルタ「企画者」用。未設定時 null */
-  plannerUserId: number | null
+  plannerUserId: string | null
   /** 企画者名 (表示用、Phase A)。未設定時 null */
   plannerName: string | null
 }
 
 export interface SkuSummary {
-  id: number
+  id: string
   sku: string
-  colorId: number
+  colorId: string
   colorCode: string
   colorName: string
-  sizeId: number
+  sizeId: string
   sizeCode: string
   sizeName: string
   isDeleted: boolean
 }
 
 export interface ImageSummary {
-  id: number
+  id: string
   orderNo: number
   /** 画像区分 (§2a)。0=企画画像 / 1=本番画像。 */
   imageCategory: number
@@ -89,8 +90,8 @@ export interface ImageSummary {
 }
 
 export interface CurrentSupplierPrice {
-  id: number
-  supplierId: number
+  id: string
+  supplierId: string
   supplierCode: string
   supplierName: string
   unitPrice: number
@@ -120,13 +121,13 @@ export interface CurrentSupplierPrice {
   taxRate: number | null
   // サイズ別仕入単価 (PR2、末尾追加 = 下位互換)
   /** サイズ (sizes.id)。null = 全サイズ共通の既定単価 */
-  sizeId: number | null
+  sizeId: string | null
   /** サイズ名 (表示用)。全サイズ共通 (sizeId=null) のときは null */
   sizeName: string | null
 }
 
 export interface FamilyFullInfo {
-  id: number
+  id: string
   plannedYearCode: string
   sequenceNo: string
   /** 品番 7 桁 */
@@ -135,23 +136,23 @@ export interface FamilyFullInfo {
   itemFamilyNumber: string
   /** 既存システム由来の品番 (例: FA2071F)。新規企画品では null */
   legacyId: string | null
-  productTypeId: number
+  productTypeId: string
   productTypeName: string
-  productSeasonId: number
+  productSeasonId: string
   productSeasonName: string
-  factorySupplierId: number
+  factorySupplierId: string
   factorySupplierName: string
-  brandId: number
+  brandId: string
   brandName: string
-  functionId: number | null
+  functionId: string | null
   functionName: string | null
-  productGroupId: number
+  productGroupId: string
   productGroupName: string
-  upperMaterialId: number
+  upperMaterialId: string
   upperMaterialName: string
-  insoleMaterialId: number
+  insoleMaterialId: string
   insoleMaterialName: string
-  outsoleMaterialId: number
+  outsoleMaterialId: string
   outsoleMaterialName: string
   productName1: string
   productName2: string | null
@@ -163,11 +164,11 @@ export interface FamilyFullInfo {
   /** 商品年度 (9999=通年) */
   productYear: number | null
   /** 管理季節 (product_seasons.id) */
-  managementSeasonId: number | null
+  managementSeasonId: string | null
   /** 管理季節名 (表示用) */
   managementSeasonName: string | null
   /** 企画者 (users.id) */
-  plannerUserId: number | null
+  plannerUserId: string | null
   /** 企画者名 (表示用) */
   plannerName: string | null
   /** 仮番号 */
@@ -200,7 +201,7 @@ export interface FamilyFullInfo {
 
 // アソート/セット明細 1 行 (PR3、旧 spec No.37 品番 / No.38 数量)
 export interface SetComponentSummary {
-  id: number
+  id: string
   /** 子品番 (手入力テキスト、FK なし) */
   childItemNumber: string
   /** 数量 (正の整数) */
@@ -222,21 +223,21 @@ export interface FamilyDetail {
 export interface CompleteFamilyPayload {
   family: {
     plannedYearCode: string
-    productTypeId: number
-    productSeasonId: number
-    factorySupplierId: number
-    brandId: number
-    functionId: number | null
-    productGroupId: number
-    upperMaterialId: number
-    insoleMaterialId: number
-    outsoleMaterialId: number
+    productTypeId: string
+    productSeasonId: string
+    factorySupplierId: string
+    brandId: string
+    functionId: string | null
+    productGroupId: string
+    upperMaterialId: string
+    insoleMaterialId: string
+    outsoleMaterialId: string
     productName1: string
     productName2: string | null
     // 旧 品番台帳 項目 (Phase A、全て任意)
     productYear: number | null
-    managementSeasonId: number | null
-    plannerUserId: number | null
+    managementSeasonId: string | null
+    plannerUserId: string | null
     provisionalNumber: string | null
     sampleApprovalDate: string | null
     retailPrice: number | null
@@ -250,11 +251,11 @@ export interface CompleteFamilyPayload {
     colorRemark: string | null
   }
   expansion: {
-    colorIds: number[]
-    sizeIds: number[]
+    colorIds: string[]
+    sizeIds: string[]
   }
   supplierPrices: {
-    supplierId: number
+    supplierId: string
     unitPrice: number
     currencyCode: string
     exchangeRate: number | null
@@ -271,7 +272,7 @@ export interface CompleteFamilyPayload {
     drayageCost: number | null
     taxRate: number | null
     // サイズ別仕入単価 (PR2、null = 全サイズ共通の既定単価)
-    sizeId: number | null
+    sizeId: string | null
   }[]
   // アソート/セット明細 (PR3、末尾追加 = 下位互換)。明細なし (通常商品) の場合は空配列を送る。
   setComponents: {
@@ -290,47 +291,62 @@ export const productStatusLabel = (status: number): string => {
 }
 
 export const useProducts = () => {
-  const { apiFetch } = useApi()
-  // 画像アップロードは FormData を直接 $fetch するため apiBase を直接参照する
-  // (useOrders の Excel ダウンロードと同じパターン)。
-  const config = useRuntimeConfig()
+  const { apiFetch, apiData, apiPaged } = useApi()
 
-  const listFamilies = async (includeDeleted = false): Promise<FamilyListItem[]> => {
-    const res = await apiFetch<{ data: FamilyListItem[] }>(
-      `/products/families?includeDeleted=${includeDeleted}`,
-    )
-    return res.data
+  // 一覧はキーセットページング (AKB-DOC-12 §7.1)。limit=200 で取得し、
+  // page.hasMore の間 nextCursor を渡して「さらに読み込む」で続きを取得する。
+  // 並び順は created_at 降順 (カーソル安定化のため。旧 updated_at 順から変更)。
+  const listFamilies = async (includeDeleted = false, cursor: string | null = null): Promise<PagedItems<FamilyListItem>> => {
+    return await apiPaged<FamilyListItem>(`/products/families?includeDeleted=${includeDeleted}&${pageQuery(cursor)}`)
   }
 
-  const getFamily = async (id: number): Promise<FamilyDetail> => {
-    return await apiFetch<FamilyDetail>(`/products/families/${id}`)
+  // 全件取得 (カーソルを終端まで辿る)。参照用ピッカー等、全量が必要な画面のみで使う。
+  const listFamiliesAll = async (includeDeleted = false): Promise<FamilyListItem[]> => {
+    const all: FamilyListItem[] = []
+    let cursor: string | null = null
+    do {
+      const page = await listFamilies(includeDeleted, cursor)
+      all.push(...page.items)
+      cursor = page.page.hasMore ? page.page.nextCursor : null
+    } while (cursor)
+    return all
   }
 
+  const getFamily = async (id: string): Promise<FamilyDetail> => {
+    return await apiData<FamilyDetail>(`/products/families/${id}`)
+  }
+
+  // 作成 POST は Idempotency-Key 必須 (AKB-DOC-12 §8.1、欠落は 400 AKB-SYS-004)。
+  // 同一ペイロードの再試行には同じキーを使い回し、サーバ側リプレイで二重作成を防ぐ。
+  const completeIdem = createIdempotencySession()
   const createComplete = async (payload: CompleteFamilyPayload) => {
-    return await apiFetch<{
-      family: { id: number; sequenceNo: string; plannedYearCode: string }
+    const res = await apiData<{
+      family: { id: string; sequenceNo: string; plannedYearCode: string }
       products: SkuSummary[]
-      supplierPrices: { id: number; supplierId: number; unitPrice: number; effectiveFrom: string }[]
+      supplierPrices: { id: string; supplierId: string; unitPrice: number; effectiveFrom: string }[]
     }>('/products/families/complete', {
       method: 'POST',
       body: payload,
+      headers: { 'Idempotency-Key': completeIdem.keyFor(payload) },
     })
+    completeIdem.complete(payload)
+    return res
   }
 
-  const updateFamily = async (id: number, body: {
-    brandId: number
-    functionId: number | null
-    productGroupId: number
-    upperMaterialId: number
-    insoleMaterialId: number
-    outsoleMaterialId: number
+  const updateFamily = async (id: string, body: {
+    brandId: string
+    functionId: string | null
+    productGroupId: string
+    upperMaterialId: string
+    insoleMaterialId: string
+    outsoleMaterialId: string
     productName1: string
     productName2: string | null
     status: number
     // 旧 品番台帳 項目 (Phase A、全て任意)
     productYear: number | null
-    managementSeasonId: number | null
-    plannerUserId: number | null
+    managementSeasonId: string | null
+    plannerUserId: string | null
     provisionalNumber: string | null
     sampleApprovalDate: string | null
     retailPrice: number | null
@@ -355,12 +371,12 @@ export const useProducts = () => {
     })
   }
 
-  const deleteFamily = async (id: number): Promise<void> => {
+  const deleteFamily = async (id: string): Promise<void> => {
     await apiFetch<void>(`/products/families/${id}`, { method: 'DELETE' })
   }
 
-  const addSupplierPrice = async (id: number, body: {
-    supplierId: number
+  const addSupplierPrice = async (id: string, body: {
+    supplierId: string
     unitPrice: number
     currencyCode: string
     exchangeRate: number | null
@@ -377,39 +393,36 @@ export const useProducts = () => {
     drayageCost: number | null
     taxRate: number | null
     // サイズ別仕入単価 (PR2、null = 全サイズ共通の既定単価)
-    sizeId: number | null
+    sizeId: string | null
   }) => {
-    return await apiFetch<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string; sizeId: number | null }>(
+    return await apiData<{ id: string; supplierId: string; unitPrice: number; effectiveFrom: string; sizeId: string | null }>(
       `/products/families/${id}/supplier-prices`,
       { method: 'POST', body },
     )
   }
 
   // 画像アップロード (§2a)。category=0(企画)/1(本番) を query で指定 (multipart body は file のみ)。
-  const uploadImage = async (familyId: number, file: File, category = 0): Promise<ImageSummary> => {
+  // FormData も apiData 経由で送れる (Authorization / X-Tenant-Id を共通付与、応答はエンベロープ unwrap)。
+  const uploadImage = async (familyId: string, file: File, category = 0): Promise<ImageSummary> => {
     const form = new FormData()
     form.append('file', file)
-    const { getIdToken } = useAuth()
-    const token = await getIdToken()
-    const res = await $fetch<ImageSummary>(
-      `${config.public.apiBase}/products/families/${familyId}/images?category=${category}`,
+    return await apiData<ImageSummary>(
+      `/products/families/${familyId}/images?category=${category}`,
       {
         method: 'POST',
         body: form,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       },
     )
-    return res
   }
 
-  const deleteImage = async (familyId: number, imageId: number): Promise<void> => {
+  const deleteImage = async (familyId: string, imageId: string): Promise<void> => {
     await apiFetch<void>(`/products/families/${familyId}/images/${imageId}`, {
       method: 'DELETE',
     })
   }
 
   // 並び順変更 (§2a)。区分ごとに独立して振り直すため category を query で指定。
-  const reorderImages = async (familyId: number, orderedIds: number[], category = 0): Promise<void> => {
+  const reorderImages = async (familyId: string, orderedIds: string[], category = 0): Promise<void> => {
     await apiFetch<void>(`/products/families/${familyId}/images/reorder?category=${category}`, {
       method: 'PATCH',
       body: orderedIds,
@@ -418,6 +431,7 @@ export const useProducts = () => {
 
   return {
     listFamilies,
+    listFamiliesAll,
     getFamily,
     createComplete,
     updateFamily,

@@ -1,6 +1,8 @@
 using Akebono.Domain.Entities;
 using Akebono.Domain.Products;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Production;
 
 /// <summary>
@@ -8,16 +10,23 @@ namespace Akebono.Domain.Production;
 /// 品番1つを工場 (加工先) で生産1回ぶん指示する単位。
 /// 既存 PurchaseOrder と同じ「ヘッダ＋明細＋snapshot凍結＋first/last_exported_at」パターン。
 /// </summary>
-public class ProductionInstruction
+public class ProductionInstruction : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+
+    /// <summary>Idempotency-Key (AKB-DOC-12 §8)。作成 API のヘッダ値。NULL = 冪等キーなしで作成された行 (レガシー/シード)。</summary>
+    public string? IdempotencyKey { get; set; }
+
+    /// <summary>Idempotency-Key に対応する要求ペイロードの SHA-256 (同一キー・異ペイロード再送の検出用)。</summary>
+    public string? IdempotencyPayloadHash { get; set; }
 
     /// <summary>生産指示番号 (例: "26-PI-00001"、作成時採番)</summary>
     public string InstructionNo { get; set; } = string.Empty;
 
-    public long ProductFamilyId { get; set; }
+    public Guid ProductFamilyId { get; set; }
     /// <summary>加工先 (工場、supplier 兼用)</summary>
-    public long FactorySupplierId { get; set; }
+    public Guid FactorySupplierId { get; set; }
 
     /// <summary>生産総数量 (明細合計と一致)</summary>
     public int PlannedQuantity { get; set; }
@@ -29,7 +38,7 @@ public class ProductionInstruction
     public DateTime? InstructedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
-    public long? CancelledByUserId { get; set; }
+    public Guid? CancelledByUserId { get; set; }
     public string? CancelReason { get; set; }
 
     // 帳票宛名・表示の凍結 (初回 Excel 出力時にコピー)
@@ -42,11 +51,11 @@ public class ProductionInstruction
     public DateTime? FirstExportedAt { get; set; }
     public DateTime? LastExportedAt { get; set; }
 
-    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 
     // ナビプロパティ

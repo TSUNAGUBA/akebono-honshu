@@ -5,7 +5,7 @@ import type { MasterItem } from '~/composables/useMasters'
 
 const { listFamilies } = useProducts()
 const { list: listMaster } = useMasters()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 const { canEditMaster } = useAuth()
 
 const items = ref<FamilyListItem[]>([])
@@ -19,23 +19,23 @@ const productTypes = ref<MasterItem[]>([])
 const productSeasons = ref<MasterItem[]>([])
 const suppliers = ref<MasterItem[]>([])
 const brands = ref<MasterItem[]>([])
-interface UserOption { id: number; loginId: string; displayName: string }
+interface UserOption { id: string; loginId: string; displayName: string }
 const users = ref<UserOption[]>([])
 // 企画者ドロップダウン用 (orders/new.vue・products/new.vue と同じ整形)
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
 
 // --- 9 つの SPLIT フィルタ (AND 合成、未指定 = 全件) ---
-// dropdown は数値 ID (0/null = 未指定)、text は手入力 (部分一致)。
+// dropdown は uuid 文字列 ID (null = 未指定)、text は手入力 (部分一致)。
 const filters = ref({
   itemNumber: '',           // text 部分一致 (品番=itemNumber / 他品番=itemFamilyNumber / 旧品番=legacyId)
   productYear: '',          // text 前方/部分一致 (product_year)
-  productTypeId: null as number | null,   // dropdown
-  productSeasonId: null as number | null, // dropdown
+  productTypeId: null as string | null,   // dropdown
+  productSeasonId: null as string | null, // dropdown
   productName: '',          // text 部分一致 (product_name_1/2)
   provisionalNumber: '',    // text 部分一致 (provisional_number)
-  factorySupplierId: null as number | null, // dropdown (= 工場)
-  plannerUserId: null as number | null,     // dropdown (users)
-  brandId: null as number | null,           // dropdown
+  factorySupplierId: null as string | null, // dropdown (= 工場)
+  plannerUserId: null as string | null,     // dropdown (users)
+  brandId: null as string | null,           // dropdown
 })
 
 const clearFilters = () => {
@@ -80,18 +80,54 @@ const activeFilterCount = computed(() => {
   return n
 })
 
+// キーセットページング (AKB-DOC-12 §7.1)。limit=200 で取得し、続きは「さらに読み込む」で辿る。
+const nextCursor = ref<string | null>(null)
+const loadingMore = ref(false)
+// リロード世代。reload 開始でインクリメントし、in-flight の応答が旧世代なら破棄する
+// (フィルタ切替 reload と「さらに読み込む」の競合で、混在リスト・旧条件カーソルが残るのを防ぐ)。
+const requestSeq = ref(0)
+
 const reload = async () => {
+  const seq = ++requestSeq.value
   loading.value = true
   errorMessage.value = ''
   try {
-    items.value = await listFamilies(includeDeleted.value)
+    const page = await listFamilies(includeDeleted.value)
+    if (seq !== requestSeq.value) return
+    items.value = page.items
+    nextCursor.value = page.page.hasMore ? page.page.nextCursor : null
   } catch (e) {
+    // 旧世代 (reload で置き換え済み) の失敗は表示を汚染しない
+    if (seq !== requestSeq.value) return
     const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 401
       ? 'セッションが切れました。再ログインしてください。'
       : '商品企画一覧の取得に失敗しました'
   } finally {
-    loading.value = false
+    // 新しい reload が in-flight の場合、旧世代がローディング表示を先に消さない
+    if (seq === requestSeq.value) loading.value = false
+  }
+}
+
+const loadMore = async () => {
+  if (!nextCursor.value || loadingMore.value) return
+  const seq = requestSeq.value
+  loadingMore.value = true
+  try {
+    const page = await listFamilies(includeDeleted.value, nextCursor.value)
+    if (seq !== requestSeq.value) return
+    items.value = [...items.value, ...page.items]
+    nextCursor.value = page.page.hasMore ? page.page.nextCursor : null
+  } catch (e) {
+    // 旧世代 (reload で置き換え済み) の失敗は表示を汚染しない
+    if (seq !== requestSeq.value) return
+    const err = e as { statusCode?: number }
+    errorMessage.value = err.statusCode === 401
+      ? 'セッションが切れました。再ログインしてください。'
+      : '商品企画一覧の取得に失敗しました'
+  } finally {
+    // loadingMore は同時実行ガードのため無条件で解除する
+    loadingMore.value = false
   }
 }
 
@@ -104,13 +140,13 @@ const loadFilterSources = async () => {
       listMaster('product-seasons'),
       listMaster('suppliers'),
       listMaster('brands'),
-      apiFetch<{ data: UserOption[] }>('/users'),
+      apiData<UserOption[]>('/users'),
     ])
     productTypes.value = pt
     productSeasons.value = ps
     suppliers.value = sup
     brands.value = br
-    users.value = usr.data
+    users.value = usr
   } catch (e) {
     // フィルタ選択肢の取得失敗は致命的でない。ドロップダウンが空になるだけで一覧は使える。
     console.error('フィルタ選択肢 (マスタ/ユーザ) の取得に失敗しました', e)
@@ -183,7 +219,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
     </header>
 
     <!-- 絞込フィルタパネル (9 つの SPLIT フィルタ、AND 合成、未指定 = 全件)。
-         開閉可能 (FilterPanel)。dropdown は MasterSelect (数値 ID・allow-empty)、text は手入力で部分一致。
+         開閉可能 (FilterPanel)。dropdown は MasterSelect (uuid 文字列 ID・allow-empty)、text は手入力で部分一致。
          レスポンシブグリッド: モバイル 1 列 → sm 2 列 → lg 4 列。 -->
     <FilterPanel
       title="絞込"
@@ -310,7 +346,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
           @click="view = 'card'"
         >カード</button>
       </div>
-      <span class="text-xs text-gray-500">{{ filtered.length }} 件</span>
+      <span class="text-xs text-gray-500">{{ filtered.length }} 件{{ nextCursor ? ' (続きあり)' : '' }}</span>
     </div>
 
     <div v-if="errorMessage" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -376,7 +412,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
               </span>
             </td>
             <td class="px-3 py-2 text-xs text-gray-500">
-              {{ new Date(i.updatedAt).toLocaleDateString('ja-JP') }}
+              {{ formatJstDate(i.updatedAt) }}
             </td>
           </tr>
         </tbody>
@@ -443,8 +479,14 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
       </div>
     </section>
 
+    <div v-if="nextCursor && !loading" class="mt-3 text-center">
+      <button type="button" :disabled="loadingMore" class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50" @click="loadMore">
+        {{ loadingMore ? '読み込み中…' : 'さらに読み込む' }}
+      </button>
+    </div>
+
     <p class="mt-3 text-xs text-gray-400">
-      API: GET /api/v1/products/families
+      API: GET /api/maker/v1/products/families
     </p>
   </main>
 </template>

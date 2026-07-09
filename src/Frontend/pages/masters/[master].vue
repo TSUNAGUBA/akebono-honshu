@@ -93,8 +93,7 @@ const onSaved = async (payload: Record<string, unknown>) => {
     dialogOpen.value = false
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string }; statusMessage?: string }
-    errorMessage.value = err.data?.detail ?? err.statusMessage ?? '保存に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '保存に失敗しました')
   }
 }
 
@@ -207,7 +206,7 @@ const formatCell = (value: unknown): string => {
             <tr
               v-for="i in filteredItems"
               :key="i.id"
-              :class="{ 'bg-gray-50 text-gray-400': i.deleteFlag }"
+              :class="{ 'bg-gray-50 text-gray-400': !!i.deletedAt }"
               class="border-b border-gray-100 last:border-0"
             >
               <td class="px-3 py-2 font-mono text-sm">{{ i.code }}</td>
@@ -221,7 +220,7 @@ const formatCell = (value: unknown): string => {
               </td>
               <td class="px-3 py-2 text-sm">
                 <span
-                  v-if="i.deleteFlag"
+                  v-if="i.deletedAt"
                   class="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-600"
                 >
                   削除済
@@ -236,7 +235,7 @@ const formatCell = (value: unknown): string => {
               <td class="px-3 py-2 text-right">
                 <template v-if="canEditMaster">
                   <button
-                    v-if="!i.deleteFlag"
+                    v-if="!i.deletedAt"
                     type="button"
                     class="mr-2 text-sm text-blue-600 hover:underline"
                     @click="onEdit(i)"
@@ -244,7 +243,7 @@ const formatCell = (value: unknown): string => {
                     編集
                   </button>
                   <button
-                    v-if="!i.deleteFlag"
+                    v-if="!i.deletedAt"
                     type="button"
                     class="text-sm text-red-600 hover:underline"
                     @click="onDelete(i)"
@@ -268,7 +267,7 @@ const formatCell = (value: unknown): string => {
       </section>
 
       <p class="mt-3 text-xs text-gray-400">
-        API: GET/POST/PATCH/DELETE /api/v1/masters/{{ slug }} (audit_logs 記録)
+        API: GET/POST/PATCH/DELETE /api/maker/v1/masters/{{ slug }} (audit_logs 記録)
       </p>
 
       <MasterEditDialog

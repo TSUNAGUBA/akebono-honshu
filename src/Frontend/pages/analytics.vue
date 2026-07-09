@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 分析ダッシュボード: 既存 API（商品・発注・生産）の DB 実データを集計して KPI 表示する。
 // 各取得は独立に try/catch し、失敗しても他の指標表示を止めない（原則4 グレースフルデグラデーション）。
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 
 interface Stat { label: string; value: number; to: string; alert?: boolean }
 const stats = ref<Stat[]>([])
@@ -10,8 +10,7 @@ const partialError = ref(false)
 
 const fetchData = async (path: string): Promise<unknown[]> => {
   try {
-    const res = await apiFetch<{ data: unknown[] }>(path)
-    return res.data ?? []
+    return (await apiData<unknown[]>(path)) ?? []
   } catch (e) {
     console.error('[analytics] 取得に失敗しました', path, e)
     partialError.value = true

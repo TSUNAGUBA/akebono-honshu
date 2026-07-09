@@ -13,9 +13,9 @@ public interface IOrderManagementTableExcelService
 {
     /// <summary>
     /// 選択発注 (orderIds) を「1 発注 = 1 ワークシート」で展開した管理表 .xlsx を byte[] で返却。
-    /// is_deleted の発注は呼び出し側 (OrderBulkExportService) で除外済みの id 集合を渡す想定。
+    /// 削除済 (deleted_at) の発注は呼び出し側 (OrderBulkExportService) で除外済みの id 集合を渡す想定。
     /// </summary>
     /// <returns>(FileName, ContentBytes)</returns>
     Task<(string FileName, byte[] Content)> ExportAsync(
-        IReadOnlyList<long> orderIds, long actorUserId, CancellationToken ct = default);
+        IReadOnlyList<Guid> orderIds, Guid actorUserId, CancellationToken ct = default);
 }

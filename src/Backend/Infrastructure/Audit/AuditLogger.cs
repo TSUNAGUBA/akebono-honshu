@@ -14,22 +14,26 @@ namespace Akebono.Infrastructure.Audit;
 /// ここでの SaveChanges 失敗は warning に留め握り潰す (主データは保持される)。
 /// note は audit_logs.note (VARCHAR 512) を超えないよう安全に切詰める。
 /// </summary>
-public class AuditLogger(AkebonoDbContext db, ILogger<AuditLogger> logger) : IAuditLogger
+public class AuditLogger(AkebonoDbContext db, ITenantContext tenantContext, ILogger<AuditLogger> logger) : IAuditLogger
 {
     private const int NoteMaxLength = 512;
 
     public async Task LogAsync(
-        long? actorUserId,
+        Guid? actorUserId,
         string action,
         string? entityType = null,
-        long? entityId = null,
+        Guid? entityId = null,
         bool success = true,
         string? note = null,
         CancellationToken cancellationToken = default)
     {
         var entry = db.AuditLogs.Add(new AuditLog
         {
-            OccurredAt = SystemTime.Now,
+            // 複合 PK (id, occurred_at) では EF のクライアント側 Guid 自動生成規約が効かないため明示採番
+            Id = Guid.NewGuid(),
+            // テナント確定前のイベント (認証拒否等) は NULL のまま記録する (RLS 適用除外テーブル)
+            TenantId = tenantContext.TenantId,
+            OccurredAt = SystemTime.UtcNow,
             ActorUserId = actorUserId,
             Action = action,
             EntityType = entityType,

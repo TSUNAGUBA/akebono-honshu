@@ -38,7 +38,7 @@ SELECT
   lc.legacy_code,
   o.id, o.id
 FROM legacy_colors lc CROSS JOIN owner o
-ON CONFLICT (code) DO NOTHING;
+ON CONFLICT (tenant_id, code) DO NOTHING;  -- プラットフォーム統合改修: UNIQUE (tenant_id, code) に追随
 
 -- ────────────────────────────────────────────────────────────────────
 -- 2. サイズ補完 (旧 10 種)
@@ -57,7 +57,7 @@ INSERT INTO sizes (code, name, item_conversion_code, legacy_id, created_by_user_
 SELECT ls.code_suffix, ls.legacy_name, ls.conv_code, ls.legacy_name, o.id, o.id
 FROM legacy_sizes ls CROSS JOIN owner o
 WHERE NOT EXISTS (SELECT 1 FROM sizes WHERE sizes.name = ls.legacy_name)
-ON CONFLICT (code) DO NOTHING;
+ON CONFLICT (tenant_id, code) DO NOTHING;  -- プラットフォーム統合改修: UNIQUE (tenant_id, code) に追随
 
 -- 既存 sizes (Iter 1 Seed の S/M/L/LL 等、name 一致) に legacy_id を紐付け
 UPDATE sizes
@@ -99,7 +99,7 @@ SELECT
   ls.legacy_code,
   o.id, o.id
 FROM legacy_suppliers ls CROSS JOIN owner o CROSS JOIN jp
-ON CONFLICT (code) DO NOTHING;
+ON CONFLICT (tenant_id, code) DO NOTHING;  -- プラットフォーム統合改修: UNIQUE (tenant_id, code) に追随
 
 -- Iter 1 Seed の 336/404/437 に legacy_id を紐付け
 UPDATE suppliers

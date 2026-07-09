@@ -17,23 +17,28 @@
 --  - 補助関数は pg_temp スキーマに作成し、セッション終了時に自動破棄 (本番汚染なし)。
 --
 -- 適用: docker (db/init を docker-entrypoint-initdb.d としてマウント) では新規 DB 構築時に
---       01〜06 が番号順で自動投入される。既存 DB へは `psql -f db/init/06-demo-data.sql`
+--       01〜08 が番号順で自動投入される。既存 DB へは `psql -f db/init/06-demo-data.sql`
 --       を実行する (RUNBOOK §動作確認 参照、冪等なので何度実行しても安全)。
 -- ============================================================================
+-- プラットフォーム統合改修: tenant_id (uuid) 導入・UNIQUE を (tenant_id, ...) へ差替・TIMESTAMPTZ(UTC) 化
+-- プラットフォーム統合 第二段階: uuid PK / deleted_at 統一 / 監査パーティション
 
-SET TIMEZONE = 'Asia/Tokyo';
+SET TIMEZONE = 'UTC';
+
+-- シード用テナントコンテキスト (tenant_id 列の DEFAULT がこの GUC から解決される)
+SET app.tenant_id = '00000000-0000-4000-8000-000000000001';
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 1) マスタ拡充 (BOM・商品バリエーションに必要な分のみ、冪等)
 -- ────────────────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-    owner_id     BIGINT;
-    cn_id        BIGINT;
-    jp_id        BIGINT;
-    mc_synthetic BIGINT;
-    mc_attach    BIGINT;
-    mc_sub       BIGINT;
+    owner_id     UUID;
+    cn_id        UUID;
+    jp_id        UUID;
+    mc_synthetic UUID;
+    mc_attach    UUID;
+    mc_sub       UUID;
 BEGIN
     SELECT id INTO owner_id FROM users WHERE login_id = 'owner';
     IF owner_id IS NULL THEN RAISE EXCEPTION 'owner user not found; run 01-schema.sql first'; END IF;
@@ -41,10 +46,10 @@ BEGIN
     SELECT id INTO cn_id FROM countries WHERE code = '002';
 
     -- 付属/副資材の素材分類 (05-production で投入済の場合は何もしない)
-    INSERT INTO material_classifications (code, name, delete_flag, created_by_user_id, updated_by_user_id) VALUES
-        ('900', '付属',   FALSE, owner_id, owner_id),
-        ('901', '副資材', FALSE, owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    INSERT INTO material_classifications (code, name, deleted_at, created_by_user_id, updated_by_user_id) VALUES
+        ('900', '付属',   NULL, owner_id, owner_id),
+        ('901', '副資材', NULL, owner_id, owner_id)
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     SELECT id INTO mc_synthetic FROM material_classifications WHERE code = '002';
     SELECT id INTO mc_attach    FROM material_classifications WHERE code = '900';
@@ -57,7 +62,7 @@ BEGIN
         ('006', 'コンフォート', 'E', 'R', owner_id, owner_id),
         ('007', 'ルームシューズ','J', 'R', owner_id, owner_id),
         ('008', '健康',         'G', 'R', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- 色 (8-9桁目、item_conversion_code 2桁)
     INSERT INTO colors (code, name, item_conversion_code, created_by_user_id, updated_by_user_id) VALUES
@@ -65,12 +70,12 @@ BEGIN
         ('020', 'グリーン', '20', owner_id, owner_id),
         ('060', 'ホワイト', '60', owner_id, owner_id),
         ('070', 'イエロー', '70', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- サイズ (10-11桁目は item_conversion_code 末尾2桁)
     INSERT INTO sizes (code, name, item_conversion_code, created_by_user_id, updated_by_user_id) VALUES
         ('006', '3L', '3L', owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- 素材 (BOM の甲皮/中底/底/付属/副資材で参照)
     INSERT INTO materials (code, name, material_classification_id, created_by_user_id, updated_by_user_id) VALUES
@@ -84,18 +89,18 @@ BEGIN
         ('011', '中敷',       mc_attach,    owner_id, owner_id),
         ('012', '値札',       mc_sub,       owner_id, owner_id),
         ('013', '化粧箱',     mc_sub,       owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- 仕入先 (素材仕入先・追加工場)。supplier_type: 1=工場 / 2=素材・資材
     INSERT INTO suppliers (code, name, official_name, item_conversion_code, country_id, supplier_type, created_by_user_id, updated_by_user_id) VALUES
         ('338', '丸和資材',          'MARUWA',        'D', jp_id, 2, owner_id, owner_id),
         ('405', '寧波生地廠',        'NINGBO TEXTILE','E', cn_id, 2, owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- 連絡文章 (発注書用) 追加
     INSERT INTO document_text_purchases (code, name, body, standard_print_flag, created_by_user_id, updated_by_user_id) VALUES
         ('003', '副資材手配', '値札・証紙等の副資材は発注数×5%にて手配しています。', FALSE, owner_id, owner_id)
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT (tenant_id, code) DO NOTHING;
 END $$;
 
 -- ────────────────────────────────────────────────────────────────────────────
@@ -111,19 +116,19 @@ CREATE OR REPLACE FUNCTION pg_temp.seed_family(
     p_colors text[], p_sizes text[],
     p_price1_supplier text, p_price1 numeric, p_price1_ccy text,
     p_price2_supplier text, p_price2 numeric, p_price2_ccy text
-) RETURNS bigint
+) RETURNS uuid
 LANGUAGE plpgsql AS $func$
 DECLARE
-    v_owner BIGINT;
-    v_type_id BIGINT;    v_type_conv TEXT;
-    v_season_id BIGINT;  v_season_conv TEXT;
-    v_factory_id BIGINT; v_factory_conv TEXT;
-    v_brand_id BIGINT; v_func_id BIGINT; v_group_id BIGINT;
-    v_upper BIGINT; v_insole BIGINT; v_outsole BIGINT; v_attach BIGINT; v_sub BIGINT;
-    v_p1 BIGINT; v_p2 BIGINT;
-    v_family BIGINT;
-    v_cc TEXT; v_color_id BIGINT; v_color_conv TEXT;
-    v_sc TEXT; v_size_id BIGINT; v_size_conv TEXT;
+    v_owner UUID;
+    v_type_id UUID;    v_type_conv TEXT;
+    v_season_id UUID;  v_season_conv TEXT;
+    v_factory_id UUID; v_factory_conv TEXT;
+    v_brand_id UUID; v_func_id UUID; v_group_id UUID;
+    v_upper UUID; v_insole UUID; v_outsole UUID; v_attach UUID; v_sub UUID;
+    v_p1 UUID; v_p2 UUID;
+    v_family UUID;
+    v_cc TEXT; v_color_id UUID; v_color_conv TEXT;
+    v_sc TEXT; v_size_id UUID; v_size_conv TEXT;
     v_sku TEXT;
 BEGIN
     SELECT id INTO v_owner FROM users WHERE login_id = 'owner';
@@ -207,15 +212,15 @@ $func$;
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION pg_temp.seed_po(
     p_mgmt text, p_family text, p_supplier text, p_dest text, p_dept text, p_wh text,
-    p_due date, p_status int, p_order_no text, p_exported_at timestamp, p_qtys int[]
+    p_due date, p_status int, p_order_no text, p_exported_at timestamptz, p_qtys int[]
 ) RETURNS void
 LANGUAGE plpgsql AS $func$
 DECLARE
-    v_owner BIGINT; v_fam BIGINT; v_name TEXT; v_sup BIGINT; v_dest BIGINT; v_dept BIGINT; v_wh BIGINT;
-    v_price NUMERIC; v_ccy TEXT; v_po BIGINT; v_i INT := 0; r RECORD;
+    v_owner UUID; v_fam UUID; v_name TEXT; v_sup UUID; v_dest UUID; v_dept UUID; v_wh UUID;
+    v_price NUMERIC; v_ccy TEXT; v_po UUID; v_i INT := 0; r RECORD;
 BEGIN
     SELECT id INTO v_owner FROM users WHERE login_id = 'owner';
-    SELECT id, product_name_1 INTO v_fam, v_name FROM product_families WHERE product_name_1 = p_family AND NOT is_deleted ORDER BY id LIMIT 1;
+    SELECT id, product_name_1 INTO v_fam, v_name FROM product_families WHERE product_name_1 = p_family AND deleted_at IS NULL ORDER BY id LIMIT 1;
     SELECT id INTO v_sup  FROM suppliers WHERE code = p_supplier;
     SELECT id INTO v_dest FROM delivery_destinations WHERE code = p_dest;
     SELECT id INTO v_dept FROM departments WHERE code = p_dept;
@@ -224,11 +229,11 @@ BEGIN
 
     -- 単価スナップショット: 発注先の現在有効単価、無ければ当該品番の任意の単価
     SELECT unit_price, currency_code INTO v_price, v_ccy FROM product_supplier_prices
-        WHERE product_family_id = v_fam AND supplier_id = v_sup AND effective_to IS NULL AND NOT is_deleted
+        WHERE product_family_id = v_fam AND supplier_id = v_sup AND effective_to IS NULL AND deleted_at IS NULL
         ORDER BY effective_from DESC LIMIT 1;
     IF v_price IS NULL THEN
         SELECT unit_price, currency_code INTO v_price, v_ccy FROM product_supplier_prices
-            WHERE product_family_id = v_fam AND NOT is_deleted ORDER BY effective_from DESC LIMIT 1;
+            WHERE product_family_id = v_fam AND deleted_at IS NULL ORDER BY effective_from DESC LIMIT 1;
     END IF;
     v_price := COALESCE(v_price, 1500.00); v_ccy := COALESCE(v_ccy, 'JPY');
 
@@ -245,11 +250,11 @@ BEGIN
         v_sup, v_dest, v_dept, v_wh, p_due,
         v_owner, v_owner, '納期厳守のほどよろしくお願いいたします。',
         p_exported_at, p_exported_at, v_owner, v_owner
-    ) ON CONFLICT (mgmt_no) DO NOTHING
+    ) ON CONFLICT (tenant_id, mgmt_no) DO NOTHING
     RETURNING id INTO v_po;
     IF v_po IS NULL THEN SELECT id INTO v_po FROM purchase_orders WHERE mgmt_no = p_mgmt; END IF;
 
-    FOR r IN SELECT id, sku FROM products WHERE product_family_id = v_fam AND NOT is_deleted ORDER BY id LIMIT array_length(p_qtys, 1) LOOP
+    FOR r IN SELECT id, sku FROM products WHERE product_family_id = v_fam AND deleted_at IS NULL ORDER BY id LIMIT array_length(p_qtys, 1) LOOP
         v_i := v_i + 1;
         INSERT INTO purchase_order_lines (
             purchase_order_id, line_no, product_id, sku_snapshot, product_name_snapshot,
@@ -270,21 +275,21 @@ $func$;
 -- 4) 補助関数: 生産指示書 (加工指図書) + 明細 (色×サイズ別)
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION pg_temp.seed_pi(
-    p_no text, p_family text, p_factory text, p_per_line int, p_due date, p_status int, p_exported_at timestamp
+    p_no text, p_family text, p_factory text, p_per_line int, p_due date, p_status int, p_exported_at timestamptz
 ) RETURNS void
 LANGUAGE plpgsql AS $func$
 DECLARE
-    v_owner BIGINT; v_fam BIGINT; v_name TEXT; v_fac BIGINT; v_fac_name TEXT; v_fac_code TEXT;
-    v_cnt INT; v_sku9 TEXT; v_pi BIGINT; v_i INT := 0; r RECORD;
-    v_instructed TIMESTAMP; v_completed TIMESTAMP; v_cancelled TIMESTAMP;
+    v_owner UUID; v_fam UUID; v_name TEXT; v_fac UUID; v_fac_name TEXT; v_fac_code TEXT;
+    v_cnt INT; v_sku9 TEXT; v_pi UUID; v_i INT := 0; r RECORD;
+    v_instructed TIMESTAMPTZ; v_completed TIMESTAMPTZ; v_cancelled TIMESTAMPTZ;
 BEGIN
     SELECT id INTO v_owner FROM users WHERE login_id = 'owner';
-    SELECT id, product_name_1 INTO v_fam, v_name FROM product_families WHERE product_name_1 = p_family AND NOT is_deleted ORDER BY id LIMIT 1;
+    SELECT id, product_name_1 INTO v_fam, v_name FROM product_families WHERE product_name_1 = p_family AND deleted_at IS NULL ORDER BY id LIMIT 1;
     SELECT id, official_name, item_conversion_code INTO v_fac, v_fac_name, v_fac_code FROM suppliers WHERE code = p_factory;
     IF v_fam IS NULL THEN RAISE NOTICE 'seed_pi: family % not found, skipped', p_family; RETURN; END IF;
 
-    SELECT count(*) INTO v_cnt FROM products WHERE product_family_id = v_fam AND NOT is_deleted;
-    SELECT left(sku, 9) INTO v_sku9 FROM products WHERE product_family_id = v_fam AND NOT is_deleted ORDER BY sku LIMIT 1;
+    SELECT count(*) INTO v_cnt FROM products WHERE product_family_id = v_fam AND deleted_at IS NULL;
+    SELECT left(sku, 9) INTO v_sku9 FROM products WHERE product_family_id = v_fam AND deleted_at IS NULL ORDER BY sku LIMIT 1;
 
     v_instructed := CASE WHEN p_status IN (1, 2) THEN COALESCE(p_exported_at, NOW() - INTERVAL '5 day') END;
     v_completed  := CASE WHEN p_status = 2 THEN NOW() - INTERVAL '1 day' END;
@@ -305,11 +310,11 @@ BEGIN
         CASE WHEN p_status >= 1 THEN v_sku9 END,
         CASE WHEN p_status >= 1 THEN v_name END,
         '色サイズ別の数量にて加工をお願いいたします。', p_exported_at, p_exported_at, v_owner, v_owner
-    ) ON CONFLICT (instruction_no) DO NOTHING
+    ) ON CONFLICT (tenant_id, instruction_no) DO NOTHING
     RETURNING id INTO v_pi;
     IF v_pi IS NULL THEN SELECT id INTO v_pi FROM production_instructions WHERE instruction_no = p_no; END IF;
 
-    FOR r IN SELECT id, sku FROM products WHERE product_family_id = v_fam AND NOT is_deleted ORDER BY id LOOP
+    FOR r IN SELECT id, sku FROM products WHERE product_family_id = v_fam AND deleted_at IS NULL ORDER BY id LOOP
         v_i := v_i + 1;
         INSERT INTO production_instruction_lines (
             production_instruction_id, line_no, product_id, sku_snapshot, product_name_snapshot, quantity,
@@ -324,16 +329,16 @@ $func$;
 -- 5) 補助関数: 素材発注書 (生地材料発注) + 明細 (BOM × 生産数量で所要量展開)
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION pg_temp.seed_mo(
-    p_no text, p_supplier text, p_pi_no text, p_family text, p_due date, p_status int, p_prod_qty int, p_exported_at timestamp
+    p_no text, p_supplier text, p_pi_no text, p_family text, p_due date, p_status int, p_prod_qty int, p_exported_at timestamptz
 ) RETURNS void
 LANGUAGE plpgsql AS $func$
 DECLARE
-    v_owner BIGINT; v_sup BIGINT; v_sup_name TEXT; v_sup_code TEXT; v_pi BIGINT; v_fam BIGINT;
-    v_mo BIGINT; v_i INT := 0; r RECORD; v_price NUMERIC;
+    v_owner UUID; v_sup UUID; v_sup_name TEXT; v_sup_code TEXT; v_pi UUID; v_fam UUID;
+    v_mo UUID; v_i INT := 0; r RECORD; v_price NUMERIC;
 BEGIN
     SELECT id INTO v_owner FROM users WHERE login_id = 'owner';
     SELECT id, official_name, item_conversion_code INTO v_sup, v_sup_name, v_sup_code FROM suppliers WHERE code = p_supplier;
-    SELECT id INTO v_fam FROM product_families WHERE product_name_1 = p_family AND NOT is_deleted ORDER BY id LIMIT 1;
+    SELECT id INTO v_fam FROM product_families WHERE product_name_1 = p_family AND deleted_at IS NULL ORDER BY id LIMIT 1;
     IF p_pi_no IS NOT NULL THEN SELECT id INTO v_pi FROM production_instructions WHERE instruction_no = p_pi_no; END IF;
     IF v_fam IS NULL THEN RAISE NOTICE 'seed_mo: family % not found, skipped', p_family; RETURN; END IF;
 
@@ -350,14 +355,14 @@ BEGIN
         CASE WHEN p_status = 9 THEN '生産計画変更により中止' END,
         v_sup_name, v_sup_code, '下記所要量にて手配をお願いいたします。',
         p_exported_at, p_exported_at, v_owner, v_owner
-    ) ON CONFLICT (order_no) DO NOTHING
+    ) ON CONFLICT (tenant_id, order_no) DO NOTHING
     RETURNING id INTO v_mo;
     IF v_mo IS NULL THEN SELECT id INTO v_mo FROM material_orders WHERE order_no = p_no; END IF;
 
     -- BOM の各部位を所要量展開: required = qty_per_unit × 生産数 × (1 + loss_rate)
     FOR r IN SELECT pm.material_id, m.name AS mname, pm.material_role, pm.required_qty_per_unit, pm.unit, pm.loss_rate
              FROM product_materials pm JOIN materials m ON m.id = pm.material_id
-             WHERE pm.product_family_id = v_fam AND NOT pm.is_deleted
+             WHERE pm.product_family_id = v_fam AND pm.deleted_at IS NULL
              ORDER BY pm.material_role LOOP
         v_i := v_i + 1;
         v_price := CASE r.material_role WHEN 0 THEN 850.00 WHEN 1 THEN 160.00 WHEN 2 THEN 380.00 WHEN 3 THEN 45.00 ELSE 18.00 END;
@@ -418,8 +423,8 @@ SELECT pg_temp.seed_family('N','003','003','060','336','002','001','001',
 --          order_no(出力済のみ), 出力日時, 明細数量[]
 -- ────────────────────────────────────────────────────────────────────────────
 SELECT pg_temp.seed_po('26-00101','婦人コンフォートサンダル','404','001','001','007', DATE '2026-08-20', 0, NULL, NULL, ARRAY[120,180,90]);
-SELECT pg_temp.seed_po('26-00102','婦人スタイリッシュパンプス','336','002','001','007', DATE '2026-07-31', 0, 'S00021', TIMESTAMP '2026-06-10 10:30', ARRAY[100,150,80]);
-SELECT pg_temp.seed_po('26-00103','婦人ショートブーツ','404','001','002','007', DATE '2026-09-30', 0, 'S00022', TIMESTAMP '2026-06-12 14:05', ARRAY[200,160,60]);
+SELECT pg_temp.seed_po('26-00102','婦人スタイリッシュパンプス','336','002','001','007', DATE '2026-07-31', 0, 'S00021', TIMESTAMPTZ '2026-06-10 10:30+09', ARRAY[100,150,80]);
+SELECT pg_temp.seed_po('26-00103','婦人ショートブーツ','404','001','002','007', DATE '2026-09-30', 0, 'S00022', TIMESTAMPTZ '2026-06-12 14:05+09', ARRAY[200,160,60]);
 SELECT pg_temp.seed_po('26-00104','紳士ビジネスサンダル','437','002','002','007', DATE '2026-08-10', 1, NULL, NULL, ARRAY[80,60]);
 SELECT pg_temp.seed_po('26-00105','婦人ヘルスウォーカー','336','001','001','007', DATE '2026-10-15', 0, NULL, NULL, ARRAY[60,90,70,40]);
 
@@ -427,18 +432,18 @@ SELECT pg_temp.seed_po('26-00105','婦人ヘルスウォーカー','336','001','
 -- 8) 生産指示書 (Issued / Completed / Draft / Cancelled を混在)
 --    引数: instruction_no, family名, 加工先, 明細1行あたり数量, 希望納期, status(0/1/2/9), 出力日時
 -- ────────────────────────────────────────────────────────────────────────────
-SELECT pg_temp.seed_pi('26-PI-00001','婦人コンフォートサンダル','404', 60, DATE '2026-07-31', 1, TIMESTAMP '2026-06-05 09:00');  -- 指示済
-SELECT pg_temp.seed_pi('26-PI-00002','婦人スタイリッシュパンプス','336', 50, DATE '2026-07-10', 1, TIMESTAMP '2026-06-08 09:00'); -- 指示済 (素材未)
-SELECT pg_temp.seed_pi('26-PI-00003','婦人ショートブーツ','404', 70, DATE '2026-09-15', 2, TIMESTAMP '2026-05-20 09:00');         -- 完了
+SELECT pg_temp.seed_pi('26-PI-00001','婦人コンフォートサンダル','404', 60, DATE '2026-07-31', 1, TIMESTAMPTZ '2026-06-05 09:00+09');  -- 指示済
+SELECT pg_temp.seed_pi('26-PI-00002','婦人スタイリッシュパンプス','336', 50, DATE '2026-07-10', 1, TIMESTAMPTZ '2026-06-08 09:00+09'); -- 指示済 (素材未)
+SELECT pg_temp.seed_pi('26-PI-00003','婦人ショートブーツ','404', 70, DATE '2026-09-15', 2, TIMESTAMPTZ '2026-05-20 09:00+09');         -- 完了
 SELECT pg_temp.seed_pi('26-PI-00004','ルームシューズ ボア','437', 80, DATE '2026-08-31', 0, NULL);                                -- 下書き (未)
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 9) 素材発注書 (Ordered / Draft / Cancelled、生産指示由来 + 単独)
 --    引数: order_no, 素材仕入先, 由来PI(無ければNULL), family名, 希望納期, status(0/1/9), 生産数量, 出力日時
 -- ────────────────────────────────────────────────────────────────────────────
-SELECT pg_temp.seed_mo('26-MO-00001','405','26-PI-00001','婦人コンフォートサンダル', DATE '2026-06-30', 1, 540, TIMESTAMP '2026-06-06 11:00'); -- 発注済
-SELECT pg_temp.seed_mo('26-MO-00002','405','26-PI-00003','婦人ショートブーツ',       DATE '2026-06-20', 1, 420, TIMESTAMP '2026-05-22 11:00'); -- 発注済
-SELECT pg_temp.seed_mo('26-MO-00003','338', NULL,        'クッションマット',         DATE '2026-07-15', 1, 300, TIMESTAMP '2026-06-09 11:00'); -- 単独発注 (素材済/指示未)
+SELECT pg_temp.seed_mo('26-MO-00001','405','26-PI-00001','婦人コンフォートサンダル', DATE '2026-06-30', 1, 540, TIMESTAMPTZ '2026-06-06 11:00+09'); -- 発注済
+SELECT pg_temp.seed_mo('26-MO-00002','405','26-PI-00003','婦人ショートブーツ',       DATE '2026-06-20', 1, 420, TIMESTAMPTZ '2026-05-22 11:00+09'); -- 発注済
+SELECT pg_temp.seed_mo('26-MO-00003','338', NULL,        'クッションマット',         DATE '2026-07-15', 1, 300, TIMESTAMPTZ '2026-06-09 11:00+09'); -- 単独発注 (素材済/指示未)
 SELECT pg_temp.seed_mo('26-MO-00004','405','26-PI-00002','婦人スタイリッシュパンプス', DATE '2026-07-05', 0, 300, NULL);                          -- 下書き
 
 -- ────────────────────────────────────────────────────────────────────────────

@@ -1,14 +1,23 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Orders;
 
 /// <summary>
 /// 発注書ヘッダ (Phase 5 §5.1)。
 /// Phase 6 簡素化: status 2 値 (Active/Cancelled)、Excel 出力は status と独立。
 /// </summary>
-public class PurchaseOrder
+public class PurchaseOrder : ITenantScoped
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+
+    /// <summary>Idempotency-Key (AKB-DOC-12 §8)。作成 API のヘッダ値。NULL = 冪等キーなしで作成された行 (レガシー/シード)。</summary>
+    public string? IdempotencyKey { get; set; }
+
+    /// <summary>Idempotency-Key に対応する要求ペイロードの SHA-256 (同一キー・異ペイロード再送の検出用)。</summary>
+    public string? IdempotencyPayloadHash { get; set; }
 
     /// <summary>作成管理番号 (作成時採番、例: "26-00001"、BR-03)</summary>
     public string MgmtNo { get; set; } = string.Empty;
@@ -29,50 +38,48 @@ public class PurchaseOrder
 
     public OrderStatus Status { get; set; }
     public DateTime? CancelledAt { get; set; }
-    public long? CancelledByUserId { get; set; }
+    public Guid? CancelledByUserId { get; set; }
     public string? CancelReason { get; set; }
 
     // 発注状態 4 値モデル (§3b)。未発注 / 発注済 / 発注中止 / 発注削除。
     // 「発注済」はユーザー操作で明示設定する (OrderedAt)。ダウンロード (Excel 出力) では状態を変えない。
-    // 導出優先順位: 発注削除(IsDeleted) > 発注中止(Status=Cancelled) > 発注済(OrderedAt!=null) > 未発注。
+    // 導出優先順位: 発注削除(DeletedAt!=null) > 発注中止(Status=Cancelled) > 発注済(OrderedAt!=null) > 未発注。
     /// <summary>発注済日時 (NULL=未発注)。発注を「発注済にする」操作で SET、「未発注に戻す」で NULL。出力とは独立 (§3b)。</summary>
     public DateTime? OrderedAt { get; set; }
     /// <summary>発注済にした操作者 (users.id)</summary>
-    public long? OrderedByUserId { get; set; }
+    public Guid? OrderedByUserId { get; set; }
     // 納品完了 (旧 5 値モデル) は §3b で廃止。列は後方互換のため残すが、状態導出・UI では使用しない。
     /// <summary>[廃止] 納品完了日時。§3b の 4 値化で状態導出から除外 (列は後方互換のため保持)。</summary>
     public DateTime? DeliveredAt { get; set; }
     /// <summary>[廃止] 納品完了操作者 (users.id)</summary>
-    public long? DeliveredByUserId { get; set; }
-    /// <summary>論理削除フラグ (TRUE=発注削除)。NOT NULL DEFAULT FALSE。物理削除はしない</summary>
-    public bool IsDeleted { get; set; }
-    /// <summary>論理削除日時</summary>
+    public Guid? DeliveredByUserId { get; set; }
+    /// <summary>論理削除日時 (非NULL=発注削除)。物理削除はしない (第二段階規約: deleted_at 統一)</summary>
     public DateTime? DeletedAt { get; set; }
     /// <summary>論理削除操作者 (users.id)</summary>
-    public long? DeletedByUserId { get; set; }
+    public Guid? DeletedByUserId { get; set; }
 
-    public long SupplierId { get; set; }
+    public Guid SupplierId { get; set; }
     /// <summary>仕入先 official_name のスナップショット (F-22 帳票宛名第 1 要素)</summary>
     public string? SupplierOfficialNameSnapshot { get; set; }
     /// <summary>仕入先 code のスナップショット (F-22 帳票宛名第 2 要素)</summary>
     public string? SupplierCodeSnapshot { get; set; }
 
-    public long DeliveryDestinationId { get; set; }
+    public Guid DeliveryDestinationId { get; set; }
     /// <summary>取引先名スナップショット (内部識別用、Excel 帳票には印字されない)</summary>
     public string? CustomerNameSnapshot { get; set; }
 
-    public long DepartmentId { get; set; }
-    public long WarehouseId { get; set; }
+    public Guid DepartmentId { get; set; }
+    public Guid WarehouseId { get; set; }
     public DateOnly DueDate { get; set; }
 
-    public long OrdererUserId { get; set; }
-    public long? SubOrderer1UserId { get; set; }
-    public long? SubOrderer2UserId { get; set; }
-    public long? SubOrderer3UserId { get; set; }
-    public long? SubOrderer4UserId { get; set; }
-    public long? SubOrderer5UserId { get; set; }
-    public long? SubOrderer6UserId { get; set; }
-    public long ManagerUserId { get; set; }
+    public Guid OrdererUserId { get; set; }
+    public Guid? SubOrderer1UserId { get; set; }
+    public Guid? SubOrderer2UserId { get; set; }
+    public Guid? SubOrderer3UserId { get; set; }
+    public Guid? SubOrderer4UserId { get; set; }
+    public Guid? SubOrderer5UserId { get; set; }
+    public Guid? SubOrderer6UserId { get; set; }
+    public Guid ManagerUserId { get; set; }
 
     // 旧 発注書 国内/海外 項目 (Phase B、is_overseas 以外 NULL 許容 = 既存行は NULL のまま下位互換)
     /// <summary>発注区分 (国内=false/海外=true)。NOT NULL DEFAULT FALSE。</summary>
@@ -88,9 +95,9 @@ public class PurchaseOrder
     /// <summary>海外出港日</summary>
     public DateOnly? OverseasDepartureDate { get; set; }
     /// <summary>納入倉庫2 (warehouses.id)</summary>
-    public long? Warehouse2Id { get; set; }
+    public Guid? Warehouse2Id { get; set; }
     /// <summary>納入倉庫3 (warehouses.id)</summary>
-    public long? Warehouse3Id { get; set; }
+    public Guid? Warehouse3Id { get; set; }
 
     public string? CommunicationText { get; set; }
     // 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」。新フローの SoT。
@@ -111,9 +118,9 @@ public class PurchaseOrder
     public DateTime? LastExportedAt { get; set; }
 
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
     public string? LegacyId { get; set; }
 
     // ナビプロパティ

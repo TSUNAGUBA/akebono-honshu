@@ -1,16 +1,19 @@
 using Akebono.Domain.Products;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Production;
 
 /// <summary>
 /// 生産指示明細 (色×サイズ別の生産数量、Phase 5 data-design-production §4.3)。
 /// </summary>
-public class ProductionInstructionLine
+public class ProductionInstructionLine : ITenantScoped
 {
-    public long Id { get; set; }
-    public long ProductionInstructionId { get; set; }
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid ProductionInstructionId { get; set; }
     public short LineNo { get; set; }
-    public long ProductId { get; set; }
+    public Guid ProductId { get; set; }
 
     /// <summary>11桁品番スナップショット</summary>
     public string SkuSnapshot { get; set; } = string.Empty;
@@ -19,9 +22,9 @@ public class ProductionInstructionLine
     public int Quantity { get; set; }
 
     public DateTime CreatedAt { get; set; }
-    public long CreatedByUserId { get; set; }
+    public Guid CreatedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; }
-    public long UpdatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
 
     // ナビプロパティ
     public ProductionInstruction? ProductionInstruction { get; set; }

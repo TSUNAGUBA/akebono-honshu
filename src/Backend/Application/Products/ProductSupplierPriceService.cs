@@ -17,13 +17,13 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
 {
     /// <summary>新単価を追加 (BR-04 履歴管理)。旧単価の effective_to を自動更新。</summary>
     public async Task<ProductSupplierPrice> AddAsync(
-        long familyId,
+        Guid familyId,
         AddSupplierPriceRequest req,
-        long actorUserId,
+        Guid actorUserId,
         CancellationToken ct = default)
     {
         if (req.UnitPrice <= 0)
-            throw new ArgumentException("単価は 0 より大きい値を指定してください (PRICE-002)");
+            throw DomainException.Validation("単価は 0 より大きい値を指定してください");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -38,10 +38,10 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
                          && p.SupplierId == req.SupplierId
                          && (req.SizeId == null ? p.SizeId == null : p.SizeId == req.SizeId)
                          && p.EffectiveTo == null
-                         && !p.IsDeleted)
+                         && p.DeletedAt == null)
                 .FirstOrDefaultAsync(ct);
 
-            var now = SystemTime.Now;
+            var now = SystemTime.UtcNow;
             if (current is not null)
             {
                 current.EffectiveTo = req.EffectiveFrom.AddDays(-1);
@@ -95,12 +95,12 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
 
     /// <summary>履歴を含む単価一覧 (現在 + 過去)。</summary>
     public async Task<List<ProductSupplierPrice>> ListHistoryAsync(
-        long familyId, long actorUserId, CancellationToken ct = default)
+        Guid familyId, Guid actorUserId, CancellationToken ct = default)
     {
         var items = await db.ProductSupplierPrices
             .Include(p => p.Supplier)
             .Include(p => p.Size)  // PR2: サイズ別単価の表示名解決 (NULL-size 既定行では null)
-            .Where(p => p.ProductFamilyId == familyId && !p.IsDeleted)
+            .Where(p => p.ProductFamilyId == familyId && p.DeletedAt == null)
             .OrderByDescending(p => p.EffectiveFrom)
             .ToListAsync(ct);
 
@@ -122,7 +122,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
     /// 入力補助 (サジェスト) の解決にのみ使う。発注の unit_price_snapshot をサーバ側で上書きしない。
     /// </summary>
     public async Task<ProductSupplierPrice?> ResolveCurrentPriceAsync(
-        long familyId, long supplierId, long? sizeId, CancellationToken ct = default)
+        Guid familyId, Guid supplierId, Guid? sizeId, CancellationToken ct = default)
     {
         // 1) そのサイズ専用の現在有効行 (sizeId が指定されている場合のみ)。
         if (sizeId is not null)
@@ -132,7 +132,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
                          && p.SupplierId == supplierId
                          && p.SizeId == sizeId   // 非NULL 指定なので size_id = @p で正しく一致
                          && p.EffectiveTo == null
-                         && !p.IsDeleted)
+                         && p.DeletedAt == null)
                 .OrderByDescending(p => p.EffectiveFrom)
                 .FirstOrDefaultAsync(ct);
             if (sizeSpecific is not null) return sizeSpecific;
@@ -144,7 +144,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
                      && p.SupplierId == supplierId
                      && p.SizeId == null
                      && p.EffectiveTo == null
-                     && !p.IsDeleted)
+                     && p.DeletedAt == null)
             .OrderByDescending(p => p.EffectiveFrom)
             .FirstOrDefaultAsync(ct);
     }

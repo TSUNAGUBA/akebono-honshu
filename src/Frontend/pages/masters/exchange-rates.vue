@@ -2,18 +2,19 @@
 // 為替マスタ (§2f)。年月 (YYYY-MM) × 通貨ごとの対円レートを CRUD する専用ページ。
 // code/name を持たない bespoke master のため、汎用 [master].vue ではなく専用実装 (仕入先とは別ページ)。
 const { canEditMaster } = useAuth()
-const { apiFetch } = useApi()
+const { apiFetch, apiData } = useApi()
 
 interface ExchangeRateItem {
-  id: number
+  // 第二段階契約: エンティティ ID は uuid 文字列
+  id: string
   yearMonth: string
   currencyCode: string
   rate: number
-  deleteFlag: boolean
+  deletedAt: string | null
   createdAt: string
   updatedAt: string
 }
-interface CurrencyItem { id: number; code: string; name: string }
+interface CurrencyItem { id: string; code: string; name: string }
 
 const items = ref<ExchangeRateItem[]>([])
 // 通貨マスタ (対象通貨のドロップダウン用。JPY を除いた外貨のみ選択肢に出す)。
@@ -27,8 +28,8 @@ const successMessage = ref('')
 const submitting = ref(false)
 
 // 追加/編集フォーム。editingId=null は新規、非 null は該当 id の編集。
-const nowMonth = new Date().toISOString().slice(0, 7) // 'YYYY-MM'
-const editingId = ref<number | null>(null)
+const nowMonth = currentMonthJst() // 'YYYY-MM' (JST 基準。UTC 由来だと月初 09:00 まで前月になる)
+const editingId = ref<string | null>(null)
 const form = ref({ yearMonth: nowMonth, currencyCode: '', rate: null as number | null })
 
 const resetForm = () => {
@@ -39,8 +40,7 @@ const resetForm = () => {
 // 通貨マスタは対象通貨ドロップダウン用の補助データ。失敗しても本体は使える (原則4 非ブロッキング)。
 const loadCurrencies = async () => {
   try {
-    const res = await apiFetch<{ data: CurrencyItem[] }>('/masters/currencies?includeDeleted=false')
-    currencies.value = res.data
+    currencies.value = await apiData<CurrencyItem[]>('/masters/currencies?includeDeleted=false')
     if (form.value.currencyCode === '' && foreignCurrencies.value.length) {
       form.value.currencyCode = foreignCurrencies.value[0].code
     }
@@ -53,10 +53,9 @@ const reload = async () => {
   loading.value = true
   errorMessage.value = ''
   try {
-    const res = await apiFetch<{ data: ExchangeRateItem[] }>(
+    items.value = await apiData<ExchangeRateItem[]>(
       `/masters/exchange-rates?includeDeleted=${includeDeleted.value}`,
     )
-    items.value = res.data
   } catch (e) {
     const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 401
@@ -109,8 +108,7 @@ const onSubmit = async () => {
     resetForm()
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '保存に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '保存に失敗しました')
   } finally {
     submitting.value = false
   }
@@ -220,18 +218,18 @@ const onRestore = async (item: ExchangeRateItem) => {
           <tr v-if="items.length === 0">
             <td :colspan="canEditMaster ? 5 : 4" class="px-4 py-8 text-center text-sm text-gray-500">データがありません</td>
           </tr>
-          <tr v-for="i in items" :key="i.id" class="border-b border-gray-100 last:border-0" :class="i.deleteFlag ? 'opacity-50' : ''">
+          <tr v-for="i in items" :key="i.id" class="border-b border-gray-100 last:border-0" :class="i.deletedAt ? 'opacity-50' : ''">
             <td class="px-3 py-2 font-mono">{{ i.yearMonth }}</td>
             <td class="px-3 py-2"><span class="font-mono">{{ i.currencyCode }}</span> <span class="text-xs text-gray-500">{{ currencyName(i.currencyCode) }}</span></td>
             <td class="px-3 py-2 text-right font-mono">{{ i.rate.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</td>
             <td class="px-3 py-2">
-              <span v-if="i.deleteFlag" class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">削除済</span>
+              <span v-if="i.deletedAt" class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">削除済</span>
               <span v-else class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">有効</span>
             </td>
             <td v-if="canEditMaster" class="px-3 py-2 text-right">
               <div class="flex justify-end gap-2">
-                <button v-if="!i.deleteFlag" type="button" class="text-xs text-blue-600 hover:underline" @click="startEdit(i)">編集</button>
-                <button v-if="!i.deleteFlag" type="button" class="text-xs text-red-600 hover:underline" @click="onDelete(i)">削除</button>
+                <button v-if="!i.deletedAt" type="button" class="text-xs text-blue-600 hover:underline" @click="startEdit(i)">編集</button>
+                <button v-if="!i.deletedAt" type="button" class="text-xs text-red-600 hover:underline" @click="onDelete(i)">削除</button>
                 <button v-else type="button" class="text-xs text-blue-600 hover:underline" @click="onRestore(i)">復元</button>
               </div>
             </td>
