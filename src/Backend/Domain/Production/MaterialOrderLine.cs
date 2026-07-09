@@ -1,6 +1,8 @@
 using Akebono.Domain.Entities;
 using Akebono.Domain.Products;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Production;
 
 /// <summary>
@@ -8,9 +10,10 @@ namespace Akebono.Domain.Production;
 /// subtotal は DB 側 GENERATED 列 (既存 PurchaseOrderLine と同方針)。
 /// unit_price は機密度 中-高 (既存仕入単価と同等保護)。
 /// </summary>
-public class MaterialOrderLine
+public class MaterialOrderLine : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public long MaterialOrderId { get; set; }
     public short LineNo { get; set; }
     public long MaterialId { get; set; }

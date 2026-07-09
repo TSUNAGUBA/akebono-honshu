@@ -22,7 +22,7 @@ public class MaterialOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
         var order = await db.MaterialOrders
             .Include(o => o.MaterialSupplier)
             .FirstOrDefaultAsync(o => o.Id == materialOrderId, ct)
-            ?? throw new InvalidOperationException($"素材発注 id={materialOrderId} 不在");
+            ?? throw DomainException.Concealed($"素材発注 id={materialOrderId} 不在");
 
         var lines = await db.MaterialOrderLines
             .Include(l => l.Material)
@@ -31,7 +31,7 @@ public class MaterialOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             .ToListAsync(ct);
 
         var isFirstExport = order.FirstExportedAt is null;
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -130,7 +130,7 @@ public class MaterialOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             entityType: "MaterialOrder", entityId: materialOrderId,
             note: $"order_no={order.OrderNo}, is_first={isFirstExport}, total=***, tmpl={TemplateVersion}", cancellationToken: ct);
 
-        var fileName = $"MO_{order.OrderNo}_{now:yyyyMMdd_HHmmss}.xlsx";
+        var fileName = $"MO_{order.OrderNo}_{SystemTime.JstNow:yyyyMMdd_HHmmss}.xlsx"; // ファイル名は業務時刻 (JST)
         return (fileName, stream.ToArray());
     }
 }

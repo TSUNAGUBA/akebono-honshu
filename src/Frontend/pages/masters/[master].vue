@@ -93,8 +93,7 @@ const onSaved = async (payload: Record<string, unknown>) => {
     dialogOpen.value = false
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string }; statusMessage?: string }
-    errorMessage.value = err.data?.detail ?? err.statusMessage ?? '保存に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '保存に失敗しました')
   }
 }
 
@@ -268,7 +267,7 @@ const formatCell = (value: unknown): string => {
       </section>
 
       <p class="mt-3 text-xs text-gray-400">
-        API: GET/POST/PATCH/DELETE /api/v1/masters/{{ slug }} (audit_logs 記録)
+        API: GET/POST/PATCH/DELETE /api/maker/v1/masters/{{ slug }} (audit_logs 記録)
       </p>
 
       <MasterEditDialog

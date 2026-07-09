@@ -1,6 +1,6 @@
 /**
  * 商品関連 (P-01〜P-06) API ラッパー。
- * Backend /api/v1/products/families/** の各 endpoint を叩く。
+ * Backend /api/maker/v1/products/families/** の各 endpoint を叩く。
  */
 
 export interface FamilyListItem {
@@ -290,24 +290,18 @@ export const productStatusLabel = (status: number): string => {
 }
 
 export const useProducts = () => {
-  const { apiFetch } = useApi()
-  // 画像アップロードは FormData を直接 $fetch するため apiBase を直接参照する
-  // (useOrders の Excel ダウンロードと同じパターン)。
-  const config = useRuntimeConfig()
+  const { apiFetch, apiData } = useApi()
 
   const listFamilies = async (includeDeleted = false): Promise<FamilyListItem[]> => {
-    const res = await apiFetch<{ data: FamilyListItem[] }>(
-      `/products/families?includeDeleted=${includeDeleted}`,
-    )
-    return res.data
+    return await apiData<FamilyListItem[]>(`/products/families?includeDeleted=${includeDeleted}`)
   }
 
   const getFamily = async (id: number): Promise<FamilyDetail> => {
-    return await apiFetch<FamilyDetail>(`/products/families/${id}`)
+    return await apiData<FamilyDetail>(`/products/families/${id}`)
   }
 
   const createComplete = async (payload: CompleteFamilyPayload) => {
-    return await apiFetch<{
+    return await apiData<{
       family: { id: number; sequenceNo: string; plannedYearCode: string }
       products: SkuSummary[]
       supplierPrices: { id: number; supplierId: number; unitPrice: number; effectiveFrom: string }[]
@@ -379,27 +373,24 @@ export const useProducts = () => {
     // サイズ別仕入単価 (PR2、null = 全サイズ共通の既定単価)
     sizeId: number | null
   }) => {
-    return await apiFetch<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string; sizeId: number | null }>(
+    return await apiData<{ id: number; supplierId: number; unitPrice: number; effectiveFrom: string; sizeId: number | null }>(
       `/products/families/${id}/supplier-prices`,
       { method: 'POST', body },
     )
   }
 
   // 画像アップロード (§2a)。category=0(企画)/1(本番) を query で指定 (multipart body は file のみ)。
+  // FormData も apiData 経由で送れる (Authorization / X-Tenant-Id を共通付与、応答はエンベロープ unwrap)。
   const uploadImage = async (familyId: number, file: File, category = 0): Promise<ImageSummary> => {
     const form = new FormData()
     form.append('file', file)
-    const { getIdToken } = useAuth()
-    const token = await getIdToken()
-    const res = await $fetch<ImageSummary>(
-      `${config.public.apiBase}/products/families/${familyId}/images?category=${category}`,
+    return await apiData<ImageSummary>(
+      `/products/families/${familyId}/images?category=${category}`,
       {
         method: 'POST',
         body: form,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       },
     )
-    return res
   }
 
   const deleteImage = async (familyId: number, imageId: number): Promise<void> => {

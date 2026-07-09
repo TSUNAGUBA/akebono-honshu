@@ -9,21 +9,23 @@ namespace Akebono.Api.Endpoints;
 /// 発注書関連 REST endpoint (Phase 5 §2.5、O-01〜O-07)。
 /// 編集系 (POST/PATCH/cancel/export) は purchase_order_create_permission >= 1 必須
 /// (AuthEndpoints.CheckOrderEditAsync)。
+/// 業務エラー (検証 422 / 状態遷移・重複 409) は service 層の DomainException を
+/// ApiExceptionMiddleware がエラー封筒へ変換する。
 /// </summary>
 public static class OrderEndpoints
 {
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder app)
     {
-        var orders = app.MapGroup("/api/v1/orders");
+        var orders = app.MapGroup("/api/maker/v1/orders");
 
         // 一覧 (O-03)
         orders.MapGet("/", async (HttpContext http, PurchaseOrderService svc,
                                     bool? includeCancelled, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var items = await svc.ListAsync(actorId, includeCancelled ?? false, ct);
-            return Results.Ok(new { data = items });
+            return ApiEnvelope.Ok(http, items);
         });
 
         // 詳細 (O-04 編集画面ベース)
@@ -31,9 +33,9 @@ public static class OrderEndpoints
                                             long id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var detail = await svc.GetDetailAsync(id, actorId, ct);
-            return detail is null ? Results.NotFound() : Results.Ok(detail);
+            return detail is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, detail);
         });
 
         // 新規作成 (O-01)
@@ -42,15 +44,11 @@ public static class OrderEndpoints
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
-                return Results.Created($"/api/v1/orders/{created.Id}", new { id = created.Id, mgmtNo = created.MgmtNo });
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: ex.Message);
-            }
+            // Idempotency-Key (AKB-DOC-12 §8): 作成系 POST は必須。欠如は 400 AKB-SYS-004。
+            var (idemKey, idemHash) = IdempotencyKeyReader.Read(http, req);
+            var created = await svc.CreateAsync(req, auth.ActorId!.Value, idemKey, idemHash, ct: ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/orders/{created.Id}",
+                new { id = created.Id, mgmtNo = created.MgmtNo });
         });
 
         // 編集 (O-04、F-16 EditReason 必須)
@@ -59,72 +57,42 @@ public static class OrderEndpoints
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
-                return updated is null ? Results.NotFound() : Results.Ok(new { id = updated.Id, mgmtNo = updated.MgmtNo });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: ex.Message);
-            }
+            var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+            return updated is null
+                ? AuthEndpoints.NotFoundError(http)
+                : ApiEnvelope.Ok(http, new { id = updated.Id, mgmtNo = updated.MgmtNo });
         });
 
-        // 中止 (O-05)
+        // 中止 (O-05)。削除済 (終端状態) の中止は service 層の DomainException (409、§3b)。
         orders.MapPost("/{id:long}/cancel", async (HttpContext http, IAkebonoDbContext db,
                                                      PurchaseOrderService svc, long id, CancelOrderRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                // 削除済 (終端状態) の中止は 409 (§3b)
-                var ok = await svc.CancelAsync(id, req, auth.ActorId!.Value, ct);
-                return ok ? Results.NoContent() : Results.NotFound();
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
+            var ok = await svc.CancelAsync(id, req, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         // 発注済にする (§3b)。未発注 → 発注済 (ordered_at を SET)。ダウンロードとは独立したユーザー操作。
-        // 削除済/中止済 (終端状態) は 409。
+        // 削除済/中止済 (終端状態) は service 層の DomainException (409)。
         orders.MapPost("/{id:long}/mark-ordered", async (HttpContext http, IAkebonoDbContext db,
                                                          PurchaseOrderService svc, long id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var ok = await svc.MarkOrderedAsync(id, auth.ActorId!.Value, ct);
-                return ok ? Results.NoContent() : Results.NotFound();
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
+            var ok = await svc.MarkOrderedAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        // 未発注に戻す (§3b)。発注済 → 未発注 (ordered_at を NULL)。削除済/中止済 (終端状態) は 409。
+        // 未発注に戻す (§3b)。発注済 → 未発注 (ordered_at を NULL)。
+        // 削除済/中止済 (終端状態) は service 層の DomainException (409)。
         orders.MapPost("/{id:long}/unmark-ordered", async (HttpContext http, IAkebonoDbContext db,
                                                            PurchaseOrderService svc, long id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var ok = await svc.UnmarkOrderedAsync(id, auth.ActorId!.Value, ct);
-                return ok ? Results.NoContent() : Results.NotFound();
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
+            var ok = await svc.UnmarkOrderedAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         // 発注削除 (§3b)。論理削除 (is_deleted=true)。物理削除はしない。
@@ -134,26 +102,19 @@ public static class OrderEndpoints
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         // 発注状態の一括変更 (§3c)。チェックした発注を指定状態へ一括変更する。
         // 認可は編集と同じ (purchase_order:write)。終端状態で変更できない発注はスキップし {updated, skipped} を返す。
+        // target 不正 / orderIds 空は service 層の DomainException を中央ハンドラが変換する。
         orders.MapPost("/bulk-status", async (HttpContext http, IAkebonoDbContext db,
                                               PurchaseOrderService svc, BulkStatusRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var result = await svc.BulkSetStatusAsync(req, auth.ActorId!.Value, ct);
-                return Results.Ok(result);
-            }
-            catch (ArgumentException ex)
-            {
-                // target 不正 / orderIds 空は 400 (リクエスト不正)。
-                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
-            }
+            var result = await svc.BulkSetStatusAsync(req, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Ok(http, result);
         });
 
         // Excel 出力 (O-06)。旧システムの「発注書出力」画面と同様に、出力前に「発注日」「出荷指示番号」
@@ -164,6 +125,7 @@ public static class OrderEndpoints
         //   format=order      → 発注書 .xlsx (単一)
         //   format=management → 管理表 .xlsx (単一)
         //   format=both       → 発注書+管理表 を ZIP (OrderBulkExportService を [id] で再利用)
+        // 発注番号重複 / 削除済 (終端状態) は service 層の DomainException (409)。
         orders.MapPost("/{id:long}/export", async (HttpContext http, IAkebonoDbContext db,
                                                     PurchaseOrderService svc,
                                                     IPurchaseOrderExcelService excel,
@@ -176,63 +138,40 @@ public static class OrderEndpoints
 
             var format = (req.Format ?? "").Trim().ToLowerInvariant();
             if (format is not ("order" or "management" or "both"))
-                return Results.Problem(statusCode: 400, title: "Bad Request",
-                    detail: $"format は order / management / both のいずれかです: '{req.Format}'");
+                return ApiEnvelope.Error(http, 400, AkbErrorCodes.SysValidation,
+                    $"format は order / management / both のいずれかです: '{req.Format}'");
 
-            try
-            {
-                // 手入力 3 項目 (発注日 / 出荷指示番号 / 発注番号) を発注に保存してから帳票を生成する。
-                var applied = await svc.ApplyExportFormFieldsAsync(
-                    id, req.OrderDate, req.ShippingInstructionNo, req.OrderNo, auth.ActorId!.Value, ct);
-                if (!applied) return Results.NotFound();
+            // 手入力 3 項目 (発注日 / 出荷指示番号 / 発注番号) を発注に保存してから帳票を生成する。
+            var applied = await svc.ApplyExportFormFieldsAsync(
+                id, req.OrderDate, req.ShippingInstructionNo, req.OrderNo, auth.ActorId!.Value, ct);
+            if (!applied) return AuthEndpoints.NotFoundError(http);
 
-                if (format == "both")
-                {
-                    var result = await bulk.ExportAsync(
-                        new BulkExportRequest(new List<long> { id }, "both"), auth.ActorId!.Value, ct);
-                    return Results.File(result.Content, contentType: result.ContentType, fileDownloadName: result.FileName);
-                }
+            if (format == "both")
+            {
+                var result = await bulk.ExportAsync(
+                    new BulkExportRequest(new List<long> { id }, "both"), auth.ActorId!.Value, ct);
+                return Results.File(result.Content, contentType: result.ContentType, fileDownloadName: result.FileName);
+            }
 
-                var (fileName, content) = format == "order"
-                    ? await excel.ExportAsync(id, auth.ActorId!.Value, ct)
-                    : await mgmt.ExportAsync(new List<long> { id }, auth.ActorId!.Value, ct);
-                return Results.File(content,
-                    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    fileDownloadName: fileName);
-            }
-            catch (InvalidOperationException ex)
-            {
-                // 発注番号重複 (ORDER-012) / 削除済 (ORDER-011) 等は 409。
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
-            }
+            var (fileName, content) = format == "order"
+                ? await excel.ExportAsync(id, auth.ActorId!.Value, ct)
+                : await mgmt.ExportAsync(new List<long> { id }, auth.ActorId!.Value, ct);
+            return Results.File(content,
+                contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                fileDownloadName: fileName);
         });
 
         // 一括ダウンロード (#3b)。発注一覧でチェックした発注を
         // 発注書 (ZIP) / 管理表 (xlsx) / 発注書+管理表 (ZIP) で束ねて返す。
         // 認可は単一 Excel 出力と同じ (purchase_order_create_permission >= 1)。
+        // orderIds 空 / format 不正 / 有効発注 0 件は service 層の DomainException を中央ハンドラが変換する。
         orders.MapPost("/bulk-export", async (HttpContext http, IAkebonoDbContext db,
                                               IOrderBulkExportService bulk, BulkExportRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckOrderEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var result = await bulk.ExportAsync(req, auth.ActorId!.Value, ct);
-                return Results.File(result.Content, contentType: result.ContentType, fileDownloadName: result.FileName);
-            }
-            catch (ArgumentException ex)
-            {
-                // orderIds 空 / format 不正 / 有効発注 0 件は 400 (リクエスト不正)。
-                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(statusCode: 404, title: "Not Found", detail: ex.Message);
-            }
+            var result = await bulk.ExportAsync(req, auth.ActorId!.Value, ct);
+            return Results.File(result.Content, contentType: result.ContentType, fileDownloadName: result.FileName);
         });
 
         // 連絡文章テンプレ提案 (O-07)
@@ -240,9 +179,9 @@ public static class OrderEndpoints
                                                             PurchaseOrderService svc, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out _))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var items = await svc.GetCommunicationSuggestionsAsync(ct);
-            return Results.Ok(new { data = items });
+            return ApiEnvelope.Ok(http, items);
         });
 
         // 単価サジェスト (PR2、size-aware)。発注明細の unit_price_snapshot 入力補助。
@@ -263,7 +202,7 @@ public static class OrderEndpoints
                 .Select(p => new { p.ProductFamilyId, p.SizeId })
                 .FirstOrDefaultAsync(ct);
             if (product is null)
-                return Results.NotFound();
+                return AuthEndpoints.NotFoundError(http);
 
             var price = await priceSvc.ResolveCurrentPriceAsync(
                 product.ProductFamilyId, supplierId, product.SizeId, ct);
@@ -281,7 +220,7 @@ public static class OrderEndpoints
                 : new SupplierPriceSuggestion(
                     true, price.UnitPrice, price.CurrencyCode, price.ExchangeRate,
                     price.SizeId, price.SizeId is not null);
-            return Results.Ok(suggestion);
+            return ApiEnvelope.Ok(http, suggestion);
         });
 
         return app;

@@ -18,10 +18,11 @@ const onSubmit = async () => {
   }
   catch (e: unknown) {
     // Firebase Auth エラーは FirebaseError.code を持つ。
-    // /auth/sync が 403 (業務ユーザ未紐付け) を返すケースも別メッセージで案内。
-    const err = e as { code?: string; data?: { detail?: string }; statusCode?: number }
-    if (err.statusCode === 403 && err.data?.detail) {
-      errorMessage.value = err.data.detail
+    // /auth/sync が 403 (業務ユーザ未紐付け / テナント不一致) を返すケースも別メッセージで案内。
+    const err = e as { code?: string; statusCode?: number }
+    const apiMessage = getApiErrorMessage(e, '')
+    if (err.statusCode === 403 && apiMessage) {
+      errorMessage.value = apiMessage
     }
     else if (err.code === 'auth/invalid-credential'
           || err.code === 'auth/wrong-password'

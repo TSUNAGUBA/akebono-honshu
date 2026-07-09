@@ -1,6 +1,6 @@
 /**
  * 17 マスタ共通の API CRUD ラッパー。
- * Backend の /api/v1/masters/{slug} エンドポイントを叩く。
+ * Backend の /api/maker/v1/masters/{slug} エンドポイントを叩く。
  */
 
 export interface MasterItem {
@@ -15,17 +15,14 @@ export interface MasterItem {
 }
 
 export const useMasters = () => {
-  const { apiFetch } = useApi()
+  const { apiFetch, apiData } = useApi()
 
   const list = async (slug: string, includeDeleted = false): Promise<MasterItem[]> => {
-    const res = await apiFetch<{ data: MasterItem[] }>(
-      `/masters/${slug}?includeDeleted=${includeDeleted}`,
-    )
-    return res.data
+    return await apiData<MasterItem[]>(`/masters/${slug}?includeDeleted=${includeDeleted}`)
   }
 
   const create = async (slug: string, payload: Record<string, unknown>): Promise<MasterItem> => {
-    return await apiFetch<MasterItem>(`/masters/${slug}`, {
+    return await apiData<MasterItem>(`/masters/${slug}`, {
       method: 'POST',
       body: payload,
     })
@@ -36,7 +33,7 @@ export const useMasters = () => {
     id: number,
     payload: Record<string, unknown>,
   ): Promise<MasterItem> => {
-    return await apiFetch<MasterItem>(`/masters/${slug}/${id}`, {
+    return await apiData<MasterItem>(`/masters/${slug}/${id}`, {
       method: 'PATCH',
       body: payload,
     })

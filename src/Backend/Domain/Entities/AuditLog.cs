@@ -3,6 +3,10 @@ namespace Akebono.Domain.Entities;
 public class AuditLog
 {
     public long Id { get; set; }
+
+    /// <summary>テナント。認証拒否イベント等テナント確定前の記録は NULL (RLS 適用除外テーブル)。</summary>
+    public Guid? TenantId { get; set; }
+
     public DateTime OccurredAt { get; set; }
     public long? ActorUserId { get; set; }
     public string Action { get; set; } = string.Empty;

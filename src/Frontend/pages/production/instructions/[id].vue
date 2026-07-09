@@ -26,7 +26,7 @@ onMounted(reload)
 const run = async (fn: () => Promise<void>, ok: string) => {
   busy.value = true; errorMessage.value = ''; successMessage.value = ''
   try { await fn(); successMessage.value = ok; await reload() }
-  catch (e) { const err = e as { data?: { detail?: string } }; errorMessage.value = err.data?.detail ?? '操作に失敗しました' }
+  catch (e) { errorMessage.value = getApiErrorMessage(e, '操作に失敗しました') }
   finally { busy.value = false }
 }
 
@@ -56,7 +56,7 @@ const onExcel = () => run(() => piDownloadExcel(id.value, detail.value?.instruct
         <div><span class="text-gray-500">生産数量:</span> {{ detail.plannedQuantity.toLocaleString() }}</div>
         <div><span class="text-gray-500">希望納期:</span> {{ detail.dueDate }}</div>
         <div><span class="text-gray-500">状態:</span> {{ piStatusLabel(detail.status) }}</div>
-        <div><span class="text-gray-500">出力:</span> {{ detail.firstExportedAt ? `出力済 (${new Date(detail.firstExportedAt).toLocaleDateString('ja-JP')})` : '未出力' }}</div>
+        <div><span class="text-gray-500">出力:</span> {{ detail.firstExportedAt ? `出力済 (${formatJstDate(detail.firstExportedAt)})` : '未出力' }}</div>
         <div v-if="detail.cancelReason" class="text-orange-700">中止理由: {{ detail.cancelReason }}</div>
       </section>
 

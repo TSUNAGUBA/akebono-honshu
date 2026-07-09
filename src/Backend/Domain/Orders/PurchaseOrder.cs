@@ -1,14 +1,23 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Orders;
 
 /// <summary>
 /// 発注書ヘッダ (Phase 5 §5.1)。
 /// Phase 6 簡素化: status 2 値 (Active/Cancelled)、Excel 出力は status と独立。
 /// </summary>
-public class PurchaseOrder
+public class PurchaseOrder : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
+
+    /// <summary>Idempotency-Key (AKB-DOC-12 §8)。作成 API のヘッダ値。NULL = 冪等キーなしで作成された行 (レガシー/シード)。</summary>
+    public string? IdempotencyKey { get; set; }
+
+    /// <summary>Idempotency-Key に対応する要求ペイロードの SHA-256 (同一キー・異ペイロード再送の検出用)。</summary>
+    public string? IdempotencyPayloadHash { get; set; }
 
     /// <summary>作成管理番号 (作成時採番、例: "26-00001"、BR-03)</summary>
     public string MgmtNo { get; set; } = string.Empty;

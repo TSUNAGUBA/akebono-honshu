@@ -8,7 +8,7 @@ interface UserItem {
 }
 
 const { logout } = useAuth()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 
 const users = ref<UserItem[]>([])
 const loading = ref(true)
@@ -16,8 +16,7 @@ const errorMessage = ref('')
 
 onMounted(async () => {
   try {
-    const res = await apiFetch<{ data: UserItem[] }>('/users')
-    users.value = res.data
+    users.value = await apiData<UserItem[]>('/users')
   } catch (e: unknown) {
     const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 401
@@ -79,7 +78,7 @@ onMounted(async () => {
     </section>
 
     <p class="mt-4 text-xs text-gray-400">
-      API: GET /api/v1/users (audit_logs に User.List 記録)
+      API: GET /api/maker/v1/users (audit_logs に User.List 記録)
     </p>
   </main>
 </template>

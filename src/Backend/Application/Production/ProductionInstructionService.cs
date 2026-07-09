@@ -10,19 +10,29 @@ namespace Akebono.Application.Production;
 /// 既存 PurchaseOrderService と同じ「ヘッダ＋明細＋snapshot凍結＋status遷移」パターン。
 /// 採番 (instruction_no = YY-PI-NNNNN) は advisory lock でトランザクション内直列化 (RP-8)。
 /// </summary>
-public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger audit)
+public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger audit, ITenantContext tenantContext)
 {
     private const int MaxNumberingRetries = 3;
 
     /// <summary>新規作成 (PI-01)。status=Draft。明細合計を planned_quantity に整合。</summary>
-    public async Task<ProductionInstruction> CreateAsync(CreatePiRequest req, long actorUserId, CancellationToken ct = default)
+    public async Task<ProductionInstruction> CreateAsync(
+        CreatePiRequest req, long actorUserId,
+        string? idempotencyKey = null, string? idempotencyPayloadHash = null,
+        CancellationToken ct = default)
     {
+        // Idempotency-Key (AKB-DOC-12 §8): 同一キー・同一ペイロードの再送は初回結果を再返却。
+        if (idempotencyKey is not null)
+        {
+            var replayed = await FindByIdempotencyKeyAsync(idempotencyKey, idempotencyPayloadHash, ct);
+            if (replayed is not null) return replayed;
+        }
+
         if (req.Lines.Count == 0)
-            throw new ArgumentException("明細を 1 件以上指定してください (PINST-001)");
+            throw DomainException.Validation("明細を 1 件以上指定してください");
         if (req.Lines.Any(l => l.Quantity <= 0))
-            throw new ArgumentException("生産数量は正の数を指定してください (PINST-001)");
+            throw DomainException.Validation("生産数量は正の数を指定してください");
         if (req.Lines.GroupBy(l => l.ProductId).Any(g => g.Count() > 1))
-            throw new ArgumentException("同一 SKU が重複しています (PINST-002)");
+            throw DomainException.Validation("同一 SKU が重複しています");
 
         // 品番に属する SKU か検証
         var productIds = req.Lines.Select(l => l.ProductId).ToList();
@@ -30,17 +40,17 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
             .Where(p => productIds.Contains(p.Id) && !p.IsDeleted)
             .ToListAsync(ct);
         if (products.Count != productIds.Count)
-            throw new ArgumentException("指定された SKU の一部が存在しません (PINST-003)");
+            throw DomainException.Validation("指定された SKU の一部が存在しません");
         if (products.Any(p => p.ProductFamilyId != req.ProductFamilyId))
-            throw new ArgumentException("指定 SKU が品番に属していません (PINST-003)");
+            throw DomainException.Validation("指定 SKU が品番に属していません");
 
         var family = await db.ProductFamilies.FirstOrDefaultAsync(f => f.Id == req.ProductFamilyId, ct)
-            ?? throw new ArgumentException("品番が存在しません (PINST-003)");
+            ?? throw DomainException.Validation("品番が存在しません");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var now = SystemTime.Now;
+            var now = SystemTime.UtcNow;
             var instructionNo = await GenerateInstructionNoAsync(ct);
 
             var pi = new ProductionInstruction
@@ -54,6 +64,8 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
                 CommunicationText = req.CommunicationText,
                 CreatedAt = now, UpdatedAt = now,
                 CreatedByUserId = actorUserId, UpdatedByUserId = actorUserId,
+                IdempotencyKey = idempotencyKey,
+                IdempotencyPayloadHash = idempotencyPayloadHash,
             };
             db.ProductionInstructions.Add(pi);
             await db.SaveChangesAsync(ct);
@@ -158,22 +170,23 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
         var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
         if (pi is null) return null;
         if (pi.Status is ProductionInstructionStatus.Cancelled or ProductionInstructionStatus.Completed)
-            throw new InvalidOperationException("中止済/完了済の生産指示は編集できません (PINST-004)");
+            throw new DomainException(AkbErrorCodes.MakerProductionStateViolation, 409,
+                "中止済/完了済の生産指示は編集できません", "現在の生産指示状態を確認し許可された操作を選択してください");
         if (req.Lines.Count == 0 || req.Lines.Any(l => l.Quantity <= 0))
-            throw new ArgumentException("生産数量は正の数を指定してください (PINST-001)");
+            throw DomainException.Validation("生産数量は正の数を指定してください");
         if (req.Lines.GroupBy(l => l.ProductId).Any(g => g.Count() > 1))
-            throw new ArgumentException("同一 SKU が重複しています (PINST-002)");
+            throw DomainException.Validation("同一 SKU が重複しています");
 
         var productIds = req.Lines.Select(l => l.ProductId).ToList();
         var products = await db.Products.Where(p => productIds.Contains(p.Id) && !p.IsDeleted).ToListAsync(ct);
         if (products.Count != productIds.Count || products.Any(p => p.ProductFamilyId != pi.ProductFamilyId))
-            throw new ArgumentException("指定 SKU が品番に属していません (PINST-003)");
+            throw DomainException.Validation("指定 SKU が品番に属していません");
         var family = await db.ProductFamilies.FirstAsync(f => f.Id == pi.ProductFamilyId, ct);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var now = SystemTime.Now;
+            var now = SystemTime.UtcNow;
             pi.FactorySupplierId = req.FactorySupplierId;
             pi.DueDate = req.DueDate;
             pi.CommunicationText = req.CommunicationText;
@@ -223,11 +236,12 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
         var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
         if (pi is null) return false;
         if (pi.Status == ProductionInstructionStatus.Cancelled)
-            throw new InvalidOperationException("中止済の生産指示は発行できません (PINST-004)");
+            throw new DomainException(AkbErrorCodes.MakerProductionStateViolation, 409,
+                "中止済の生産指示は発行できません", "現在の生産指示状態を確認し許可された操作を選択してください");
         if (pi.Status is ProductionInstructionStatus.Issued or ProductionInstructionStatus.Completed)
             return true; // 冪等
 
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         pi.Status = ProductionInstructionStatus.Issued;
         pi.InstructedAt = now;
         pi.UpdatedAt = now;
@@ -246,9 +260,10 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
         var pi = await db.ProductionInstructions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
         if (pi is null) return false;
         if (pi.Status != ProductionInstructionStatus.Issued)
-            throw new InvalidOperationException("発行済の生産指示のみ完了にできます (PINST-004)");
+            throw new DomainException(AkbErrorCodes.MakerProductionStateViolation, 409,
+                "発行済の生産指示のみ完了にできます", "現在の生産指示状態を確認し許可された操作を選択してください");
 
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         pi.Status = ProductionInstructionStatus.Completed;
         pi.CompletedAt = now;
         pi.UpdatedAt = now;
@@ -268,7 +283,7 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
         if (pi is null) return false;
         if (pi.Status == ProductionInstructionStatus.Cancelled) return true; // 冪等
 
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         pi.Status = ProductionInstructionStatus.Cancelled;
         pi.CancelledAt = now;
         pi.CancelledByUserId = actorUserId;
@@ -287,12 +302,29 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
     private static string Sku9(string? sku)
         => string.IsNullOrEmpty(sku) ? "" : (sku.Length >= 9 ? sku[..9] : sku);
 
+    /// <summary>
+    /// Idempotency-Key による既存行の引当 (AKB-DOC-12 §8)。
+    /// 同一キー・同一ペイロードは既存行 (初回結果) を返し、異なるペイロードは AKB-SYS-005。
+    /// 同時二重送信は UNIQUE(tenant_id, idempotency_key) が最終防壁 (23505 → AKB-SYS-007)。
+    /// </summary>
+    private async Task<ProductionInstruction?> FindByIdempotencyKeyAsync(
+        string idempotencyKey, string? payloadHash, CancellationToken ct)
+    {
+        var existing = await db.ProductionInstructions
+            .FirstOrDefaultAsync(o => o.IdempotencyKey == idempotencyKey, ct);
+        if (existing is null) return null;
+        if (existing.IdempotencyPayloadHash == payloadHash) return existing;
+        throw new DomainException(AkbErrorCodes.SysIdempotencyKeyConflict, 409,
+            "同一の Idempotency-Key が異なる内容のリクエストで再利用されました",
+            userAction: "新しい Idempotency-Key を生成して再実行してください");
+    }
+
     /// <summary>instruction_no 採番 (YY-PI-NNNNN)。呼び出し元のトランザクション内で advisory lock を取得。</summary>
     private async Task<string> GenerateInstructionNoAsync(CancellationToken ct)
     {
-        var year2 = SystemTime.Now.Year % 100;
+        var year2 = SystemTime.JstNow.Year % 100; // 採番の年度判定は業務時刻 (JST)
         var prefix = $"{year2:D2}-PI-";
-        var lockKey = $"PI-{year2:D2}";
+        var lockKey = $"{tenantContext.RequireTenantId()}:PI-{year2:D2}";
         for (var attempt = 0; attempt < MaxNumberingRetries; attempt++)
         {
             await db.Database.ExecuteSqlInterpolatedAsync(
@@ -308,6 +340,7 @@ public class ProductionInstructionService(IAkebonoDbContext db, IAuditLogger aud
             if (!await db.ProductionInstructions.AnyAsync(p => p.InstructionNo == candidate, ct))
                 return candidate;
         }
-        throw new InvalidOperationException("生産指示番号の採番に失敗しました。再試行してください (PINST-005)");
+        throw new DomainException(AkbErrorCodes.MakerNumberingConflict, 409,
+            "生産指示番号の採番に失敗しました。再試行してください", "時間をおいて再試行してください");
     }
 }

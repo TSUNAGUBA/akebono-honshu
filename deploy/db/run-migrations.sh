@@ -12,8 +12,13 @@
 #   - db/                  (リポジトリの db/init, db/migration 一式)
 #   - .dbenv (任意)        (DB 接続情報。CI が repository secrets から生成。読込後に削除)
 # 環境変数 (.dbenv もしくは直接):
-#   - ACTION              init | migrate (既定: migrate)
+#   - ACTION              init | migrate | reinit (既定: migrate)
 #   - DB_HOST DB_PORT DB_NAME DB_ADMIN_USER DB_ADMIN_PASSWORD
+#   - APP_DB_PASSWORD     アプリ接続ロール akebono_app のパスワード。init/reinit では必須
+#                         (未設定はエラー終了)。db/init/08-tenancy-rls.sql はローカル既定値で
+#                         akebono_app を作成するため、本変数で必ず上書きする (Secrets Manager
+#                         由来を推奨)。migrate では任意 (設定時のみ ALTER ROLE)。
+#   - CONFIRM_REINIT      reinit 時のみ必須。'yes' を明示した場合だけ実行される安全ゲート。
 #
 # 冪等性 (CLAUDE.md 原則 2 / 7):
 #   - init  : public.users が既に存在すれば中止 (既存データ保護)。db/init/*.sql を番号順に
@@ -21,8 +26,17 @@
 #             baseline 記録。
 #             (db/init は現行スキーマを反映済 = iter4-tz-to-jst-naive.sql 等は init に内包される)
 #   - migrate: schema_migrations 台帳に無いマイグレーションのみ順に適用 (再実行で二重適用しない)。
+#   - reinit : プラットフォーム統合改修 (tenant_id/RLS/TIMESTAMPTZ 導入) のような破壊的
+#             スキーマ再編用。public スキーマを DROP CASCADE して init と同じ手順を実行する。
+#             稼働前 (保護すべき本番データが無い) 環境専用。CONFIRM_REINIT=yes が必須。
 #   - MIG-3 (mig-3-*.sql) は CSV データ取込のため除外 — UI (/admin/legacy-import) から実施する
 #     (db/migration/README.md の運用方針を維持)。
+#
+# RLS 注意 (プラットフォーム統合改修):
+#   - 08-tenancy-rls.sql 以降、テナントスコープ表は FORCE ROW LEVEL SECURITY。
+#     以後の migration スクリプトでデータを操作する場合は冒頭で
+#     SET app.tenant_id = '<uuid>' を行うこと (管理ユーザにも RLS が適用される。
+#     ただし RDS master user / superuser は PostgreSQL 仕様によりバイパスする場合がある)。
 # ===========================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -93,6 +107,54 @@ record_applied() {
 
 checksum() { sha256sum "$1" | awk '{print $1}'; }
 
+# アプリ接続ロール akebono_app のパスワードを APP_DB_PASSWORD で上書きする (設定時のみ)。
+# 08-tenancy-rls.sql がローカル既定値 'localdev' で作成するため、本番では必須の後処理。
+# 補助処理: 失敗しても本体フローは止めない (CLAUDE.md 原則 4)。パスワード内の ' は '' に
+# エスケープして SQL リテラル化する。
+apply_app_role_password() {
+  if [ -z "${APP_DB_PASSWORD:-}" ]; then
+    echo "::warning::APP_DB_PASSWORD 未設定のため akebono_app のパスワードはローカル既定値のままです。本番では必ず設定してください。"
+    return 0
+  fi
+  local esc="${APP_DB_PASSWORD//\'/\'\'}"
+  if psql_run -q -c "ALTER ROLE akebono_app WITH PASSWORD '${esc}';" >/dev/null; then
+    echo "==> akebono_app パスワードを APP_DB_PASSWORD で更新しました"
+  else
+    echo "::warning::akebono_app パスワード更新に失敗しました (後続処理は継続)。手動で ALTER ROLE してください。"
+  fi
+}
+
+# init / reinit ではアプリロールのパスワード設定を必須とする (既知の既定値 'localdev' の
+# まま本番 DB が構築される事故を防ぐセキュリティゲート。migrate は既設定前提のため任意)。
+require_app_db_password() {
+  if [ -z "${APP_DB_PASSWORD:-}" ]; then
+    echo "ERROR: APP_DB_PASSWORD が未設定です。init/reinit は akebono_app のパスワード設定が必須です。" >&2
+    echo "       repository secret APP_DB_PASSWORD を設定して再実行してください (deploy/README.md §3.2)。" >&2
+    exit 1
+  fi
+}
+
+
+run_init_files() {
+  # db/init の全スキーマ・シードファイルを番号順に適用 (01-schema..08-tenancy-rls..)。
+  # ハードコードせず glob することで、新規 init ファイル追加時の付け忘れを防ぐ
+  # (原則1: 手動メンテを残さない。schema_migration_files と同じ find|sort パターン)。
+  while IFS= read -r f; do
+    [ -z "${f}" ] && continue
+    echo "   applying ${f}"
+    psql_run -f "/${f}"
+  done < <(find db/init -maxdepth 1 -type f -name '*.sql' | sort)
+  ensure_ledger
+  # baseline: db/init は現行スキーマを反映済のため、現行マイグレーションは「実行せず適用済み記録」する。
+  while IFS= read -r f; do
+    [ -z "${f}" ] && continue
+    bn="$(basename "${f}")"
+    echo "   baseline (mark applied without running): ${bn}"
+    record_applied "${bn}" "$(checksum "${f}")"
+  done < <(schema_migration_files)
+  apply_app_role_password
+}
+
 # DB 接続前提チェック。set -e 下で失敗すれば即 fail-fast し、後続の users_exists 等が
 # 接続失敗を「テーブル無し」と誤判定して保護ロジックを素通りするのを防ぐ (reviewer 指摘)。
 echo "==> DB 接続確認 (${DB_HOST}:${DB_PORT}/${DB_NAME})"
@@ -101,28 +163,29 @@ psql_run -q -c "SELECT 1;" >/dev/null
 case "${ACTION}" in
   init)
     echo "==> action=init: 空 DB へスキーマ投入"
+    require_app_db_password
     if users_exists; then
       echo "ERROR: public.users が既に存在します。初期化を中止します (既存データ保護)。" >&2
-      echo "       スキーマ更新は action=migrate を使用してください。" >&2
+      echo "       スキーマ更新は action=migrate を、プラットフォーム統合改修のような" >&2
+      echo "       破壊的再編は action=reinit (CONFIRM_REINIT=yes) を使用してください。" >&2
       exit 1
     fi
-    # db/init の全スキーマ・シードファイルを番号順に適用 (01-schema..06-demo-data..)。
-    # ハードコードせず glob することで、新規 init ファイル追加時の付け忘れを防ぐ
-    # (原則1: 手動メンテを残さない。schema_migration_files と同じ find|sort パターン)。
-    while IFS= read -r f; do
-      [ -z "${f}" ] && continue
-      echo "   applying ${f}"
-      psql_run -f "/${f}"
-    done < <(find db/init -maxdepth 1 -type f -name '*.sql' | sort)
-    ensure_ledger
-    # baseline: db/init は現行スキーマを反映済のため、現行マイグレーションは「実行せず適用済み記録」する。
-    while IFS= read -r f; do
-      [ -z "${f}" ] && continue
-      bn="$(basename "${f}")"
-      echo "   baseline (mark applied without running): ${bn}"
-      record_applied "${bn}" "$(checksum "${f}")"
-    done < <(schema_migration_files)
+    run_init_files
     echo "==> init 完了"
+    ;;
+
+  reinit)
+    echo "==> action=reinit: public スキーマを破棄して再初期化 (稼働前環境専用)"
+    require_app_db_password
+    if [ "${CONFIRM_REINIT:-}" != "yes" ]; then
+      echo "ERROR: reinit は破壊的操作です。CONFIRM_REINIT=yes を明示してください。" >&2
+      exit 1
+    fi
+    # 既存オブジェクトを全破棄 (テーブル・シーケンス・ポリシー含む)。ロール akebono_app は
+    # スキーマ外のため残る (08-tenancy-rls.sql が冪等に再利用する)。
+    psql_run -q -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
+    run_init_files
+    echo "==> reinit 完了"
     ;;
 
   migrate)
@@ -154,11 +217,12 @@ case "${ACTION}" in
       record_applied "${bn}" "${cur}"
       applied=$((applied + 1))
     done < <(schema_migration_files)
+    apply_app_role_password
     echo "==> migrate 完了 (applied=${applied}, skipped=${skipped})"
     ;;
 
   *)
-    echo "ERROR: 不明な ACTION '${ACTION}' (init | migrate)" >&2
+    echo "ERROR: 不明な ACTION '${ACTION}' (init | migrate | reinit)" >&2
     exit 1
     ;;
 esac

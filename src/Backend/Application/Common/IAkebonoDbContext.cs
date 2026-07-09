@@ -8,6 +8,9 @@ namespace Akebono.Application.Common;
 
 public interface IAkebonoDbContext
 {
+    /// <summary>テナントレジストリ投影 (読取専用。SoT = akebono-backoffice)。</summary>
+    DbSet<Tenant> Tenants { get; }
+
     DbSet<User> Users { get; }
     DbSet<AuditLog> AuditLogs { get; }
 

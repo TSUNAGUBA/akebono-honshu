@@ -5,6 +5,8 @@
 8つの専門AIロールが相互に牽制し合い、品質を保証する開発方法論のテンプレート集です。
 
 > **実装プロジェクトとしての使い方:** 本リポジトリは方法論テンプレートに加え、akebono アパレル生産管理システム MVP の実装も同居しています。Phase 7 Iteration 0 (ローカル開発環境) の起動手順は **[RUNBOOK.md](./RUNBOOK.md)** を参照してください。
+>
+> **プラットフォーム上での位置づけ:** 本アプリは **あけぼの SCM プラットフォーム**（akebono-scm-platform リポジトリ、提供主体 TSUNAGUBA）のメーカーサービス **akebono-maker** のリファレンス実装 / 最初のメーカーテナントです。マルチテナンシー (tenant_id + RLS)・API 共通規約 (`/api/maker/v1`、`{data, meta}` 封筒、`AKB-<AREA>-<NNN>` エラーコード)・TIMESTAMPTZ(UTC) はプラットフォーム規約に準拠しています。改修内容は **[docs/platform-integration/README.md](./docs/platform-integration/README.md)** を、プラットフォーム設計の SoT は akebono-scm-platform 側 `docs/platform-design/` を参照してください (本リポジトリの `docs/platform-design/` は旧版 SCIP 設計の保存です)。
 
 ---
 

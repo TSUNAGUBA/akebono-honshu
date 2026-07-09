@@ -1,14 +1,17 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Products;
 
 /// <summary>
 /// 商品企画レベル親 (Phase 5 §4.1)。11 桁品番の上位 9 桁を確定する企画単位。
 /// 色 × サイズ展開の元、マルチ仕入先単価の保持単位。
 /// </summary>
-public class ProductFamily
+public class ProductFamily : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
 
     // 11桁品番の上位 9 桁を構成する FK + 値
     public char PlannedYearCode { get; set; }

@@ -1,3 +1,5 @@
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Products;
 
 /// <summary>
@@ -12,9 +14,10 @@ namespace Akebono.Domain.Products;
 /// 設計判断: <see cref="ChildItemNumber"/> は <b>手入力テキスト</b>であり、products / product_families への
 /// FK は張らない。旧システム品番・外部品番も子品番として許容するため (旧 spec の「手入力」に忠実)。
 /// </summary>
-public class ProductSetComponent
+public class ProductSetComponent : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
 
     /// <summary>親 = アソート/セット商品 (product_families.id)。</summary>
     public long ProductFamilyId { get; set; }

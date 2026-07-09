@@ -5,7 +5,7 @@ import type { MasterItem } from '~/composables/useMasters'
 
 const { list, bulkExport, bulkStatus } = useOrders()
 const { list: listMaster } = useMasters()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 const { user } = useAuth()
 
 const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
@@ -116,10 +116,10 @@ const loadFilterSources = async () => {
   try {
     const [sup, usr] = await Promise.all([
       listMaster('suppliers'),
-      apiFetch<{ data: UserOption[] }>('/users'),
+      apiData<UserOption[]>('/users'),
     ])
     suppliers.value = sup
-    users.value = usr.data
+    users.value = usr
   } catch (e) {
     console.error('フィルタ選択肢 (仕入先/ユーザ) の取得に失敗しました', e)
   }
@@ -137,8 +137,9 @@ const inc = (haystack: string | null | undefined, needle: string): boolean =>
 const stateOf = (i: OrderListItem): OrderState =>
   deriveOrderState({ status: i.status, orderedAt: i.orderedAt, isDeleted: i.isDeleted })
 
-// 作成日は ISO 文字列 (createdAt) の日付部分を YYYY-MM-DD で取り出して date 入力と比較。
-const createdDate = (i: OrderListItem): string => (i.createdAt ?? '').slice(0, 10)
+// 作成日は UTC タイムスタンプ (createdAt、末尾 Z) を JST の YYYY-MM-DD へ変換して date 入力と比較。
+// 文字列 slice では UTC 日付になり JST と最大 9 時間ずれるため必ず変換する (AKB-DOC-12)。
+const createdDate = (i: OrderListItem): string => (i.createdAt ? toJstDateString(i.createdAt) : '')
 
 const filtered = computed(() => {
   const f = filters.value
@@ -197,7 +198,7 @@ const regionBadge = (i: OrderListItem): { label: string; cls: string } =>
 
 const exportBadge = (i: OrderListItem): { label: string; cls: string } => {
   if (!i.firstExportedAt) return { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
-  const dt = new Date(i.firstExportedAt).toLocaleDateString('ja-JP')
+  const dt = formatJstDate(i.firstExportedAt)
   return { label: `初回出力済 (${dt})`, cls: 'bg-blue-100 text-blue-700' }
 }
 
@@ -627,6 +628,6 @@ const runBulkStatus = async (target: OrderState): Promise<void> => {
       </table>
     </section>
 
-    <p class="mt-3 text-xs text-gray-400">API: GET /api/v1/orders</p>
+    <p class="mt-3 text-xs text-gray-400">API: GET /api/maker/v1/orders</p>
   </main>
 </template>

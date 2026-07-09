@@ -8,7 +8,7 @@ const { list } = useMasters()
 // 商品一覧 P-04 (index.vue) と同じくサーバ側検索 API を増やさず、全件取得 + クライアント側
 // 部分一致でコピー元を選ぶ。詳細はバルク登録 (createComplete) と同じ既存 endpoint。
 const { createComplete, listFamilies, getFamily, uploadImage } = useProducts()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 
 // マスタ参照データ
 const productTypes = ref<MasterItem[]>([])
@@ -170,7 +170,7 @@ const uploadPendingImages = async (familyId: number): Promise<{ uploaded: number
       URL.revokeObjectURL(img.previewUrl)
     } catch (uploadErr) {
       remaining.push(img)
-      const detail = (uploadErr as { data?: { detail?: string } }).data?.detail
+      const detail = getApiErrorMessage(uploadErr, '')
       if (detail) lastErrorDetail = detail
       console.error('画像アップロードに失敗しました:', img.file.name, uploadErr)
     }
@@ -213,7 +213,7 @@ const removeSetComponent = (idx: number) => {
 // 通貨は選択した仕入先の適用通貨 (Supplier.currencyCode) から自動決定。為替マスタから適用レートを解決し、
 // 円換算・仕入原価・仕入利益率・ドレー代を自動計算する (行には入力せず算出する)。
 // 原価明細 (見積単価/ロス費/税率) は登録後の詳細画面で追加する (新規フォームは行を高くしないため省く)。
-const today0 = new Date().toISOString().split('T')[0]
+const today0 = todayJst() // 業務日付は JST 基準
 interface PriceRow {
   supplierId: number
   sizeId: number | null   // §2e 全サイズ共通(null) / サイズ別
@@ -391,8 +391,7 @@ const onCopyFromReference = async () => {
       + ` / アソート ${setComponents.value.length} 行)。`
       + ' このまま編集して登録すると新しい品番が採番されます。'
   } catch (e) {
-    const err = e as { data?: { detail?: string }; statusMessage?: string }
-    errorMessage.value = err.data?.detail ?? err.statusMessage ?? 'コピー元の取得に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, 'コピー元の取得に失敗しました')
   } finally {
     copying.value = false
   }
@@ -413,9 +412,9 @@ onMounted(async () => {
       list('materials'),
       list('colors'),
       list('sizes'),
-      apiFetch<{ data: UserOption[] }>('/users'),
+      apiData<UserOption[]>('/users'),
       // 為替マスタ (§2f)。失敗しても本体は使える (円換算は「レート未登録」表示にフォールバック)。
-      apiFetch<{ data: ExchangeRateItem[] }>('/masters/exchange-rates').catch(() => ({ data: [] as ExchangeRateItem[] })),
+      apiData<ExchangeRateItem[]>('/masters/exchange-rates').catch(() => [] as ExchangeRateItem[]),
     ])
     productTypes.value = pt
     productSeasons.value = ps
@@ -426,8 +425,8 @@ onMounted(async () => {
     materials.value = mt
     colors.value = co
     sizes.value = sz
-    users.value = usrRes.data
-    exchangeRates.value = exrRes.data
+    users.value = usrRes
+    exchangeRates.value = exrRes
 
     // 初期値設定
     if (pt.length) form.value.productTypeId = pt[0].id
@@ -597,8 +596,7 @@ const onSubmit = async () => {
     }
     // failed > 0 のときは遷移せず、導線パネル (registeredFamilyId + pendingImages) で残り画像の再送を促す。
   } catch (e) {
-    const err = e as { data?: { detail?: string }; statusMessage?: string }
-    errorMessage.value = err.data?.detail ?? err.statusMessage ?? '登録に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '登録に失敗しました')
   } finally {
     submitting.value = false
   }

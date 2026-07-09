@@ -9,7 +9,53 @@
 
 ---
 
+## 0-P. プラットフォーム統合改修 (2026-07-09) による変更点
+
+> **SoT:** 改修の全体像・設計判断は [docs/platform-integration/README.md](./docs/platform-integration/README.md)。
+> 本節はローカル開発者向けの差分手順のみ。
+
+| 項目 | 旧 | 新 (プラットフォーム統合) |
+|---|---|---|
+| API ベースパス | `/api/v1` | **`/api/maker/v1`** (あけぼの SCM プラットフォーム AKB-DOC-12) |
+| レスポンス封筒 | 一覧のみ `{data}` / 単一は素の JSON / エラー RFC7807 | 成功 `{data, meta}` / エラー `{error: {code, message, userAction?, traceId, details[]}}` |
+| エラーコード | `AUTH-001` 等をメッセージ末尾に埋め込み | `AKB-<AREA>-<NNN>` を `error.code` で返す |
+| DB スキーマ | 単一テナント (tenant_id なし)・TIMESTAMP (JST naive) | **tenant_id uuid + RLS**・**TIMESTAMPTZ (UTC)** |
+| Backend DB 接続ユーザ | `akebono_honshu` (docker スーパーユーザ) | **`akebono_app`** (RLS 適用の一般ロール。08-tenancy-rls.sql が作成) |
+| 現在時刻 | `SystemTime.Now` (JST naive) | 格納 `SystemTime.UtcNow` / 表示・採番年度 `SystemTime.JstNow` |
+| 作成系 API | – | `Idempotency-Key` ヘッダ必須 (orders / production-instructions / material-orders の POST) |
+| テナントヘッダ | – | Frontend が `X-Tenant-Id` を自動付与 (auth/sync の応答 `tenantId` を使用) |
+
+**既存ローカル環境の追従手順 (破壊的変更・データ再作成):**
+
+1. `git pull` でブランチ最新化
+2. **DB 再作成** (tenant_id/RLS/TIMESTAMPTZ は既存ボリュームへ追従適用しない。稼働前 MVP のため再作成):
+   ```bash
+   docker compose down -v   # akebono-postgres-data ボリューム破棄
+   docker compose up -d     # db/init 01〜08 が番号順に自動適用される
+   ```
+3. **Firebase UID 再紐付け** (§0 手順 4 と同じ):
+   ```sql
+   UPDATE users SET firebase_uid = '<UID>' WHERE login_id = 'owner';
+   ```
+4. **Backend:** 接続文字列は `appsettings.Development.json` が `Username=akebono_app;Password=localdev` に更新済。`dotnet run --project Presentation` で起動
+5. **Frontend:** `.env` の `NUXT_PUBLIC_API_BASE` を `http://localhost:5000/api/maker/v1` へ更新 (`.env.example` 参照) → `pnpm dev`
+6. **RLS 検証 (推奨):**
+   ```bash
+   psql "host=localhost dbname=akebono_honshu user=akebono_app password=localdev" -f db/verify/rls-smoke.sql
+   # 期待: RLS smoke test: ALL PASSED
+   ```
+
+> **注意:** pgAdmin 等でスーパーユーザ (akebono_honshu) として覗くと RLS を素通しして全行見えます
+> (PostgreSQL 仕様)。分離の確認は必ず `akebono_app` で接続してください。
+> 手動 SQL でテナントスコープ表へ INSERT する場合は先に `SET app.tenant_id = '<uuid>';`
+> (Honshu 既定テナント: `00000000-0000-4000-8000-000000000001`)。
+
+---
+
 ## 0. Iter 4 段階 B 完了 (2026-05-20) による変更点
+
+> **注:** 本節の「新」列は 2026-05-20 時点。API パス (`/api/v1` → `/api/maker/v1`) と
+> timestamp 方針 (JST naive → TIMESTAMPTZ/UTC) は **§0-P のプラットフォーム統合改修で更新済み**。
 
 | 項目 | 旧 (Iter 0 ダミー) | 新 (Iter 4 段階 B) |
 |---|---|---|
@@ -176,7 +222,9 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 ##### Step 2. スキーマ初期化 (db/init/*.sql を番号順に投入)
 
 ```bash
-# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..06)
+# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..08)
+# ※プラットフォーム統合改修後は 08-tenancy-rls.sql (テナント分離 RLS + アプリロール
+#   akebono_app) まで必ず適用すること。アプリの接続ユーザは akebono_app (§0-P 参照)。
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
@@ -200,6 +248,12 @@ psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=re
 # 業務拡張モジュール (販売管理/出荷/在庫管理) のテーブル + サンプルデータ。冪等 (再実行可)
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/07-ops-data.sql
+
+# テナント分離 RLS + アプリロール akebono_app (プラットフォーム統合改修)。冪等 (再実行可)
+# 適用後、akebono_app のパスワードを必ず変更する:
+#   ALTER ROLE akebono_app WITH PASSWORD '<強固なパスワード>';
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/08-tenancy-rls.sql
 
 # 動作確認
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
@@ -444,31 +498,31 @@ pnpm dev
 |---|---|---|---|---|
 | GET | `/health` | ヘルスチェック | なし | – |
 | GET | `/swagger` | Swagger UI (API ドキュメント + 動作確認画面) | なし | – |
-| POST | `/api/v1/auth/sync` | Firebase Auth ログイン直後の業務情報同期 (Iter 4 段階 B、`/auth/login` から置換) | Bearer (Firebase ID Token) | – |
-| GET | `/api/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer (Firebase ID Token) | – |
-| GET | `/api/v1/users` | ユーザ一覧 | Bearer | – |
-| GET | `/api/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
-| POST/PATCH/DELETE | `/api/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
-| POST | `/api/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission >= 1` |
-| GET | `/api/v1/products/families` | 商品企画一覧 (P-04) | Bearer | – |
-| GET | `/api/v1/products/families/{id}` | 商品企画詳細 (P-05) | Bearer | – |
-| POST | `/api/v1/products/families/complete` | バルク登録 (P-01〜P-03) | Bearer | `product_ledger_permission >= 1` |
-| PATCH | `/api/v1/products/families/{id}` | 企画更新 (P-05) | Bearer | `product_ledger_permission >= 1` |
-| DELETE | `/api/v1/products/families/{id}` | 企画論理削除 (配下 SKU 連動) | Bearer | `product_ledger_permission >= 1` |
-| GET | `/api/v1/products/families/{id}/supplier-prices` | 仕入単価履歴 | Bearer | – |
-| POST | `/api/v1/products/families/{id}/supplier-prices` | 新単価追加 (BR-04) | Bearer | `product_ledger_permission >= 1` |
-| POST | `/api/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission >= 1` |
-| PATCH | `/api/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
-| DELETE | `/api/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/auth/sync` | Firebase Auth ログイン直後の業務情報同期 (Iter 4 段階 B、`/auth/login` から置換) | Bearer (Firebase ID Token) | – |
+| GET | `/api/maker/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer (Firebase ID Token) | – |
+| GET | `/api/maker/v1/users` | ユーザ一覧 | Bearer | – |
+| GET | `/api/maker/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
+| POST/PATCH/DELETE | `/api/maker/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission >= 1` |
+| GET | `/api/maker/v1/products/families` | 商品企画一覧 (P-04) | Bearer | – |
+| GET | `/api/maker/v1/products/families/{id}` | 商品企画詳細 (P-05) | Bearer | – |
+| POST | `/api/maker/v1/products/families/complete` | バルク登録 (P-01〜P-03) | Bearer | `product_ledger_permission >= 1` |
+| PATCH | `/api/maker/v1/products/families/{id}` | 企画更新 (P-05) | Bearer | `product_ledger_permission >= 1` |
+| DELETE | `/api/maker/v1/products/families/{id}` | 企画論理削除 (配下 SKU 連動) | Bearer | `product_ledger_permission >= 1` |
+| GET | `/api/maker/v1/products/families/{id}/supplier-prices` | 仕入単価履歴 | Bearer | – |
+| POST | `/api/maker/v1/products/families/{id}/supplier-prices` | 新単価追加 (BR-04) | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission >= 1` |
+| PATCH | `/api/maker/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
+| DELETE | `/api/maker/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
 | GET | `/uploads/product-images/{familyId}/{filename}` | 画像配信 (Local モード時のみ。S3 モード時は Pre-signed URL 経由で `https://<bucket>.s3.<region>.amazonaws.com/...` から直接配信) | なし | – |
-| GET | `/api/v1/orders` | 発注書一覧 (O-03) | Bearer | – |
-| GET | `/api/v1/orders/{id}` | 発注書詳細 (O-04) | Bearer | – |
-| POST | `/api/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |
-| PATCH | `/api/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/v1/orders/{id}/export` | 帳票出力フォーム (O-06、発注日/出荷指示番号/発注番号 を手入力 + 帳票選択。初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/v1/orders/bulk-export` | 一括ダウンロード (#3b、発注書 ZIP / 管理表 xlsx / 両方 ZIP) | Bearer | `purchase_order_create_permission >= 1` |
-| GET | `/api/v1/orders/communication-suggestions` | 連絡文章テンプレ (O-07) | Bearer | – |
+| GET | `/api/maker/v1/orders` | 発注書一覧 (O-03) | Bearer | – |
+| GET | `/api/maker/v1/orders/{id}` | 発注書詳細 (O-04) | Bearer | – |
+| POST | `/api/maker/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |
+| PATCH | `/api/maker/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/maker/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/maker/v1/orders/{id}/export` | 帳票出力フォーム (O-06、発注日/出荷指示番号/発注番号 を手入力 + 帳票選択。初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/maker/v1/orders/bulk-export` | 一括ダウンロード (#3b、発注書 ZIP / 管理表 xlsx / 両方 ZIP) | Bearer | `purchase_order_create_permission >= 1` |
+| GET | `/api/maker/v1/orders/communication-suggestions` | 連絡文章テンプレ (O-07) | Bearer | – |
 
 `{master}` は: brands / sizes / functions / countries / suppliers / departments / product-types / product-seasons / product-groups / colors / materials / material-classifications / warehouses / delivery-destinations / document-template-purchases / document-template-confirmations / document-text-purchases
 

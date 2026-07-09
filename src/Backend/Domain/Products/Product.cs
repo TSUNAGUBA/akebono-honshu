@@ -1,14 +1,17 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Products;
 
 /// <summary>
 /// SKU = 11 桁品番 (Phase 5 §4.2)。色 × サイズの全組合せで 1 レコード (P-02 サイズ展開で一括生成)。
 /// BR-02: SKU 不変、論理削除のみ。
 /// </summary>
-public class Product
+public class Product : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public long ProductFamilyId { get; set; }
     public long ColorId { get; set; }
     public long SizeId { get; set; }

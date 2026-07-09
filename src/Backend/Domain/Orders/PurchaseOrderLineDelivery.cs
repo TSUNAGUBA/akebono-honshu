@@ -1,5 +1,7 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Orders;
 
 /// <summary>
@@ -15,9 +17,10 @@ namespace Akebono.Domain.Orders;
 ///   分納 N 件 = その明細は分納で構成。<see cref="PurchaseOrderLine.Quantity"/> には分納数量の合計 (SUM) を
 ///     設定する (既存の subtotal GENERATED 列 = quantity * unit_price_snapshot がそのまま正しい金額になる)。
 /// </summary>
-public class PurchaseOrderLineDelivery
+public class PurchaseOrderLineDelivery : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
 
     /// <summary>親 = 発注明細 (purchase_order_lines.id)。ON DELETE CASCADE。</summary>
     public long PurchaseOrderLineId { get; set; }

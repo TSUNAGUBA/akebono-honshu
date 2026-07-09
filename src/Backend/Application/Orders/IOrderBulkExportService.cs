@@ -12,7 +12,7 @@ public enum BulkExportFormat
 }
 
 /// <summary>
-/// 一括ダウンロードリクエスト (POST /api/v1/orders/bulk-export、#3b)。
+/// 一括ダウンロードリクエスト (POST /api/maker/v1/orders/bulk-export、#3b)。
 /// orderIds は 1 件以上必須。format は order / management / both。
 /// </summary>
 public record BulkExportRequest(List<long> OrderIds, string Format);

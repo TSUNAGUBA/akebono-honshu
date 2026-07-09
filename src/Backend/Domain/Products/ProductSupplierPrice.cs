@@ -1,5 +1,7 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Products;
 
 /// <summary>
@@ -10,9 +12,10 @@ namespace Akebono.Domain.Products;
 ///
 /// 機密度 中-高 (NFR §6.2): 監査ログには金額本体ではなくマスク値 ("***") のみ記録。
 /// </summary>
-public class ProductSupplierPrice
+public class ProductSupplierPrice : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public long ProductFamilyId { get; set; }
     public long SupplierId { get; set; }
     /// <summary>

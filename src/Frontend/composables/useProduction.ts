@@ -208,16 +208,20 @@ export interface ProductionStatusRow {
 }
 
 export const useProduction = () => {
-  const { apiFetch } = useApi()
+  const { apiFetch, apiData } = useApi()
   const config = useRuntimeConfig()
 
   const download = async (path: string, fallback: string): Promise<void> => {
-    const { getIdToken } = useAuth()
+    const { getIdToken, user } = useAuth()
     const token = await getIdToken()
     if (!token) throw new Error('未認証')
+    const tenantId = user.value?.tenantId
     const response = await $fetch.raw<Blob>(`${config.public.apiBase}${path}`, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+      },
       responseType: 'blob',
     })
     const cd = response.headers.get('content-disposition') ?? ''
@@ -236,22 +240,25 @@ export const useProduction = () => {
   return {
     // BOM
     getBom: async (familyId: number): Promise<ProductMaterialItem[]> =>
-      (await apiFetch<{ data: ProductMaterialItem[] }>(`/products/families/${familyId}/materials`)).data,
+      await apiData<ProductMaterialItem[]>(`/products/families/${familyId}/materials`),
     replaceBom: async (familyId: number, materials: BomLineInput[]): Promise<ProductMaterialItem[]> =>
-      (await apiFetch<{ data: ProductMaterialItem[] }>(`/products/families/${familyId}/materials`, {
+      await apiData<ProductMaterialItem[]>(`/products/families/${familyId}/materials`, {
         method: 'PUT', body: { materials },
-      })).data,
+      }),
     requirements: (familyId: number, quantity: number): Promise<MaterialRequirements> =>
-      apiFetch<MaterialRequirements>(`/products/families/${familyId}/material-requirements?quantity=${quantity}`),
+      apiData<MaterialRequirements>(`/products/families/${familyId}/material-requirements?quantity=${quantity}`),
 
     // 生産指示書
     piList: async (includeCancelled = false): Promise<PiListItem[]> =>
-      (await apiFetch<{ data: PiListItem[] }>(`/production-instructions?includeCancelled=${includeCancelled}`)).data,
-    piGet: (id: number): Promise<PiDetail> => apiFetch<PiDetail>(`/production-instructions/${id}`),
+      await apiData<PiListItem[]>(`/production-instructions?includeCancelled=${includeCancelled}`),
+    piGet: (id: number): Promise<PiDetail> => apiData<PiDetail>(`/production-instructions/${id}`),
+    // 作成 POST は Idempotency-Key 必須 (AKB-DOC-12、欠落は 400 AKB-SYS-004)。送信試行ごとに新規 UUID を生成する。
     piCreate: (payload: CreatePiPayload): Promise<{ id: number; instructionNo: string }> =>
-      apiFetch(`/production-instructions`, { method: 'POST', body: payload }),
+      apiData<{ id: number; instructionNo: string }>(`/production-instructions`, {
+        method: 'POST', body: payload, headers: { 'Idempotency-Key': crypto.randomUUID() },
+      }),
     piUpdate: (id: number, payload: UpdatePiPayload): Promise<{ id: number; instructionNo: string }> =>
-      apiFetch(`/production-instructions/${id}`, { method: 'PATCH', body: payload }),
+      apiData<{ id: number; instructionNo: string }>(`/production-instructions/${id}`, { method: 'PATCH', body: payload }),
     piIssue: (id: number): Promise<void> => apiFetch(`/production-instructions/${id}/issue`, { method: 'POST' }),
     piComplete: (id: number): Promise<void> => apiFetch(`/production-instructions/${id}/complete`, { method: 'POST' }),
     piCancel: (id: number, reason: string): Promise<void> =>
@@ -261,12 +268,15 @@ export const useProduction = () => {
 
     // 素材発注書
     prepareMaterialOrder: (req: { productionInstructionId?: number | null; productFamilyId?: number | null; quantity?: number | null }): Promise<MaterialRequirements> =>
-      apiFetch<MaterialRequirements>(`/material-orders/prepare`, { method: 'POST', body: req }),
+      apiData<MaterialRequirements>(`/material-orders/prepare`, { method: 'POST', body: req }),
     moList: async (includeCancelled = false): Promise<MaterialOrderListItem[]> =>
-      (await apiFetch<{ data: MaterialOrderListItem[] }>(`/material-orders?includeCancelled=${includeCancelled}`)).data,
-    moGet: (id: number): Promise<MaterialOrderDetail> => apiFetch<MaterialOrderDetail>(`/material-orders/${id}`),
+      await apiData<MaterialOrderListItem[]>(`/material-orders?includeCancelled=${includeCancelled}`),
+    moGet: (id: number): Promise<MaterialOrderDetail> => apiData<MaterialOrderDetail>(`/material-orders/${id}`),
+    // 作成 POST は Idempotency-Key 必須 (AKB-DOC-12、欠落は 400 AKB-SYS-004)。送信試行ごとに新規 UUID を生成する。
     moCreate: (payload: CreateMaterialOrderPayload): Promise<{ id: number; orderNo: string }> =>
-      apiFetch(`/material-orders`, { method: 'POST', body: payload }),
+      apiData<{ id: number; orderNo: string }>(`/material-orders`, {
+        method: 'POST', body: payload, headers: { 'Idempotency-Key': crypto.randomUUID() },
+      }),
     moOrder: (id: number): Promise<void> => apiFetch(`/material-orders/${id}/order`, { method: 'POST' }),
     moCancel: (id: number, reason: string): Promise<void> =>
       apiFetch(`/material-orders/${id}/cancel`, { method: 'POST', body: { reason } }),
@@ -280,7 +290,7 @@ export const useProduction = () => {
       if (f.productionInstructionState) q.set('productionInstructionState', f.productionInstructionState)
       if (f.bomRegistered !== undefined) q.set('bomRegistered', String(f.bomRegistered))
       const qs = q.toString()
-      return (await apiFetch<{ data: ProductionStatusRow[] }>(`/production/status${qs ? `?${qs}` : ''}`)).data
+      return await apiData<ProductionStatusRow[]>(`/production/status${qs ? `?${qs}` : ''}`)
     },
   }
 }

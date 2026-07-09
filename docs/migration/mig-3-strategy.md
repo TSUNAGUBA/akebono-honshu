@@ -1,5 +1,12 @@
 # MIG-3: 既存生産管理システム CSV 取込戦略
 
+> **プラットフォーム統合改修 (2026-07-09) 注記:** 本書は MIG-3 実施当時 (単一テナント・
+> JST-naive スキーマ) の戦略記録である。本文中の SQL 断片 (`ON CONFLICT (code)` 等) は
+> 旧スキーマ前提であり、現行の実行 SQL は `db/migration/mig-3-*.sql`
+> (tenant_id / `ON CONFLICT (tenant_id, code)` 対応済) が SoT。実行手順は
+> `db/migration/README.md` を参照。
+
+
 > **対象:** Phase 7 Iteration 4 Hardening の「MIG-3 既存データ移行」。
 > Iteration 2 で送り状を作成した移行課題 8 件 (iteration-plan.md §3 Iteration 4) を解決する。
 >

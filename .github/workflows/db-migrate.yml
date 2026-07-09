@@ -7,6 +7,11 @@
 #
 # action=init   : 空 DB に db/init を投入 (既存があれば中止)。現行マイグレーションは baseline 記録。
 # action=migrate: db/migration の未適用スキーマのみ適用 (MIG-3 データ取込は除外、UI で実施)。
+# action=reinit : public スキーマを DROP して init と同手順で再構築 (プラットフォーム統合改修の
+#                 ような破壊的スキーマ再編用・稼働前環境専用)。confirm_reinit=true が必須。
+#
+# APP_DB_PASSWORD secret: アプリ接続ロール akebono_app のパスワード。
+# init/reinit では必須 (未設定はエラー終了)。migrate では任意 (設定時のみ ALTER ROLE 反映)。
 # ===========================================================================
 name: DB Init / Migrate (RDS)
 
@@ -14,10 +19,14 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'init = 空DBにスキーマ投入(既存があれば中止) / migrate = 未適用マイグレーション適用'
+        description: 'init = 空DBにスキーマ投入(既存があれば中止) / migrate = 未適用マイグレーション適用 / reinit = 破壊的再構築(稼働前専用)'
         type: choice
-        options: [migrate, init]
+        options: [migrate, init, reinit]
         default: migrate
+      confirm_reinit:
+        description: 'reinit の場合のみ: 破壊的再構築を承認する (true 必須)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,10 +71,17 @@ jobs:
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_ADMIN_USER: ${{ secrets.DB_ADMIN_USER }}
           DB_ADMIN_PASSWORD: ${{ secrets.DB_ADMIN_PASSWORD }}
+          APP_DB_PASSWORD: ${{ secrets.APP_DB_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "${DB_HOST}" ] || [ -z "${DB_NAME}" ] || [ -z "${DB_ADMIN_USER}" ] || [ -z "${DB_ADMIN_PASSWORD}" ]; then
             echo "::error::DB_HOST / DB_NAME / DB_ADMIN_USER / DB_ADMIN_PASSWORD secret が未設定です" >&2
+            exit 1
+          fi
+          # init / reinit は akebono_app のパスワード設定 (APP_DB_PASSWORD) が必須
+          # (既知の既定値のまま本番 DB が構築される事故防止。run-migrations.sh 側にも同ゲートあり)
+          if [ "${{ inputs.action }}" != "migrate" ] && [ -z "${APP_DB_PASSWORD:-}" ]; then
+            echo "::error::APP_DB_PASSWORD secret が未設定です (init/reinit では必須)" >&2
             exit 1
           fi
           {
@@ -74,6 +90,9 @@ jobs:
             echo "DB_NAME=${DB_NAME}"
             echo "DB_ADMIN_USER=${DB_ADMIN_USER}"
             echo "DB_ADMIN_PASSWORD=${DB_ADMIN_PASSWORD}"
+            if [ -n "${APP_DB_PASSWORD:-}" ]; then
+              echo "APP_DB_PASSWORD=${APP_DB_PASSWORD}"
+            fi
           } > deploy/db/.dbenv
 
       - name: Copy migration bundle to EC2
@@ -93,10 +112,15 @@ jobs:
           HOST: ${{ steps.ec2.outputs.host }}
           SSH_USER: ${{ secrets.EC2_SSH_USER }}
           ACTION: ${{ inputs.action }}
+          CONFIRM_REINIT: ${{ inputs.confirm_reinit == true && 'yes' || '' }}
         run: |
           set -euo pipefail
+          if [ "${ACTION}" = "reinit" ] && [ "${CONFIRM_REINIT}" != "yes" ]; then
+            echo "::error::action=reinit には confirm_reinit=true が必須です (破壊的操作の二重確認)" >&2
+            exit 1
+          fi
           ssh -i ~/.ssh/deploy_key -o BatchMode=yes "${SSH_USER}@${HOST}" \
-            "cd ~/akebono-migrate && ACTION='${ACTION}' bash run-migrations.sh && rm -rf ~/akebono-migrate"
+            "cd ~/akebono-migrate && ACTION='${ACTION}' CONFIRM_REINIT='${CONFIRM_REINIT}' bash run-migrations.sh && rm -rf ~/akebono-migrate"
 
       - name: Cleanup local secrets
         if: always()

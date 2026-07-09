@@ -9,10 +9,9 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit, ILogger<AuthS
     /// <summary>
     /// Firebase Auth でログインに成功したフロントが最初に呼ぶ sync endpoint の実装。
     /// JwtBearer ミドルウェアの OnTokenValidated が ID Token 検証 + users 引当 (!IsDeleted && IsActive) +
-    /// Claim 付与まで済ませているため、本メソッドが [Authorize] を通って到達した時点で
-    /// users 行は確実に有効 (active かつ非削除)。
-    /// 未紐付け / inactive / soft-deleted ユーザは OnTokenValidated 段で Claim 未付与となり
-    /// [Authorize] の 401 で SyncAsync に到達しない (拒否監査は OnTokenValidated 内で
+    /// Claim 付与まで済ませている。未紐付け / inactive / soft-deleted ユーザは Claim 未付与の
+    /// まま到達し (トークン自体は有効なため [Authorize] は通過する)、本メソッドが null を返して
+    /// endpoint 側で 403 AKB-AUTH-005 になる (拒否監査は OnTokenValidated 内で
     /// Auth.LoginRejected.Inactive / Auth.UidUnboundProbe として 5 分 de-dup で記録)。
     /// </summary>
     public async Task<SyncResponse?> SyncAsync(string firebaseUid, CancellationToken ct = default)
@@ -43,11 +42,20 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit, ILogger<AuthS
         await audit.LogAsync(user.Id, "Login.Success",
             entityType: "User", entityId: user.Id, cancellationToken: ct);
 
+        // テナント情報 (フロントは以降 X-Tenant-Id ヘッダにこの値を載せる)。
+        // tenant はテナントレジストリ投影 (RLS 適用外・読取専用) のため素直に引ける。
+        var tenantCode = await db.Tenants
+            .Where(t => t.TenantId == user.TenantId)
+            .Select(t => t.TenantCode)
+            .FirstOrDefaultAsync(ct) ?? string.Empty;
+
         return new SyncResponse(user.Id, user.EmployeeNo, user.DisplayName, user.IsActive,
             user.ProductLedgerPermission,
             user.PurchaseOrderCreatePermission,
             user.PurchaseOrderInfoPermission,
-            user.ProcessRecordPermission);
+            user.ProcessRecordPermission,
+            user.TenantId,
+            tenantCode);
     }
 
     public async Task<MeResponse?> GetMeAsync(long userId, CancellationToken ct = default)
@@ -56,12 +64,19 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit, ILogger<AuthS
             .Where(u => u.Id == userId && !u.IsDeleted)
             .FirstOrDefaultAsync(ct);
 
-        return user is null
-            ? null
-            : new MeResponse(user.Id, user.EmployeeNo, user.DisplayName, user.IsActive,
-                user.ProductLedgerPermission,
-                user.PurchaseOrderCreatePermission,
-                user.PurchaseOrderInfoPermission,
-                user.ProcessRecordPermission);
+        if (user is null) return null;
+
+        var tenantCode = await db.Tenants
+            .Where(t => t.TenantId == user.TenantId)
+            .Select(t => t.TenantCode)
+            .FirstOrDefaultAsync(ct) ?? string.Empty;
+
+        return new MeResponse(user.Id, user.EmployeeNo, user.DisplayName, user.IsActive,
+            user.ProductLedgerPermission,
+            user.PurchaseOrderCreatePermission,
+            user.PurchaseOrderInfoPermission,
+            user.ProcessRecordPermission,
+            user.TenantId,
+            tenantCode);
     }
 }

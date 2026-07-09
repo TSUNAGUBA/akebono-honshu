@@ -238,23 +238,25 @@ export interface PriceSuggestion {
 }
 
 export const useOrders = () => {
-  const { apiFetch } = useApi()
+  const { apiFetch, apiData } = useApi()
   const config = useRuntimeConfig()
 
   const list = async (includeCancelled = false): Promise<OrderListItem[]> => {
-    const res = await apiFetch<{ data: OrderListItem[] }>(
-      `/orders?includeCancelled=${includeCancelled}`,
-    )
-    return res.data
+    return await apiData<OrderListItem[]>(`/orders?includeCancelled=${includeCancelled}`)
   }
 
-  const get = (id: number): Promise<OrderDetail> => apiFetch<OrderDetail>(`/orders/${id}`)
+  const get = (id: number): Promise<OrderDetail> => apiData<OrderDetail>(`/orders/${id}`)
 
+  // 作成 POST は Idempotency-Key 必須 (AKB-DOC-12、欠落は 400 AKB-SYS-004)。送信試行ごとに新規 UUID を生成する。
   const create = async (payload: CreateOrderPayload): Promise<{ id: number; mgmtNo: string }> =>
-    await apiFetch<{ id: number; mgmtNo: string }>('/orders', { method: 'POST', body: payload })
+    await apiData<{ id: number; mgmtNo: string }>('/orders', {
+      method: 'POST',
+      body: payload,
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+    })
 
   const update = async (id: number, payload: UpdateOrderPayload): Promise<{ id: number; mgmtNo: string }> =>
-    await apiFetch<{ id: number; mgmtNo: string }>(`/orders/${id}`, { method: 'PATCH', body: payload })
+    await apiData<{ id: number; mgmtNo: string }>(`/orders/${id}`, { method: 'PATCH', body: payload })
 
   const cancel = async (id: number, cancelReason: string): Promise<void> => {
     await apiFetch<void>(`/orders/${id}/cancel`, { method: 'POST', body: { cancelReason } })
@@ -284,7 +286,7 @@ export const useOrders = () => {
     targetState: OrderState,
     cancelReason?: string,
   ): Promise<{ updated: number; skipped: number }> =>
-    await apiFetch<{ updated: number; skipped: number }>('/orders/bulk-status', {
+    await apiData<{ updated: number; skipped: number }>('/orders/bulk-status', {
       method: 'POST',
       body: { orderIds, targetState, cancelReason: cancelReason ?? null },
     })
@@ -312,14 +314,18 @@ export const useOrders = () => {
    *   - 'both'                 → 発注書+管理表 を ZIP
    */
   const exportOrder = async (id: number, payload: ExportOrderPayload): Promise<void> => {
-    const { getIdToken } = useAuth()
+    const { getIdToken, user } = useAuth()
     const token = await getIdToken()
     if (!token) throw new Error('未認証')
+    const tenantId = user.value?.tenantId
     const response = await $fetch.raw<Blob>(
       `${config.public.apiBase}/orders/${id}/export`,
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+        },
         body: payload,
         responseType: 'blob',
       },
@@ -339,14 +345,18 @@ export const useOrders = () => {
     orderIds: number[],
     format: 'order' | 'management' | 'both',
   ): Promise<void> => {
-    const { getIdToken } = useAuth()
+    const { getIdToken, user } = useAuth()
     const token = await getIdToken()
     if (!token) throw new Error('未認証')
+    const tenantId = user.value?.tenantId
     const response = await $fetch.raw<Blob>(
       `${config.public.apiBase}/orders/bulk-export`,
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+        },
         body: { orderIds, format },
         responseType: 'blob',
       },
@@ -357,8 +367,7 @@ export const useOrders = () => {
   }
 
   const communicationSuggestions = async (): Promise<CommunicationSuggestion[]> => {
-    const res = await apiFetch<{ data: CommunicationSuggestion[] }>('/orders/communication-suggestions')
-    return res.data
+    return await apiData<CommunicationSuggestion[]>('/orders/communication-suggestions')
   }
 
   /**
@@ -366,7 +375,7 @@ export const useOrders = () => {
    * サーバ側で snapshot を上書きしないため、本値はフォームの初期値/補完にのみ使う。
    */
   const priceSuggestion = async (productId: number, supplierId: number): Promise<PriceSuggestion> =>
-    await apiFetch<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
+    await apiData<PriceSuggestion>(`/orders/price-suggestion?productId=${productId}&supplierId=${supplierId}`)
 
   return { list, get, create, update, cancel, markOrdered, unmarkOrdered, softDelete, bulkStatus, exportOrder, bulkExport, communicationSuggestions, priceSuggestion }
 }

@@ -48,7 +48,7 @@ public class OrderManagementTableExcelService(IAkebonoDbContext db, IAuditLogger
             .GroupBy(l => l.PurchaseOrderId)
             .ToDictionary(g => g.Key, g => g.OrderBy(l => l.LineNo).ToList());
 
-        var now = SystemTime.Now;
+        var now = SystemTime.JstNow; // ファイル名スタンプは業務時刻 (JST)
 
         using var wb = new XLWorkbook();
         var usedSheetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

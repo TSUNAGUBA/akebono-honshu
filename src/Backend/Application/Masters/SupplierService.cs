@@ -39,7 +39,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
 
     public async Task<Supplier> CreateAsync(SupplierWriteRequest req, long actorUserId, CancellationToken ct = default)
     {
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         var entity = new Supplier
         {
             Code = req.Code,
@@ -81,7 +81,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         entity.AlertTarget = req.AlertTarget;
         entity.CurrencyCode = string.IsNullOrWhiteSpace(req.CurrencyCode) ? "JPY" : req.CurrencyCode.Trim().ToUpperInvariant();
         entity.DrayageCost = req.DrayageCost;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
 
         await db.SaveChangesAsync(ct);
@@ -99,7 +99,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         if (entity is null) return false;
 
         entity.DeleteFlag = true;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -116,7 +116,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         if (entity is null) return false;
 
         entity.DeleteFlag = false;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 

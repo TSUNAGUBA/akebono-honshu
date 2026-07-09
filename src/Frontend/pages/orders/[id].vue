@@ -275,10 +275,10 @@ const onSaveEdit = async () => {
     editing.value = false
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string }; statusCode?: number }
+    const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 409
       ? '中止済みの発注書は編集できません'
-      : err.data?.detail ?? '更新に失敗しました'
+      : getApiErrorMessage(e, '更新に失敗しました')
   }
 }
 
@@ -320,9 +320,9 @@ const onMarkOrdered = async () => {
     successMessage.value = '発注済にしました'
     await reload()
   } catch (e) {
-    const err = e as { statusCode?: number; data?: { detail?: string } }
+    const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 409
-      ? (err.data?.detail ?? '現在の状態では発注済にできません')
+      ? getApiErrorMessage(e, '現在の状態では発注済にできません')
       : '発注済操作に失敗しました'
   }
 }
@@ -335,9 +335,9 @@ const onUnmarkOrdered = async () => {
     successMessage.value = '未発注に戻しました'
     await reload()
   } catch (e) {
-    const err = e as { statusCode?: number; data?: { detail?: string } }
+    const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 409
-      ? (err.data?.detail ?? '現在の状態では未発注に戻せません')
+      ? getApiErrorMessage(e, '現在の状態では未発注に戻せません')
       : '未発注に戻す操作に失敗しました'
   }
 }
@@ -403,9 +403,11 @@ const onSubmitExport = async () => {
     showExportForm.value = false
     await reload()
   } catch (e) {
-    const err = e as { statusCode?: number; data?: { detail?: string } }
-    errorMessage.value = err.data?.detail
-      ?? (err.statusCode === 409 ? '発注番号が重複しています' : '帳票出力に失敗しました')
+    const err = e as { statusCode?: number }
+    errorMessage.value = getApiErrorMessage(
+      e,
+      err.statusCode === 409 ? '発注番号が重複しています' : '帳票出力に失敗しました',
+    )
   } finally {
     downloading.value = false
   }
@@ -414,7 +416,7 @@ const onSubmitExport = async () => {
 const exportBadge = computed(() => {
   if (!detail.value) return null
   if (!detail.value.firstExportedAt) return { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
-  const dt = new Date(detail.value.firstExportedAt).toLocaleString('ja-JP')
+  const dt = formatJstDateTime(detail.value.firstExportedAt)
   return { label: `初回出力済 (${dt})`, cls: 'bg-blue-100 text-blue-700' }
 })
 
@@ -593,7 +595,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           <div><span class="text-gray-500">取引先納入日:</span> {{ detail.dueDate }}</div>
           <div><span class="text-gray-500">発注担当者:</span> {{ detail.ordererName }}</div>
           <div><span class="text-gray-500">発注管理者:</span> {{ detail.managerName }}</div>
-          <div><span class="text-gray-500">作成日:</span> {{ new Date(detail.createdAt).toLocaleString('ja-JP') }}</div>
+          <div><span class="text-gray-500">作成日:</span> {{ formatJstDateTime(detail.createdAt) }}</div>
           <!-- 帳票出力フォーム 手入力項目 (発注日 / 出荷指示番号)。出力時に保存された値を表示。 -->
           <div><span class="text-gray-500">発注日:</span> {{ detail.orderDate || '—' }}</div>
           <div><span class="text-gray-500">出荷指示番号:</span> {{ detail.shippingInstructionNo || '—' }}</div>
@@ -613,8 +615,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           </div>
         </div>
         <div v-if="detail.firstExportedAt" class="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
-          <div><strong>初回 Excel 出力:</strong> {{ new Date(detail.firstExportedAt).toLocaleString('ja-JP') }}</div>
-          <div><strong>最終出力:</strong> {{ detail.lastExportedAt ? new Date(detail.lastExportedAt).toLocaleString('ja-JP') : '—' }}</div>
+          <div><strong>初回 Excel 出力:</strong> {{ formatJstDateTime(detail.firstExportedAt) }}</div>
+          <div><strong>最終出力:</strong> {{ detail.lastExportedAt ? formatJstDateTime(detail.lastExportedAt) : '—' }}</div>
           <div class="mt-1 text-gray-600">
             <strong>帳票宛名 (F-22 snapshot 凍結):</strong>
             「{{ detail.supplierOfficialNameSnapshot ?? '?' }} 御中 {{ detail.supplierCodeSnapshot ?? '?' }}」
@@ -624,16 +626,16 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           </div>
         </div>
         <div v-if="detail.status === 1" class="mt-3 rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-xs">
-          <div><strong>中止日時:</strong> {{ detail.cancelledAt ? new Date(detail.cancelledAt).toLocaleString('ja-JP') : '—' }}</div>
+          <div><strong>中止日時:</strong> {{ detail.cancelledAt ? formatJstDateTime(detail.cancelledAt) : '—' }}</div>
           <div><strong>中止理由:</strong> {{ detail.cancelReason ?? '—' }}</div>
         </div>
         <!-- 発注済情報 (§3b)。ユーザー操作で発注済にした日時。ダウンロードとは独立。 -->
         <div v-if="detail.orderedAt" class="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs">
-          <div><strong>発注済日時:</strong> {{ new Date(detail.orderedAt).toLocaleString('ja-JP') }}</div>
+          <div><strong>発注済日時:</strong> {{ formatJstDateTime(detail.orderedAt) }}</div>
         </div>
         <!-- 発注削除情報 (§3b、論理削除) -->
         <div v-if="detail.isDeleted" class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs">
-          <div><strong>削除日時:</strong> {{ detail.deletedAt ? new Date(detail.deletedAt).toLocaleString('ja-JP') : '—' }}</div>
+          <div><strong>削除日時:</strong> {{ detail.deletedAt ? formatJstDateTime(detail.deletedAt) : '—' }}</div>
           <div class="text-gray-600">この発注書は削除済み (論理削除) です。一覧では既定で非表示になります。</div>
         </div>
       </section>
@@ -898,7 +900,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </section>
 
       <p class="mt-3 text-xs text-gray-400">
-        API: GET/PATCH/POST cancel/POST export /api/v1/orders/{{ id }}
+        API: GET/PATCH/POST cancel/POST export /api/maker/v1/orders/{{ id }}
       </p>
     </template>
   </main>

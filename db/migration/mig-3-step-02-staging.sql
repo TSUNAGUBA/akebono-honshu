@@ -4,7 +4,7 @@
 -- 目的: 既存生産管理システム CSV (138 列) 用 Staging テーブル定義
 --
 -- 利用方法:
---   - Backend 画面取込 (POST /api/v1/admin/legacy-import):
+--   - Backend 画面取込 (POST /api/maker/v1/admin/legacy-import):
 --       LegacyImportService が本 SQL を ExecuteSqlRaw で実行
 --       (CSV パース + INSERT は C# 側で実装)
 --   - psql 手動取込 (フォールバック):

@@ -6,7 +6,7 @@ const { user } = useAuth()
 const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
 const { list } = useMasters()
 const { create, communicationSuggestions, priceSuggestion } = useOrders()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 
 // マスタ参照
 const suppliers = ref<MasterItem[]>([])
@@ -36,7 +36,7 @@ const submitting = ref(false)
 const errorMessage = ref('')
 
 // フォーム
-const today = new Date().toISOString().split('T')[0]
+const today = todayJst() // 業務日付は JST 基準 (UTC 由来だと JST 00:00-08:59 に前日になる)
 // 発注区分 (国内/海外) は入力項目の出し分けには使わない (§5 統一)。国内/海外で共通の入力項目とし、
 // is_overseas は帳票の言語切替 (国内=日本語/海外=英語) と一覧の区分バッジのみに使う。
 const form = ref({
@@ -143,20 +143,20 @@ onMounted(async () => {
       list('warehouses'),
       communicationSuggestions(),
       // 商品企画から全 SKU を引いてくる (簡素実装、Iter 4 で検索 + ページング)
-      apiFetch<{ data: { id: number; productName1: string; skuVariationCount: number }[] }>('/products/families'),
-      apiFetch<{ data: UserOption[] }>('/users'),
+      apiData<{ id: number; productName1: string; skuVariationCount: number }[]>('/products/families'),
+      apiData<UserOption[]>('/users'),
     ])
     suppliers.value = sup
     destinations.value = dest
     departments.value = dept
     warehouses.value = wh
     commTemplates.value = comm
-    users.value = usrRes.data
+    users.value = usrRes
 
     // 各 family の詳細を並列取得して SKU リスト構築
     const skuLists = await Promise.all(
-      family.data.map((f) =>
-        apiFetch<{ products: { id: number; sku: string; colorName: string; sizeName: string }[] }>(`/products/families/${f.id}`)
+      family.map((f) =>
+        apiData<{ products: { id: number; sku: string; colorName: string; sizeName: string }[] }>(`/products/families/${f.id}`)
           .then((d) =>
             d.products.map((p) => ({
               id: p.id,
@@ -175,9 +175,9 @@ onMounted(async () => {
     if (dest.length) form.value.deliveryDestinationId = dest[0].id
     if (dept.length) form.value.departmentId = dept[0].id
     if (wh.length) form.value.warehouseId = wh[0].id
-    if (usrRes.data.length) {
-      form.value.ordererUserId = usrRes.data[0].id
-      form.value.managerUserId = usrRes.data[0].id
+    if (usrRes.length) {
+      form.value.ordererUserId = usrRes[0].id
+      form.value.managerUserId = usrRes[0].id
     }
     if (skus.value.length) lines.value[0].productId = skus.value[0].id
   } catch (e) {
@@ -369,8 +369,7 @@ const onSubmit = async () => {
     const res = await create(payload)
     await navigateTo(`/orders/${res.id}`)
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '発注書作成に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '発注書作成に失敗しました')
   } finally {
     submitting.value = false
   }

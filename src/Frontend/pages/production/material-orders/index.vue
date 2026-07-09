@@ -24,7 +24,7 @@ const filtered = computed(() => {
   return items.value.filter(i => i.orderNo.toLowerCase().includes(q) || i.materialSupplierName.toLowerCase().includes(q))
 })
 const statusBadge = (s: number) => s === 9 ? { cls: 'bg-orange-100 text-orange-700' } : s === 1 ? { cls: 'bg-green-100 text-green-700' } : { cls: 'bg-yellow-100 text-yellow-700' }
-const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `出力済 (${new Date(i.firstExportedAt).toLocaleDateString('ja-JP')})`, cls: 'bg-blue-100 text-blue-700' } : { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
+const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `出力済 (${formatJstDate(i.firstExportedAt)})`, cls: 'bg-blue-100 text-blue-700' } : { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
 </script>
 
 <template>
@@ -80,6 +80,6 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
         </tbody>
       </table>
     </section>
-    <p class="mt-3 text-xs text-gray-400">API: GET /api/v1/material-orders</p>
+    <p class="mt-3 text-xs text-gray-400">API: GET /api/maker/v1/material-orders</p>
   </main>
 </template>

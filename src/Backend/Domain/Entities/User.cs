@@ -1,8 +1,11 @@
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Entities;
 
-public class User
+public class User : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public string? FirebaseUid { get; set; }
     public string EmployeeNo { get; set; } = string.Empty;
     public string LoginId { get; set; } = string.Empty;

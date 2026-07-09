@@ -13,7 +13,7 @@ const {
   addSupplierPrice, uploadImage, deleteImage,
 } = useProducts()
 const { list } = useMasters()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 
 const detail = ref<FamilyDetail | null>(null)
 const loading = ref(true)
@@ -68,8 +68,9 @@ const priceForm = ref({
   unitPrice: 0,
   currencyCode: 'JPY',
   exchangeRate: null as number | null,
-  effectiveFrom: new Date().toISOString().split('T')[0],
-  decidedAt: new Date().toISOString().split('T')[0],
+  // 業務日付は JST 基準 (effectiveFrom は BR-04 単価履歴のクローズ日に直結するためずれ厳禁)
+  effectiveFrom: todayJst(),
+  decidedAt: todayJst(),
   // 旧 仕入コスト計算明細 項目 (Phase C、全て任意)
   estimateUnitPrice: null as number | null,
   estimateReceivedDate: '',
@@ -167,7 +168,7 @@ onMounted(async () => {
         list('materials'), list('suppliers'),
         list('sizes'),
         list('product-seasons'),
-        apiFetch<{ data: UserOption[] }>('/users'),
+        apiData<UserOption[]>('/users'),
       ])
       brands.value = br
       functions_.value = fn
@@ -176,7 +177,7 @@ onMounted(async () => {
       suppliers.value = sup
       sizes.value = sz
       productSeasons.value = ps
-      users.value = usrRes.data
+      users.value = usrRes
       if (sup.length) priceForm.value.supplierId = sup[0].id
     })(),
   ])
@@ -290,8 +291,7 @@ const onAddPrice = async () => {
     priceForm.value.taxRate = null
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '単価追加に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '単価追加に失敗しました')
   }
 }
 
@@ -307,8 +307,7 @@ const onFileSelect = async (event: Event) => {
     successMessage.value = '画像をアップロードしました'
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '画像アップロードに失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '画像アップロードに失敗しました')
   } finally {
     uploading.value = false
     if (target) target.value = ''
@@ -445,9 +444,9 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 
         <!-- 登録/更新 情報 (旧 spec No.27/28、PR1)。編集不可の表示のみ。 -->
         <div v-if="!editing" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-gray-100 pt-3 text-sm sm:grid-cols-4">
-          <div><span class="text-gray-500">登録日:</span> {{ new Date(detail.family.createdAt).toLocaleString('ja-JP') }}</div>
+          <div><span class="text-gray-500">登録日:</span> {{ formatJstDateTime(detail.family.createdAt) }}</div>
           <div><span class="text-gray-500">登録者:</span> {{ detail.family.createdByUserName ?? '—' }}</div>
-          <div><span class="text-gray-500">最終更新日:</span> {{ new Date(detail.family.updatedAt).toLocaleString('ja-JP') }}</div>
+          <div><span class="text-gray-500">最終更新日:</span> {{ formatJstDateTime(detail.family.updatedAt) }}</div>
           <div><span class="text-gray-500">最終更新者:</span> {{ detail.family.updatedByUserName ?? '—' }}</div>
         </div>
 
@@ -877,7 +876,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <p class="mt-3 text-xs text-gray-400">
-        API: GET/PATCH/DELETE /api/v1/products/families/{{ familyId }} + 画像 + 単価
+        API: GET/PATCH/DELETE /api/maker/v1/products/families/{{ familyId }} + 画像 + 単価
       </p>
     </template>
   </main>

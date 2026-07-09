@@ -52,7 +52,7 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
         // 1. CSV をエンコーディング自動判定 + パース
         var rows = ParseCsv(csvStream, fileName, warnings);
         if (rows.Count == 0)
-            throw new InvalidOperationException("CSV にデータ行が含まれていません");
+            throw DomainException.Validation("CSV にデータ行が含まれていません");
 
         // 2. SQL 4 種を順次実行 (Pre-patch → Master-fill → Staging DDL → Bulk INSERT → Import)
         var prePatchSql   = ReadSqlResource("pre-patch.sql");
@@ -229,8 +229,11 @@ public sealed class LegacyImportService(IAkebonoDbContext db)
         const int batchSize = 200;
         var cols = string.Join(",", Enumerable.Range(1, ExpectedColumns).Select(i => $"c{i:D3}"));
 
+        // EF 経由でオープンする (DbConnection.OpenAsync 直呼びは TenantSessionInterceptor が
+        // 発火せず app.tenant_id GUC が未設定になり、RLS 下で取込がサイレントに 0 件化する)。
+        // OpenConnectionAsync は既にオープン済みなら no-op (参照カウント) で冪等。
+        await db.Database.OpenConnectionAsync(ct);
         var conn = db.Database.GetDbConnection();
-        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
 
         for (int offset = 0; offset < rows.Count; offset += batchSize)
         {
@@ -286,8 +289,11 @@ UPDATE staging_legacy_products
     // ────────────────────────────────────────────────────────────────
     private async Task<LegacyImportStagingResult> CountStagingAsync(CancellationToken ct)
     {
+        // EF 経由でオープンする (DbConnection.OpenAsync 直呼びは TenantSessionInterceptor が
+        // 発火せず app.tenant_id GUC が未設定になり、RLS 下で取込がサイレントに 0 件化する)。
+        // OpenConnectionAsync は既にオープン済みなら no-op (参照カウント) で冪等。
+        await db.Database.OpenConnectionAsync(ct);
         var conn = db.Database.GetDbConnection();
-        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT COUNT(*)::int,
@@ -303,8 +309,11 @@ UPDATE staging_legacy_products
 
     private async Task<LegacyImportImportResult> CountImportedAsync(CancellationToken ct)
     {
+        // EF 経由でオープンする (DbConnection.OpenAsync 直呼びは TenantSessionInterceptor が
+        // 発火せず app.tenant_id GUC が未設定になり、RLS 下で取込がサイレントに 0 件化する)。
+        // OpenConnectionAsync は既にオープン済みなら no-op (参照カウント) で冪等。
+        await db.Database.OpenConnectionAsync(ct);
         var conn = db.Database.GetDbConnection();
-        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT
@@ -322,8 +331,11 @@ UPDATE staging_legacy_products
 
     private async Task<LegacyImportFallback> CountFallbacksAsync(CancellationToken ct)
     {
+        // EF 経由でオープンする (DbConnection.OpenAsync 直呼びは TenantSessionInterceptor が
+        // 発火せず app.tenant_id GUC が未設定になり、RLS 下で取込がサイレントに 0 件化する)。
+        // OpenConnectionAsync は既にオープン済みなら no-op (参照カウント) で冪等。
+        await db.Database.OpenConnectionAsync(ct);
         var conn = db.Database.GetDbConnection();
-        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT

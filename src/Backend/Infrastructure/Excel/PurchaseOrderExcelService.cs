@@ -40,7 +40,7 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             .Include(o => o.Orderer)
             .Include(o => o.Manager)
             .FirstOrDefaultAsync(o => o.Id == purchaseOrderId, ct)
-            ?? throw new InvalidOperationException($"発注書 id={purchaseOrderId} 不在");
+            ?? throw DomainException.Concealed($"発注書 id={purchaseOrderId} 不在");
 
         var lines = await db.PurchaseOrderLines
             .Include(l => l.Product).ThenInclude(p => p!.Size)
@@ -51,7 +51,7 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             .ToListAsync(ct);
 
         var isFirstExport = order.FirstExportedAt is null;
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -112,7 +112,7 @@ public class PurchaseOrderExcelService(IAkebonoDbContext db, IAuditLogger audit)
             note: $"mgmt_no={order.MgmtNo}, order_no={order.OrderNo}, is_first={isFirstExport}, region={(order.IsOverseas ? "overseas" : "domestic")}, total_amount=***",
             cancellationToken: ct);
 
-        var fileName = $"{t.OrderSheetTitle}_{order.OrderNo ?? order.MgmtNo}_{now:yyyyMMdd_HHmmss}.xlsx";
+        var fileName = $"{t.OrderSheetTitle}_{order.OrderNo ?? order.MgmtNo}_{SystemTime.JstNow:yyyyMMdd_HHmmss}.xlsx"; // ファイル名は業務時刻 (JST)
         return (fileName, stream.ToArray());
     }
 

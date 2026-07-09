@@ -1,9 +1,10 @@
 namespace Akebono.Domain.Common;
 
 /// <summary>17 マスタ共通基底。Phase 5 §3 共通基底 (id / code / name / delete_flag / 監査列 / legacy_id)。</summary>
-public abstract class MasterEntityBase : IMasterEntity
+public abstract class MasterEntityBase : IMasterEntity, ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public bool DeleteFlag { get; set; }

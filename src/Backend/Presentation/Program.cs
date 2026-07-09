@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using Akebono.Api;
 using Akebono.Api.Endpoints;
 using Akebono.Application.Common;
 using Akebono.Infrastructure;
@@ -14,10 +15,11 @@ using Microsoft.OpenApi.Models;
 // .NET Core / .NET 5+ は既定で限定的なエンコーディングのみ対応のため必須。
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-// Npgsql レガシータイムスタンプ挙動を有効化 (本番 auth/sync で発覚した必須設定)。
-// JST-naive 設計: SystemTime.Now=Kind=Unspecified、全 timestamp 列は timestamp without time zone。
-// 無効だと Npgsql 既定で DateTime->timestamptz となり Kind=Unspecified の書込が失敗するため必須。
-AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+// プラットフォーム統合改修: 旧 JST-naive 設計 (Npgsql.EnableLegacyTimestampBehavior +
+// timestamp without time zone) は廃止。あけぼの SCM プラットフォーム標準 (ADR-006 相当) の
+// timestamptz/UTC 統一に合わせ、Npgsql 既定 (非レガシー) の
+// 「DateTime Kind=Utc ⇔ timestamptz」マッピングをそのまま使う。
+// 格納は SystemTime.UtcNow、表示・帳票・採番年度は SystemTime.JstNow (Domain/Common/SystemTime.cs)。
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -115,6 +117,32 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
         options.Events = new JwtBearerEvents
         {
+            // 401/403 も封筒 {error:{code,...}} で返す (AKB-DOC-12 §6.3。既定の空ボディは規約違反)。
+            OnChallenge = async ctx =>
+            {
+                ctx.HandleResponse();
+                if (ctx.Response.HasStarted) return;
+                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                // 失敗種別でコードを出し分ける (AKB-DOC-12 §14.5: 001 欠如 / 002 不正 / 003 期限切れ)
+                var (code, message, userAction) = ctx.AuthenticateFailure switch
+                {
+                    Microsoft.IdentityModel.Tokens.SecurityTokenExpiredException =>
+                        (AkbErrorCodes.AuthTokenExpired, "認証トークンの有効期限が切れています", "再ログインまたはトークン更新をしてください"),
+                    not null =>
+                        (AkbErrorCodes.AuthTokenInvalid, "認証トークンが不正です", "ログインし直してください"),
+                    _ =>
+                        (AkbErrorCodes.AuthTokenMissing, "認証が必要です", "ログインし直してください"),
+                };
+                await ctx.Response.WriteAsJsonAsync(ApiEnvelope.ErrorBody(ctx.HttpContext, code, message, userAction));
+            },
+            OnForbidden = async ctx =>
+            {
+                if (ctx.Response.HasStarted) return;
+                ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await ctx.Response.WriteAsJsonAsync(ApiEnvelope.ErrorBody(
+                    ctx.HttpContext, AkbErrorCodes.AuthInsufficientPermission,
+                    "この操作を行う権限がありません"));
+            },
             // OnTokenValidated は **単一 cache + タプル引当** で SEC-12 / SEC-15 を満たす (4 周目 P1-1 反映):
             // 旧実装の 2 段 cache (`fb_uid:{uid}` + `fb_uid_any:{uid}`) は独立 TTL のため、inactive→active
             // 切替直後に「active ユーザを Auth.LoginRejected.Inactive で誤監査」する状態乖離が起きる。
@@ -130,7 +158,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     .CreateLogger("JwtBearer.OnTokenValidated");
                 var cache = sp.GetRequiredService<IMemoryCache>();
 
-                (long? ActiveId, long? AnyId) resolved;
+                (long? ActiveId, long? AnyId, Guid? TenantId, string? TenantStatus) resolved;
                 try
                 {
                     resolved = await cache.GetOrCreateAsync(
@@ -145,15 +173,32 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                             // 1 度の DB クエリで (IsActive な行、!IsDeleted な行) の id を同時取得し、
                             // ActiveId / AnyId のペアを atomic に確定させる。同じスナップショットから
                             // 派生するため必ず整合する (ActiveId 有値 → AnyId も同値)。
+                            //
+                            // テナント解決: 本引当はテナントコンテキスト確立「前」に走る認証エントリ
+                            // ポイントのため IgnoreQueryFilters を明示する (users は RLS 適用除外
+                            // テーブル。詳細は db/init/08-tenancy-rls.sql / AkebonoDbContext 参照)。
                             var row = await db.Users
+                                .IgnoreQueryFilters()
                                 .Where(u => u.FirebaseUid == firebaseUid && !u.IsDeleted)
-                                .Select(u => new { u.Id, u.IsActive })
+                                .Select(u => new
+                                {
+                                    u.Id,
+                                    u.IsActive,
+                                    u.TenantId,
+                                    // tenant.status (AKB-TENANT-004 判定用。tenant は RLS 適用外の
+                                    // レジストリ投影のため認証前でも参照可能)
+                                    TenantStatus = db.Tenants
+                                        .Where(t => t.TenantId == u.TenantId)
+                                        .Select(t => t.Status)
+                                        .FirstOrDefault(),
+                                })
                                 .FirstOrDefaultAsync(ctx.HttpContext.RequestAborted);
                             if (row is null)
                             {
-                                return ((long?)null, (long?)null);
+                                return ((long?)null, (long?)null, (Guid?)null, (string?)null);
                             }
-                            return (row.IsActive ? (long?)row.Id : null, (long?)row.Id);
+                            return (row.IsActive ? (long?)row.Id : null, (long?)row.Id,
+                                (Guid?)row.TenantId, (string?)row.TenantStatus);
                         });
                 }
                 catch (Exception ex)
@@ -226,6 +271,37 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     identity.AddClaim(new System.Security.Claims.Claim(
                         AuthEndpoints.AkebonoUserIdClaim,
                         resolved.ActiveId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+
+                    // テナントコンテキスト (AKB-DOC-12 §10.1)。
+                    // 一次ソース = Firebase Custom Claims の tenant_id (SoT は akebono-backoffice。
+                    // プラットフォームのプロビジョニング/Claims 同期が接続された環境で発行される)。
+                    // MVP 暫定フォールバック = users.tenant_id (backoffice 未接続の間は RDS が権威。
+                    // Claims は「RDS 先行 → Custom Claims 後追い」のキャッシュ、AKB-DOC-09)。
+                    var tokenTenantClaim = ctx.Principal.FindFirst("tenant_id")?.Value;
+                    var isTokenTenant = false;
+                    Guid? resolvedTenantId;
+                    if (tokenTenantClaim is not null && Guid.TryParse(tokenTenantClaim, out var tokenTenantId))
+                    {
+                        isTokenTenant = true;
+                        resolvedTenantId = tokenTenantId;
+                    }
+                    else
+                    {
+                        resolvedTenantId = resolved.TenantId;
+                    }
+                    if (resolvedTenantId is { } tenantId)
+                    {
+                        identity.AddClaim(new System.Security.Claims.Claim(
+                            AuthEndpoints.AkebonoTenantIdClaim, tenantId.ToString()));
+                        // ステータスは RDS 解決経路でのみ付与 (Custom Claims 経路では
+                        // 停止 = Claims 剥奪がプラットフォーム側の責務、AKB-DOC-09)。
+                        // TenantResolutionMiddleware が trial/active 以外を 403 AKB-TENANT-004 で拒否。
+                        if (!isTokenTenant && resolved.TenantStatus is { } tenantStatus)
+                        {
+                            identity.AddClaim(new System.Security.Claims.Claim(
+                                AuthEndpoints.AkebonoTenantStatusClaim, tenantStatus));
+                        }
+                    }
                 }
             },
         };
@@ -295,10 +371,19 @@ if (!string.Equals(imageProvider, "S3", StringComparison.OrdinalIgnoreCase))
 
 app.UseCors();
 
+// 中央例外ハンドラ (AKB-DOC-12 §6.3)。CORS の後段 (エラー応答にも CORS ヘッダを載せる)、
+// 認証・エンドポイントの前段に置き、DomainException 等をエラー封筒へ変換する。
+app.UseMiddleware<ApiExceptionMiddleware>();
+
 // 商品画像のローカル配信 (Iteration 2)
 app.UseStaticFiles();
 
 app.UseAuthentication();
+
+// テナントコンテキスト確定 (認証クレーム → ITenantContext、X-Tenant-Id 突合)。
+// UseAuthentication の後・UseAuthorization / エンドポイントの前に必須 (AKB-DOC-12 §10)。
+app.UseMiddleware<TenantResolutionMiddleware>();
+
 app.UseAuthorization();
 
 // Swagger UI は本番では公開しない (API スキーマ漏洩防止)。

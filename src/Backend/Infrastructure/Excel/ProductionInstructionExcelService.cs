@@ -23,7 +23,7 @@ public class ProductionInstructionExcelService(IAkebonoDbContext db, IAuditLogge
             .Include(p => p.FactorySupplier)
             .Include(p => p.ProductFamily)
             .FirstOrDefaultAsync(p => p.Id == productionInstructionId, ct)
-            ?? throw new InvalidOperationException($"生産指示 id={productionInstructionId} 不在");
+            ?? throw DomainException.Concealed($"生産指示 id={productionInstructionId} 不在");
 
         var lines = await db.ProductionInstructionLines
             .Include(l => l.Product).ThenInclude(p => p!.Color)
@@ -33,7 +33,7 @@ public class ProductionInstructionExcelService(IAkebonoDbContext db, IAuditLogge
             .ToListAsync(ct);
 
         var isFirstExport = pi.FirstExportedAt is null;
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         var sku9 = lines.FirstOrDefault()?.SkuSnapshot is { Length: >= 9 } s ? s[..9] : (lines.FirstOrDefault()?.SkuSnapshot ?? "");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -118,7 +118,7 @@ public class ProductionInstructionExcelService(IAkebonoDbContext db, IAuditLogge
             entityType: "ProductionInstruction", entityId: productionInstructionId,
             note: $"instruction_no={pi.InstructionNo}, is_first={isFirstExport}, tmpl={TemplateVersion}", cancellationToken: ct);
 
-        var fileName = $"PI_{pi.InstructionNo}_{now:yyyyMMdd_HHmmss}.xlsx";
+        var fileName = $"PI_{pi.InstructionNo}_{SystemTime.JstNow:yyyyMMdd_HHmmss}.xlsx"; // ファイル名は業務時刻 (JST)
         return (fileName, stream.ToArray());
     }
 }

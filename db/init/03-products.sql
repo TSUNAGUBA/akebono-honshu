@@ -1,7 +1,11 @@
 -- Iteration 2: 商品関連 4 テーブル (Phase 5 data-design.md §4.1-4.4)
 -- 前提: 01-schema.sql (users / audit_logs) + 02-masters.sql (17 マスタ) 投入済
+-- プラットフォーム統合改修: tenant_id (uuid) 導入・UNIQUE を (tenant_id, ...) へ差替・TIMESTAMPTZ(UTC) 化
 
-SET TIMEZONE = 'Asia/Tokyo';
+SET TIMEZONE = 'UTC';
+
+-- シード用テナントコンテキスト (tenant_id 列の DEFAULT がこの GUC から解決される)
+SET app.tenant_id = '00000000-0000-4000-8000-000000000001';
 
 -- ─────────────────────────────────────────────────
 -- §4.1 product_families — 商品企画レベル親
@@ -9,6 +13,7 @@ SET TIMEZONE = 'Asia/Tokyo';
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_families (
     id                    BIGSERIAL PRIMARY KEY,
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
     planned_year_code     CHAR(1)      NOT NULL,
     product_type_id       BIGINT       NOT NULL REFERENCES product_types(id),
     product_season_id     BIGINT       NOT NULL REFERENCES product_seasons(id),
@@ -39,19 +44,21 @@ CREATE TABLE IF NOT EXISTS product_families (
     color_remark          TEXT         NULL,                                       -- 備考（色）(spec No.33、商品単位の単一テキスト)
     status                SMALLINT     NOT NULL DEFAULT 0,
     is_deleted            BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     legacy_id             VARCHAR(64)  NULL,
     CONSTRAINT chk_pf_planned_year_code CHECK (planned_year_code IN ('A','B','C','D','E','F','G','H','I','J','K','N','Z')),
     CONSTRAINT chk_pf_status CHECK (status BETWEEN 0 AND 2),
     CONSTRAINT chk_pf_royalty_target CHECK (royalty_target IS NULL OR royalty_target IN (1,2)),
-    CONSTRAINT uq_product_families UNIQUE (planned_year_code, product_type_id, product_season_id, sequence_no, factory_supplier_id)
+    CONSTRAINT uq_product_families UNIQUE (tenant_id, planned_year_code, product_type_id, product_season_id, sequence_no, factory_supplier_id)
 );
 CREATE INDEX IF NOT EXISTS idx_pf_status_deleted ON product_families (status, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_pf_brand ON product_families (brand_id);
 CREATE INDEX IF NOT EXISTS idx_pf_factory ON product_families (factory_supplier_id);
+CREATE INDEX IF NOT EXISTS idx_product_families_tenant ON product_families (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_pf_legacy_id ON product_families (legacy_id) WHERE legacy_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────
 -- §4.2 products — SKU (11桁品番)
@@ -59,20 +66,25 @@ CREATE INDEX IF NOT EXISTS idx_pf_factory ON product_families (factory_supplier_
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS products (
     id                    BIGSERIAL PRIMARY KEY,
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
     product_family_id     BIGINT       NOT NULL REFERENCES product_families(id),
     color_id              BIGINT       NOT NULL REFERENCES colors(id),
     size_id               BIGINT       NOT NULL REFERENCES sizes(id),
-    sku                   VARCHAR(11)  NOT NULL UNIQUE,
+    sku                   VARCHAR(16)  NOT NULL,   -- 11 桁 (新規企画) または旧 SKU (legacy import、最大 16 桁。旧 mig-3-pre-patch を init へ正式反映)
     is_deleted            BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     legacy_id             VARCHAR(64)  NULL,
-    CONSTRAINT uq_products_family_color_size UNIQUE (product_family_id, color_id, size_id)
+    CONSTRAINT uq_products_family_color_size UNIQUE (tenant_id, product_family_id, color_id, size_id),
+    CONSTRAINT uq_products_tenant_sku UNIQUE (tenant_id, sku)
 );
 CREATE INDEX IF NOT EXISTS idx_products_family ON products (product_family_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_search ON products (sku) WHERE is_deleted = FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_search ON products (tenant_id, sku) WHERE is_deleted = FALSE;
+CREATE INDEX IF NOT EXISTS idx_products_tenant ON products (tenant_id);
+-- legacy import (MIG-3) 検証 SQL 高速化 (旧 mig-3-pre-patch を init へ正式反映)
+CREATE INDEX IF NOT EXISTS idx_products_legacy_id ON products (legacy_id) WHERE legacy_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────
 -- §4.3 product_images — 商品画像 (S3 参照、Iteration 2 ではローカルファイル)
@@ -80,6 +92,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_products_search ON products (sku) WHERE is
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_images (
     id                    BIGSERIAL PRIMARY KEY,
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
     product_family_id     BIGINT       NOT NULL REFERENCES product_families(id),
     image_category        SMALLINT     NOT NULL DEFAULT 0,   -- §2a: 0=企画画像 / 1=本番画像
     s3_key                VARCHAR(512) NOT NULL,
@@ -91,9 +104,9 @@ CREATE TABLE IF NOT EXISTS product_images (
     height_px             INTEGER      NULL,
     original_filename     VARCHAR(255) NULL,
     is_deleted            BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     CONSTRAINT chk_pi_order_no CHECK (order_no BETWEEN 1 AND 5),
     CONSTRAINT chk_pi_image_category CHECK (image_category IN (0, 1)),
@@ -101,13 +114,15 @@ CREATE TABLE IF NOT EXISTS product_images (
 );
 -- order_no の一意は区分ごとに独立 (企画/本番でそれぞれ 1〜5)。§2a で category を複合キーに追加。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_family_category_order
-    ON product_images (product_family_id, image_category, order_no) WHERE is_deleted = FALSE;
+    ON product_images (tenant_id, product_family_id, image_category, order_no) WHERE is_deleted = FALSE;
+CREATE INDEX IF NOT EXISTS idx_product_images_tenant ON product_images (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §4.4 product_supplier_prices — マルチ仕入先単価 (アイテム単位、履歴管理)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_supplier_prices (
     id                    BIGSERIAL PRIMARY KEY,
+    tenant_id             UUID           NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
     product_family_id     BIGINT         NOT NULL REFERENCES product_families(id),
     supplier_id           BIGINT         NOT NULL REFERENCES suppliers(id),
     -- サイズ別仕入単価 (PR2、設計判断Q4=サイズ別必要)。
@@ -131,9 +146,9 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
     effective_to          DATE           NULL,
     decided_at            DATE           NOT NULL,
     is_deleted            BOOLEAN        NOT NULL DEFAULT FALSE,
-    created_at            TIMESTAMP      NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT         NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP      NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT         NOT NULL REFERENCES users(id),
     CONSTRAINT chk_psp_unit_price CHECK (unit_price > 0),
     CONSTRAINT chk_psp_effective_range CHECK (effective_to IS NULL OR effective_to > effective_from)
@@ -142,12 +157,13 @@ CREATE TABLE IF NOT EXISTS product_supplier_prices (
 -- 既定行どうしの一意性が緩まないよう COALESCE(size_id, -1) 式インデックスを使う (移植性重視。
 -- PG15+ の UNIQUE NULLS NOT DISTINCT は使わない)。sizes.id は BIGSERIAL ≥ 1 のため -1 は衝突しない。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_psp_family_supplier_size_from
-    ON product_supplier_prices (product_family_id, supplier_id, COALESCE(size_id, -1), effective_from)
+    ON product_supplier_prices (tenant_id, product_family_id, supplier_id, COALESCE(size_id, -1), effective_from)
     WHERE is_deleted = FALSE;
 -- 現単価解決 (family, supplier, size) の現在有効行ルックアップ + BR-04 履歴クローズ用の選択性確保 (PR2)。
 CREATE INDEX IF NOT EXISTS idx_psp_family_current
     ON product_supplier_prices (product_family_id, supplier_id, COALESCE(size_id, -1), effective_from DESC)
     WHERE effective_to IS NULL AND is_deleted = FALSE;
+CREATE INDEX IF NOT EXISTS idx_product_supplier_prices_tenant ON product_supplier_prices (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- product_set_components — アソート/セット明細 (PR3、旧 spec No.37/38)
@@ -158,17 +174,19 @@ CREATE INDEX IF NOT EXISTS idx_psp_family_current
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_set_components (
     id                    BIGSERIAL PRIMARY KEY,
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
     product_family_id     BIGINT       NOT NULL REFERENCES product_families(id) ON DELETE CASCADE,
     child_item_number     VARCHAR(32)  NOT NULL,                                 -- 子品番 (手入力テキスト、spec No.37)
     quantity              INTEGER      NOT NULL,                                 -- 数量 (spec No.38)
     line_no               SMALLINT     NOT NULL DEFAULT 1,                       -- 表示順 (配列順で採番)
-    created_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     created_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
-    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_by_user_id    BIGINT       NOT NULL REFERENCES users(id),
     CONSTRAINT chk_psc_quantity CHECK (quantity > 0)
 );
 CREATE INDEX IF NOT EXISTS idx_psc_family ON product_set_components (product_family_id);
+CREATE INDEX IF NOT EXISTS idx_product_set_components_tenant ON product_set_components (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- Seed: Iteration 2 動作確認用に最小データ投入

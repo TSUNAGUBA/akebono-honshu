@@ -97,7 +97,7 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
             {{ initial ? `${def.label} を編集` : `${def.label} を新規追加` }}
           </h2>
           <p v-if="initial" class="mt-0.5 text-xs text-gray-500">
-            ID: {{ initial.id }} / 更新: {{ new Date(initial.updatedAt).toLocaleString('ja-JP') }}
+            ID: {{ initial.id }} / 更新: {{ formatJstDateTime(initial.updatedAt) }}
           </p>
         </header>
 

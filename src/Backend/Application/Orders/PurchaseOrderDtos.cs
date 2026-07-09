@@ -3,7 +3,7 @@ using Akebono.Domain.Orders;
 namespace Akebono.Application.Orders;
 
 // ─────────────────────────────────────────────────
-// 新規作成 (POST /api/v1/orders、O-01)
+// 新規作成 (POST /api/maker/v1/orders、O-01)
 // ─────────────────────────────────────────────────
 public record CreateOrderRequest(
     long SupplierId,
@@ -65,7 +65,7 @@ public record OrderLineDeliveryInput(
     int? PackQuantity = null);
 
 // ─────────────────────────────────────────────────
-// 一覧 (GET /api/v1/orders、O-03)
+// 一覧 (GET /api/maker/v1/orders、O-03)
 // ─────────────────────────────────────────────────
 public record OrderListItem(
     long Id,
@@ -100,7 +100,7 @@ public record OrderListItem(
     DateTime? OrderedAt = null);
 
 // ─────────────────────────────────────────────────
-// 詳細 (GET /api/v1/orders/{id}、O-04 編集画面ベース)
+// 詳細 (GET /api/maker/v1/orders/{id}、O-04 編集画面ベース)
 // ─────────────────────────────────────────────────
 public record OrderDetail(
     long Id,
@@ -203,7 +203,7 @@ public record OrderLineDeliverySummary(
     short Seq);
 
 // ─────────────────────────────────────────────────
-// 更新 (PATCH /api/v1/orders/{id}、O-04、edit_reason 必須 F-16)
+// 更新 (PATCH /api/maker/v1/orders/{id}、O-04、edit_reason 必須 F-16)
 // ─────────────────────────────────────────────────
 public record UpdateOrderRequest(
     EditReason EditReason,
@@ -258,12 +258,12 @@ public record UpdateLineInput(
     List<OrderLineDeliveryInput>? Deliveries = null);
 
 // ─────────────────────────────────────────────────
-// 中止 (POST /api/v1/orders/{id}/cancel、O-05)
+// 中止 (POST /api/maker/v1/orders/{id}/cancel、O-05)
 // ─────────────────────────────────────────────────
 public record CancelOrderRequest(string CancelReason);
 
 // ─────────────────────────────────────────────────
-// 発注状態の一括変更 (POST /api/v1/orders/bulk-status、§3c)
+// 発注状態の一括変更 (POST /api/maker/v1/orders/bulk-status、§3c)
 //   TargetState = notOrdered(未発注) / ordered(発注済) / cancelled(発注中止) / deleted(発注削除)。
 //   終端状態ガードで変更できない発注はスキップし、Updated / Skipped を返す (非ブロッキング)。
 // ─────────────────────────────────────────────────
@@ -275,7 +275,7 @@ public record BulkStatusRequest(
 public record BulkStatusResult(int Updated, int Skipped);
 
 // ─────────────────────────────────────────────────
-// 帳票出力フォーム (POST /api/v1/orders/{id}/export、旧システム「発注書出力」画面相当)
+// 帳票出力フォーム (POST /api/maker/v1/orders/{id}/export、旧システム「発注書出力」画面相当)
 //   旧画面と同様に「発注日」「出荷指示番号」「発注番号」を手入力し、Excel 帳票に反映して出力する。
 //   Format = 出力帳票選択 (order=発注書のみ / management=管理表のみ / both=発注書+管理表)。
 //   入力した 3 項目は発注に保存し (order_no は未入力なら既存値/自動採番を維持)、再出力時に初期表示する。
@@ -293,7 +293,7 @@ public record CommunicationTextSuggestion(string Body, bool StandardPrintFlag, s
 
 // ─────────────────────────────────────────────────
 // 単価サジェスト (PR2、size-aware)。発注明細の unit_price_snapshot 入力補助。
-// GET /api/v1/orders/price-suggestion?productId=&supplierId=
+// GET /api/maker/v1/orders/price-suggestion?productId=&supplierId=
 //   SKU (productId) の size に対応する現単価を「(family, supplier, SKUのsize) の現単価 →
 //   無ければ (…, NULL-size 既定) の現単価」のフォールバックで解決して返す。
 //   現単価が一切無ければ Found=false (フロントは従来どおり手入力)。

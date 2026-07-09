@@ -5,7 +5,7 @@ import type { MasterItem } from '~/composables/useMasters'
 
 const { listFamilies } = useProducts()
 const { list: listMaster } = useMasters()
-const { apiFetch } = useApi()
+const { apiData } = useApi()
 const { canEditMaster } = useAuth()
 
 const items = ref<FamilyListItem[]>([])
@@ -104,13 +104,13 @@ const loadFilterSources = async () => {
       listMaster('product-seasons'),
       listMaster('suppliers'),
       listMaster('brands'),
-      apiFetch<{ data: UserOption[] }>('/users'),
+      apiData<UserOption[]>('/users'),
     ])
     productTypes.value = pt
     productSeasons.value = ps
     suppliers.value = sup
     brands.value = br
-    users.value = usr.data
+    users.value = usr
   } catch (e) {
     // フィルタ選択肢の取得失敗は致命的でない。ドロップダウンが空になるだけで一覧は使える。
     console.error('フィルタ選択肢 (マスタ/ユーザ) の取得に失敗しました', e)
@@ -376,7 +376,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
               </span>
             </td>
             <td class="px-3 py-2 text-xs text-gray-500">
-              {{ new Date(i.updatedAt).toLocaleDateString('ja-JP') }}
+              {{ formatJstDate(i.updatedAt) }}
             </td>
           </tr>
         </tbody>
@@ -444,7 +444,7 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
     </section>
 
     <p class="mt-3 text-xs text-gray-400">
-      API: GET /api/v1/products/families
+      API: GET /api/maker/v1/products/families
     </p>
   </main>
 </template>

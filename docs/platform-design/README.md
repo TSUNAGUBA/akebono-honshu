@@ -10,8 +10,17 @@ related: [glossary, concept-vision, overall-architecture, canonical-domain-model
 
 # SCIP プラットフォーム設計ドキュメント 索引
 
+> ⚠️ **【重要】本ドキュメント群は旧版（superseded）です。**
+> プラットフォーム設計の現行 SoT は **akebono-scm-platform リポジトリの `docs/platform-design/`**
+> （あけぼの SCM プラットフォーム / Akebono SCM Platform、AKB-DOC-00〜90）へ移管されました。
+> コード名 **SCIP は deprecated**（旧称。現行の正式名称は「あけぼの SCM プラットフォーム」）。
+> 本ドキュメント群は統合設計の入力（履歴・グラウンディング資料）として保存されており、
+> 現行設計と矛盾する場合は akebono-scm-platform 側が正です。
+> 本リポジトリで実施したプラットフォーム統合改修の記録は
+> [docs/platform-integration/README.md](../platform-integration/README.md) を参照してください。
+
 > **SCIP** = **S**upply **C**hain **I**ntelligence **P**latform（コード名。正式名称はオペレーター確定前）
-> ステータス: `draft` / バージョン `0.1.0` / Phase 3-5 相当（PoC 前の設計フェーズ）
+> ステータス: `superseded`（旧版保存） / バージョン `0.1.0` / Phase 3-5 相当（PoC 前の設計フェーズ）
 
 本ドキュメント群は、TSUNAGUBA が提供する **小売・メーカー・倉庫を横断的につなぐ SCM 分析基盤「SCIP」** のプラットフォーム設計一式です。既存の単一テナント実装 **akebono-honshu**（履物メーカー Honshu の生産・受発注・販売管理システム / .NET 8 + Nuxt 3 + RDS PostgreSQL）を**リファレンス実装 / 最初のメーカーテナント**と位置づけ、これをマルチテナント SaaS プラットフォームへ一般化する設計を扱います。
 

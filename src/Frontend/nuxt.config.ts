@@ -12,7 +12,7 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     public: {
-      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:5000/api/v1',
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:5000/api/maker/v1',
       // Firebase Web SDK 用 config (公開情報、Backend は Project ID のみ参照)。
       // dev/prod で必ず異なる project を使い分けるため default 値は持たない:
       // - dev: .env (リポジトリ外、`.env.example` をコピー) から注入

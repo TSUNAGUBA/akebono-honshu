@@ -14,6 +14,7 @@ public class ProductFamilyService(
     IAkebonoDbContext db,
     IAuditLogger audit,
     IImageStorageService imageStorage,
+    ITenantContext tenantContext,
     ILogger<ProductFamilyService> logger)
 {
     /// <summary>
@@ -31,7 +32,7 @@ public class ProductFamilyService(
     }
 
     /// <summary>
-    /// バルク登録 (POST /api/v1/products/families/complete)。
+    /// バルク登録 (POST /api/maker/v1/products/families/complete)。
     /// family + products (色×サイズ全組合せ) + supplier_prices を 1 トランザクション。
     /// </summary>
     public async Task<CompleteFamilyResponse> CreateCompleteAsync(
@@ -41,40 +42,46 @@ public class ProductFamilyService(
     {
         // バリデーション (最小限)
         if (req.Expansion.ColorIds.Count == 0 || req.Expansion.SizeIds.Count == 0)
-            throw new ArgumentException("色とサイズを少なくとも 1 件ずつ指定してください (PROD-002)");
+            throw DomainException.Validation("色とサイズを少なくとも 1 件ずつ指定してください");
         // アソート/セット明細 (PR3)。null/空は許容 (通常商品)、行があれば各行を検証。
         ValidateSetComponents(req.SetComponents);
 
         // FK 参照先を一括取得 (Sku 組立に必要)
         var productType = await db.ProductTypes.FirstOrDefaultAsync(x => x.Id == req.Family.ProductTypeId, ct)
-            ?? throw new ArgumentException($"product_type_id={req.Family.ProductTypeId} 不在");
+            ?? throw DomainException.Validation($"product_type_id={req.Family.ProductTypeId} 不在");
         var season = await db.ProductSeasons.FirstOrDefaultAsync(x => x.Id == req.Family.ProductSeasonId, ct)
-            ?? throw new ArgumentException($"product_season_id={req.Family.ProductSeasonId} 不在");
+            ?? throw DomainException.Validation($"product_season_id={req.Family.ProductSeasonId} 不在");
         var factory = await db.Suppliers.FirstOrDefaultAsync(x => x.Id == req.Family.FactorySupplierId, ct)
-            ?? throw new ArgumentException($"factory_supplier_id={req.Family.FactorySupplierId} 不在");
+            ?? throw DomainException.Validation($"factory_supplier_id={req.Family.FactorySupplierId} 不在");
 
         var colors = await db.Colors.Where(c => req.Expansion.ColorIds.Contains(c.Id)).ToListAsync(ct);
         if (colors.Count != req.Expansion.ColorIds.Count)
-            throw new ArgumentException("指定された color_id の一部が見つかりません");
+            throw DomainException.Validation("指定された color_id の一部が見つかりません");
         var sizes = await db.Sizes.Where(s => req.Expansion.SizeIds.Contains(s.Id)).ToListAsync(ct);
         if (sizes.Count != req.Expansion.SizeIds.Count)
-            throw new ArgumentException("指定された size_id の一部が見つかりません");
-
-        // sequence_no 自動採番 (同一 planned_year + type + season + factory 内の最大 + 1)
-        var maxSeq = await db.ProductFamilies
-            .Where(pf => pf.PlannedYearCode == req.Family.PlannedYearCode
-                      && pf.ProductTypeId == req.Family.ProductTypeId
-                      && pf.ProductSeasonId == req.Family.ProductSeasonId
-                      && pf.FactorySupplierId == req.Family.FactorySupplierId)
-            .Select(pf => pf.SequenceNo)
-            .ToListAsync(ct);
-        var nextSeq = (maxSeq.Count == 0 ? 1 : maxSeq.Select(s => int.TryParse(s, out var n) ? n : 0).Max() + 1)
-            .ToString("D3");
+            throw DomainException.Validation("指定された size_id の一部が見つかりません");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var now = SystemTime.Now;
+            // sequence_no 自動採番 (同一 planned_year + type + season + factory 内の最大 + 1)。
+            // トランザクション内で tenant_id を含む advisory lock を取得して直列化する
+            // (AKB-DOC-05 採番フロー。同時作成での連番衝突を防ぎ、UNIQUE 制約が最終防壁)。
+            var seqLockKey = $"{tenantContext.RequireTenantId()}:FAM-{req.Family.PlannedYearCode}-" +
+                             $"{req.Family.ProductTypeId}-{req.Family.ProductSeasonId}-{req.Family.FactorySupplierId}";
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtext({seqLockKey})::bigint)", ct);
+            var maxSeq = await db.ProductFamilies
+                .Where(pf => pf.PlannedYearCode == req.Family.PlannedYearCode
+                          && pf.ProductTypeId == req.Family.ProductTypeId
+                          && pf.ProductSeasonId == req.Family.ProductSeasonId
+                          && pf.FactorySupplierId == req.Family.FactorySupplierId)
+                .Select(pf => pf.SequenceNo)
+                .ToListAsync(ct);
+            var nextSeq = (maxSeq.Count == 0 ? 1 : maxSeq.Select(s => int.TryParse(s, out var n) ? n : 0).Max() + 1)
+                .ToString("D3");
+
+            var now = SystemTime.UtcNow;
             var family = new ProductFamily
             {
                 PlannedYearCode = req.Family.PlannedYearCode,
@@ -299,11 +306,11 @@ public class ProductFamilyService(
         foreach (var c in components)
         {
             if (string.IsNullOrWhiteSpace(c.ChildItemNumber))
-                throw new ArgumentException("アソート/セット明細の子品番は必須です (SETC-001)");
+                throw DomainException.Validation("アソート/セット明細の子品番は必須です");
             if (c.ChildItemNumber.Trim().Length > 32)
-                throw new ArgumentException("アソート/セット明細の子品番は 32 文字以内です (SETC-001)");
+                throw DomainException.Validation("アソート/セット明細の子品番は 32 文字以内です");
             if (c.Quantity <= 0)
-                throw new ArgumentException("アソート/セット明細の数量は正の整数で指定してください (SETC-002)");
+                throw DomainException.Validation("アソート/セット明細の数量は正の整数で指定してください");
         }
     }
 
@@ -508,7 +515,7 @@ public class ProductFamilyService(
         if (req.SetComponents is not null)
             ValidateSetComponents(req.SetComponents);
 
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -581,14 +588,14 @@ public class ProductFamilyService(
         if (family is null) return false;
 
         family.IsDeleted = true;
-        family.UpdatedAt = SystemTime.Now;
+        family.UpdatedAt = SystemTime.UtcNow;
         family.UpdatedByUserId = actorUserId;
 
         var skus = await db.Products.Where(p => p.ProductFamilyId == familyId && !p.IsDeleted).ToListAsync(ct);
         foreach (var sku in skus)
         {
             sku.IsDeleted = true;
-            sku.UpdatedAt = SystemTime.Now;
+            sku.UpdatedAt = SystemTime.UtcNow;
             sku.UpdatedByUserId = actorUserId;
         }
 

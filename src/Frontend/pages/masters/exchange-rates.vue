@@ -2,7 +2,7 @@
 // 為替マスタ (§2f)。年月 (YYYY-MM) × 通貨ごとの対円レートを CRUD する専用ページ。
 // code/name を持たない bespoke master のため、汎用 [master].vue ではなく専用実装 (仕入先とは別ページ)。
 const { canEditMaster } = useAuth()
-const { apiFetch } = useApi()
+const { apiFetch, apiData } = useApi()
 
 interface ExchangeRateItem {
   id: number
@@ -27,7 +27,7 @@ const successMessage = ref('')
 const submitting = ref(false)
 
 // 追加/編集フォーム。editingId=null は新規、非 null は該当 id の編集。
-const nowMonth = new Date().toISOString().slice(0, 7) // 'YYYY-MM'
+const nowMonth = currentMonthJst() // 'YYYY-MM' (JST 基準。UTC 由来だと月初 09:00 まで前月になる)
 const editingId = ref<number | null>(null)
 const form = ref({ yearMonth: nowMonth, currencyCode: '', rate: null as number | null })
 
@@ -39,8 +39,7 @@ const resetForm = () => {
 // 通貨マスタは対象通貨ドロップダウン用の補助データ。失敗しても本体は使える (原則4 非ブロッキング)。
 const loadCurrencies = async () => {
   try {
-    const res = await apiFetch<{ data: CurrencyItem[] }>('/masters/currencies?includeDeleted=false')
-    currencies.value = res.data
+    currencies.value = await apiData<CurrencyItem[]>('/masters/currencies?includeDeleted=false')
     if (form.value.currencyCode === '' && foreignCurrencies.value.length) {
       form.value.currencyCode = foreignCurrencies.value[0].code
     }
@@ -53,10 +52,9 @@ const reload = async () => {
   loading.value = true
   errorMessage.value = ''
   try {
-    const res = await apiFetch<{ data: ExchangeRateItem[] }>(
+    items.value = await apiData<ExchangeRateItem[]>(
       `/masters/exchange-rates?includeDeleted=${includeDeleted.value}`,
     )
-    items.value = res.data
   } catch (e) {
     const err = e as { statusCode?: number }
     errorMessage.value = err.statusCode === 401
@@ -109,8 +107,7 @@ const onSubmit = async () => {
     resetForm()
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '保存に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '保存に失敗しました')
   } finally {
     submitting.value = false
   }

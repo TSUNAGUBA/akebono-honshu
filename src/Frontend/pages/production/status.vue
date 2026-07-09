@@ -111,6 +111,6 @@ const doneBadge = (s: string) => s === 'done'
         </tbody>
       </table>
     </section>
-    <p class="mt-3 text-xs text-gray-400">API: GET /api/v1/production/status</p>
+    <p class="mt-3 text-xs text-gray-400">API: GET /api/maker/v1/production/status</p>
   </main>
 </template>

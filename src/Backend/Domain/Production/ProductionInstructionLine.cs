@@ -1,13 +1,16 @@
 using Akebono.Domain.Products;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Production;
 
 /// <summary>
 /// 生産指示明細 (色×サイズ別の生産数量、Phase 5 data-design-production §4.3)。
 /// </summary>
-public class ProductionInstructionLine
+public class ProductionInstructionLine : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public long ProductionInstructionId { get; set; }
     public short LineNo { get; set; }
     public long ProductId { get; set; }

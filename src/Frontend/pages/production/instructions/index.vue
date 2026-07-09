@@ -39,7 +39,7 @@ const statusBadge = (s: number) => {
   return { cls: 'bg-yellow-100 text-yellow-700' }
 }
 const exportBadge = (i: PiListItem) => i.firstExportedAt
-  ? { label: `出力済 (${new Date(i.firstExportedAt).toLocaleDateString('ja-JP')})`, cls: 'bg-blue-100 text-blue-700' }
+  ? { label: `出力済 (${formatJstDate(i.firstExportedAt)})`, cls: 'bg-blue-100 text-blue-700' }
   : { label: '未出力', cls: 'bg-gray-100 text-gray-600' }
 </script>
 
@@ -100,6 +100,6 @@ const exportBadge = (i: PiListItem) => i.firstExportedAt
         </tbody>
       </table>
     </section>
-    <p class="mt-3 text-xs text-gray-400">API: GET /api/v1/production-instructions</p>
+    <p class="mt-3 text-xs text-gray-400">API: GET /api/maker/v1/production-instructions</p>
   </main>
 </template>

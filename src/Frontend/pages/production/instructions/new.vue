@@ -16,7 +16,7 @@ const submitting = ref(false)
 
 const form = ref({
   factorySupplierId: 0,
-  dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+  dueDate: todayJstPlusDays(30), // 業務日付は JST 基準
   communicationText: '',
 })
 // productId -> quantity
@@ -56,8 +56,7 @@ const submit = async () => {
     })
     await navigateTo(`/production/instructions/${res.id}`)
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? '生産指示書の作成に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, '生産指示書の作成に失敗しました')
   } finally { submitting.value = false }
 }
 </script>
@@ -124,6 +123,6 @@ const submit = async () => {
         <NuxtLink to="/production/instructions" class="rounded-md border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50">キャンセル</NuxtLink>
       </div>
     </template>
-    <p class="mt-3 text-xs text-gray-400">API: POST /api/v1/production-instructions</p>
+    <p class="mt-3 text-xs text-gray-400">API: POST /api/maker/v1/production-instructions</p>
   </main>
 </template>

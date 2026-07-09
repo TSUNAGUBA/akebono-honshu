@@ -57,21 +57,21 @@ public static class MasterEndpoints
     private static RouteGroupBuilder MapBase<T>(IEndpointRouteBuilder app, string path)
         where T : MasterEntityBase, new()
     {
-        var group = app.MapGroup($"/api/v1/masters/{path}");
+        var group = app.MapGroup($"/api/maker/v1/masters/{path}");
 
         group.MapGet("/", async (HttpContext http, MasterService<T> svc,
                                   bool? includeDeleted, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
-            return Results.Ok(new { data = items });
+            return ApiEnvelope.Ok(http, items);
         });
 
-        group.MapGet("/{id:long}", async (long id, MasterService<T> svc, CancellationToken ct) =>
+        group.MapGet("/{id:long}", async (HttpContext http, long id, MasterService<T> svc, CancellationToken ct) =>
         {
             var entity = await svc.GetAsync(id, ct);
-            return entity is null ? Results.NotFound() : Results.Ok(entity);
+            return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
         });
 
         group.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
@@ -80,7 +80,7 @@ public static class MasterEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
@@ -89,7 +89,7 @@ public static class MasterEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         return group;
@@ -108,7 +108,7 @@ public static class MasterEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var entity = new T { Code = req.Code, Name = req.Name };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/{path}/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/{path}/{created.Id}", created);
         });
 
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
@@ -121,7 +121,7 @@ public static class MasterEndpoints
                 e.Code = req.Code;
                 e.Name = req.Name;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -135,7 +135,7 @@ public static class MasterEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var entity = new Size { Code = req.Code, Name = req.Name, ItemConversionCode = req.ItemConversionCode };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/sizes/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/sizes/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<Size> svc, long id, SizeWriteRequest req, CancellationToken ct) =>
@@ -148,27 +148,27 @@ public static class MasterEndpoints
                 e.Name = req.Name;
                 e.ItemConversionCode = req.ItemConversionCode;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
     private static void MapSuppliers(IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/v1/masters/suppliers");
+        var group = app.MapGroup("/api/maker/v1/masters/suppliers");
 
         group.MapGet("/", async (HttpContext http, SupplierService svc,
                                   bool? includeDeleted, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
-            return Results.Ok(new { data = items });
+            return ApiEnvelope.Ok(http, items);
         });
 
-        group.MapGet("/{id:long}", async (long id, SupplierService svc, CancellationToken ct) =>
+        group.MapGet("/{id:long}", async (HttpContext http, long id, SupplierService svc, CancellationToken ct) =>
         {
             var entity = await svc.GetAsync(id, ct);
-            return entity is null ? Results.NotFound() : Results.Ok(entity);
+            return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
         });
 
         group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
@@ -177,7 +177,7 @@ public static class MasterEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/suppliers/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/suppliers/{created.Id}", created);
         });
 
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
@@ -186,7 +186,7 @@ public static class MasterEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
 
         group.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
@@ -195,7 +195,7 @@ public static class MasterEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
@@ -204,28 +204,30 @@ public static class MasterEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
     }
 
     // 為替マスタ (§2f、bespoke master)。年月 (YYYY-MM) × 通貨ごとの対円レートを CRUD する。
+    // 同一 (年月, 通貨) の重複 (旧 EXR-004) や入力検証は service 層が DomainException を投げ、
+    // ApiExceptionMiddleware が 409/422 のエラー封筒へ変換する。
     private static void MapExchangeRates(IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/v1/masters/exchange-rates");
+        var group = app.MapGroup("/api/maker/v1/masters/exchange-rates");
 
         group.MapGet("/", async (HttpContext http, ExchangeRateService svc,
                                   bool? includeDeleted, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
-            return Results.Ok(new { data = items });
+            return ApiEnvelope.Ok(http, items);
         });
 
-        group.MapGet("/{id:long}", async (long id, ExchangeRateService svc, CancellationToken ct) =>
+        group.MapGet("/{id:long}", async (HttpContext http, long id, ExchangeRateService svc, CancellationToken ct) =>
         {
             var entity = await svc.GetAsync(id, ct);
-            return entity is null ? Results.NotFound() : Results.Ok(entity);
+            return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
         });
 
         group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
@@ -233,20 +235,8 @@ public static class MasterEndpoints
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
-                return Results.Created($"/api/v1/masters/exchange-rates/{created.Id}", created);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
-            }
-            catch (InvalidOperationException ex)
-            {
-                // 同一 (年月, 通貨) の重複は 409 (EXR-004)。
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
+            var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/exchange-rates/{created.Id}", created);
         });
 
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
@@ -254,19 +244,8 @@ public static class MasterEndpoints
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
-                return updated is null ? Results.NotFound() : Results.Ok(updated);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 400, title: "Bad Request", detail: ex.Message);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
+            var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
 
         group.MapDelete("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
@@ -275,7 +254,7 @@ public static class MasterEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         group.MapPost("/{id:long}/restore", async (HttpContext http, IAkebonoDbContext db,
@@ -283,16 +262,9 @@ public static class MasterEndpoints
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
-                return ok ? Results.NoContent() : Results.NotFound();
-            }
-            catch (InvalidOperationException ex)
-            {
-                // 復元先に同一 (年月, 通貨) の有効行がある場合は 409 (EXR-004)。
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: ex.Message);
-            }
+            // 復元先に同一 (年月, 通貨) の有効行がある場合は service が DomainException (409) を投げる。
+            var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
     }
 
@@ -311,7 +283,7 @@ public static class MasterEndpoints
                 SizeDemographicCode = req.SizeDemographicCode,
             };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/product-types/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/product-types/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<ProductType> svc, long id, ProductTypeWriteRequest req, CancellationToken ct) =>
@@ -324,7 +296,7 @@ public static class MasterEndpoints
                 e.ItemConversionCode = req.ItemConversionCode;
                 e.SizeDemographicCode = req.SizeDemographicCode;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -343,7 +315,7 @@ public static class MasterEndpoints
                 ConversionOrder = req.ConversionOrder,
             };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/product-seasons/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/product-seasons/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<ProductSeason> svc, long id, ProductSeasonWriteRequest req, CancellationToken ct) =>
@@ -356,7 +328,7 @@ public static class MasterEndpoints
                 e.ItemConversionCode = req.ItemConversionCode;
                 e.ConversionOrder = req.ConversionOrder;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -370,7 +342,7 @@ public static class MasterEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var entity = new ProductGroup { Code = req.Code, Name = req.Name, PlanningFee = req.PlanningFee };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/product-groups/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/product-groups/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<ProductGroup> svc, long id, ProductGroupWriteRequest req, CancellationToken ct) =>
@@ -381,7 +353,7 @@ public static class MasterEndpoints
             {
                 e.Code = req.Code; e.Name = req.Name; e.PlanningFee = req.PlanningFee;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -395,7 +367,7 @@ public static class MasterEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var entity = new Color { Code = req.Code, Name = req.Name, ItemConversionCode = req.ItemConversionCode };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/colors/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/colors/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<Color> svc, long id, ColorWriteRequest req, CancellationToken ct) =>
@@ -406,7 +378,7 @@ public static class MasterEndpoints
             {
                 e.Code = req.Code; e.Name = req.Name; e.ItemConversionCode = req.ItemConversionCode;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -420,7 +392,7 @@ public static class MasterEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var entity = new Material { Code = req.Code, Name = req.Name, MaterialClassificationId = req.MaterialClassificationId };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/materials/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/materials/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<Material> svc, long id, MaterialWriteRequest req, CancellationToken ct) =>
@@ -431,7 +403,7 @@ public static class MasterEndpoints
             {
                 e.Code = req.Code; e.Name = req.Name; e.MaterialClassificationId = req.MaterialClassificationId;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -450,7 +422,7 @@ public static class MasterEndpoints
                 Remark1 = req.Remark1, Remark2 = req.Remark2, Remark3 = req.Remark3,
             };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/delivery-destinations/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/delivery-destinations/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<DeliveryDestination> svc, long id, DeliveryDestinationWriteRequest req, CancellationToken ct) =>
@@ -463,7 +435,7 @@ public static class MasterEndpoints
                 e.CustomerName = req.CustomerName;
                 e.Remark1 = req.Remark1; e.Remark2 = req.Remark2; e.Remark3 = req.Remark3;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -477,7 +449,7 @@ public static class MasterEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var entity = new DocumentTemplatePurchase { Code = req.Code, Name = req.Name, Body = req.Body };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/document-template-purchases/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/document-template-purchases/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<DocumentTemplatePurchase> svc, long id, DocumentBodyWriteRequest req, CancellationToken ct) =>
@@ -488,7 +460,7 @@ public static class MasterEndpoints
             {
                 e.Code = req.Code; e.Name = req.Name; e.Body = req.Body;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -506,7 +478,7 @@ public static class MasterEndpoints
                 StandardPrintFlag = req.StandardPrintFlag,
             };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/document-template-confirmations/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/document-template-confirmations/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<DocumentTemplateConfirmation> svc, long id, DocumentBodyWithFlagWriteRequest req, CancellationToken ct) =>
@@ -518,7 +490,7 @@ public static class MasterEndpoints
                 e.Code = req.Code; e.Name = req.Name; e.Body = req.Body;
                 e.StandardPrintFlag = req.StandardPrintFlag;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 
@@ -536,7 +508,7 @@ public static class MasterEndpoints
                 StandardPrintFlag = req.StandardPrintFlag,
             };
             var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
-            return Results.Created($"/api/v1/masters/document-text-purchases/{created.Id}", created);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/document-text-purchases/{created.Id}", created);
         });
         group.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                               MasterService<DocumentTextPurchase> svc, long id, DocumentBodyWithFlagWriteRequest req, CancellationToken ct) =>
@@ -548,7 +520,7 @@ public static class MasterEndpoints
                 e.Code = req.Code; e.Name = req.Name; e.Body = req.Body;
                 e.StandardPrintFlag = req.StandardPrintFlag;
             }, auth.ActorId!.Value, ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
     }
 }

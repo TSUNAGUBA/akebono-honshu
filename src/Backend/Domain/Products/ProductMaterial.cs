@@ -1,5 +1,7 @@
 using Akebono.Domain.Entities;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Products;
 
 /// <summary>
@@ -7,9 +9,10 @@ namespace Akebono.Domain.Products;
 /// 品番 (product_family) 1 つを生産するのに必要な素材の構成。1足あたり所要量を保持。
 /// product_materials が所要量 SoT、ProductFamily の3FK代表素材は表示用 (疎結合・書戻しなし)。
 /// </summary>
-public class ProductMaterial
+public class ProductMaterial : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public long ProductFamilyId { get; set; }
 
     /// <summary>部位区分 (0甲皮/1中底/2底/3付属/4副資材)</summary>

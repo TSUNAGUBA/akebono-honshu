@@ -6,6 +6,18 @@
 > **戦略:** `docs/migration/mig-3-strategy.md` を先に読むこと。設計判断 5 件は
 > ユーザ承認済み (2026-05-20)。
 
+> **プラットフォーム統合改修 (2026-07-09) による注意:**
+> - db/init は tenant_id (uuid) + RLS + TIMESTAMPTZ(UTC) を含む形へ破壊的に更新済み。
+>   稼働前 MVP のため **既存 DB は再初期化** (`run-migrations.sh` の `ACTION=reinit CONFIRM_REINIT=yes`、
+>   ローカルは `docker compose down -v`) を前提とし、旧スキーマからの追従パッチは提供しない。
+>   `iter4`〜`iter24` は旧スキーマ時代の履歴として保存 (再初期化後は baseline 記録のみ)。
+> - **以後の新規 migration でテナントスコープ表のデータを操作する場合**、冒頭で
+>   `SET app.tenant_id = '<uuid>';` を行うこと (FORCE ROW LEVEL SECURITY によりテーブル
+>   所有者にも RLS が適用される。tenant_id 列の DEFAULT もこの GUC から解決される)。
+> - `mig-3-*.sql` (本書の取込 SQL 群) は新スキーマ対応済み (`ON CONFLICT (tenant_id, ...)` 等)。
+>   UI 経由 (LegacyImportService) の実行はアプリのテナントコンテキストが GUC を設定するため
+>   追加操作は不要。
+
 > **本書の対象範囲:** 本書は **MIG-3（既存 CSV データ取込）専用**の手順書です。
 > スキーマ系マイグレーション（`iter4-*` / `iter5-*` 等、`mig-3-*` 以外の `*.sql`）は
 > GitHub Actions「DB Init / Migrate (RDS)」を `action=migrate` で実行すれば

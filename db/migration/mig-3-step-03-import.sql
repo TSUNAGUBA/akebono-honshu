@@ -97,7 +97,7 @@ BEGIN
       v_owner_id, v_owner_id,
       fu.legacy_family_code
     FROM family_unique fu
-    ON CONFLICT (planned_year_code, product_type_id, product_season_id, sequence_no, factory_supplier_id)
+    ON CONFLICT (tenant_id, planned_year_code, product_type_id, product_season_id, sequence_no, factory_supplier_id)  -- プラットフォーム統合改修: UNIQUE 先頭に tenant_id
       DO NOTHING;
 
     GET DIAGNOSTICS v_inserted_families = ROW_COUNT;

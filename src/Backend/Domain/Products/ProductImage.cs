@@ -1,3 +1,5 @@
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Products;
 
 /// <summary>
@@ -5,9 +7,10 @@ namespace Akebono.Domain.Products;
 /// Iteration 4 Hardening で S3 + Pre-signed URL に置換。
 /// BR-10: 企画単位で最大 5 枚 (CHECK 制約 + 部分 UNIQUE で保証)。
 /// </summary>
-public class ProductImage
+public class ProductImage : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public long ProductFamilyId { get; set; }
 
     /// <summary>

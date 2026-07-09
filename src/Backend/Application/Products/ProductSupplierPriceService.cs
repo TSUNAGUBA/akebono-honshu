@@ -23,7 +23,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
         CancellationToken ct = default)
     {
         if (req.UnitPrice <= 0)
-            throw new ArgumentException("単価は 0 より大きい値を指定してください (PRICE-002)");
+            throw DomainException.Validation("単価は 0 より大きい値を指定してください");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -41,7 +41,7 @@ public class ProductSupplierPriceService(IAkebonoDbContext db, IAuditLogger audi
                          && !p.IsDeleted)
                 .FirstOrDefaultAsync(ct);
 
-            var now = SystemTime.Now;
+            var now = SystemTime.UtcNow;
             if (current is not null)
             {
                 current.EffectiveTo = req.EffectiveFrom.AddDays(-1);

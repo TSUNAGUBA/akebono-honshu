@@ -1,7 +1,7 @@
 namespace Akebono.Application.Products;
 
 // ─────────────────────────────────────────────────
-// バルク登録 (POST /api/v1/products/families/complete、P-01〜P-03)
+// バルク登録 (POST /api/maker/v1/products/families/complete、P-01〜P-03)
 // ─────────────────────────────────────────────────
 
 public record CompleteFamilyRequest(
@@ -77,7 +77,7 @@ public record CompleteFamilyResponse(
     List<SupplierPriceSummary> SupplierPrices);
 
 // ─────────────────────────────────────────────────
-// 一覧 (GET /api/v1/products/families、P-04)
+// 一覧 (GET /api/maker/v1/products/families、P-04)
 // ─────────────────────────────────────────────────
 
 public record FamilyListItem(
@@ -131,7 +131,7 @@ public record FamilyListItem(
     string? PlannerName = null);
 
 // ─────────────────────────────────────────────────
-// 詳細 (GET /api/v1/products/families/{id}、P-05)
+// 詳細 (GET /api/maker/v1/products/families/{id}、P-05)
 // ─────────────────────────────────────────────────
 
 public record FamilyDetail(
@@ -266,7 +266,7 @@ public record FamilySummary(long Id, string SequenceNo, char PlannedYearCode);
 public record SupplierPriceSummary(long Id, long SupplierId, decimal UnitPrice, DateOnly EffectiveFrom, long? SizeId = null);
 
 // ─────────────────────────────────────────────────
-// 更新 (PATCH /api/v1/products/families/{id}、P-05)
+// 更新 (PATCH /api/maker/v1/products/families/{id}、P-05)
 // ─────────────────────────────────────────────────
 
 public record UpdateFamilyRequest(
@@ -299,7 +299,7 @@ public record UpdateFamilyRequest(
     List<SetComponentInput>? SetComponents = null);
 
 // ─────────────────────────────────────────────────
-// 新単価追加 (POST /api/v1/products/families/{id}/supplier-prices、BR-04 履歴管理)
+// 新単価追加 (POST /api/maker/v1/products/families/{id}/supplier-prices、BR-04 履歴管理)
 // ─────────────────────────────────────────────────
 
 public record AddSupplierPriceRequest(

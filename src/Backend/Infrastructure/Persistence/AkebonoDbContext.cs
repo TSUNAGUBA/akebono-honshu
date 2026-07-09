@@ -9,9 +9,19 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Akebono.Infrastructure.Persistence;
 
-public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
+public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenantContext tenantContext)
     : DbContext(options), IAkebonoDbContext
 {
+    private readonly ITenantContext _tenantContext = tenantContext;
+
+    /// <summary>
+    /// グローバルクエリフィルタ用の現在テナント。未確定時は Guid.Empty
+    /// (実テナントの uuid と一致しないため 0 行 = アプリ層フェイルクローズ。
+    /// DB 側は RLS が第 2 の防壁として同じく 0 行を返す)。
+    /// </summary>
+    private Guid CurrentTenantId => _tenantContext.TenantId ?? Guid.Empty;
+
+    public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<User> Users => Set<User>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
@@ -60,6 +70,20 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // tenant — テナントレジストリ投影 (SoT = akebono-backoffice。アプリからは読取専用)
+        modelBuilder.Entity<Tenant>(b =>
+        {
+            b.ToTable("tenant");
+            b.HasKey(x => x.TenantId);
+            b.Property(x => x.TenantId).HasColumnName("tenant_id");
+            b.Property(x => x.TenantCode).HasColumnName("tenant_code").IsRequired().HasMaxLength(64);
+            b.Property(x => x.Name).HasColumnName("name").IsRequired().HasMaxLength(255);
+            b.Property(x => x.Status).HasColumnName("status").IsRequired().HasMaxLength(16);
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.HasIndex(x => x.TenantCode).IsUnique();
+        });
+
         // users (Phase 5 §3.18 全カラム反映)
         modelBuilder.Entity<User>(b =>
         {
@@ -84,16 +108,18 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
             b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
-            b.HasIndex(x => x.EmployeeNo).IsUnique();
-            b.HasIndex(x => x.LoginId).IsUnique();
+            // employee_no / login_id はテナント内一意 (firebase_uid / email はグローバル一意のまま)
+            b.HasIndex(x => new { x.TenantId, x.EmployeeNo }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.LoginId }).IsUnique();
         });
 
-        // audit_logs (Iteration 0 で定義済、変更なし)
+        // audit_logs (RLS 適用除外・INSERT 専用。tenant_id はテナント確定前イベントで NULL)
         modelBuilder.Entity<AuditLog>(b =>
         {
             b.ToTable("audit_logs");
             b.HasKey(x => x.Id);
             b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.TenantId).HasColumnName("tenant_id");
             b.Property(x => x.OccurredAt).HasColumnName("occurred_at");
             b.Property(x => x.ActorUserId).HasColumnName("actor_user_id");
             b.Property(x => x.Action).HasColumnName("action").IsRequired().HasMaxLength(64);
@@ -262,7 +288,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.ProductFamilyId).HasColumnName("product_family_id");
             b.Property(x => x.ColorId).HasColumnName("color_id");
             b.Property(x => x.SizeId).HasColumnName("size_id");
-            b.Property(x => x.Sku).HasColumnName("sku").IsRequired().HasMaxLength(11);
+            b.Property(x => x.Sku).HasColumnName("sku").IsRequired().HasMaxLength(16); // 11 桁 (新規) + 旧 SKU (legacy import、最大 16 桁)
             b.Property(x => x.IsDeleted).HasColumnName("is_deleted");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");
@@ -272,7 +298,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
 
             b.HasOne(x => x.Color).WithMany().HasForeignKey(x => x.ColorId);
             b.HasOne(x => x.Size).WithMany().HasForeignKey(x => x.SizeId);
-            b.HasIndex(x => x.Sku).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.Sku }).IsUnique();
         });
 
         modelBuilder.Entity<ProductImage>(b =>
@@ -436,7 +462,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasMany(x => x.Lines).WithOne(l => l.PurchaseOrder!).HasForeignKey(l => l.PurchaseOrderId).OnDelete(DeleteBehavior.Cascade);
             b.HasMany(x => x.ExportLogs).WithOne(l => l.PurchaseOrder!).HasForeignKey(l => l.PurchaseOrderId);
 
-            b.HasIndex(x => x.MgmtNo).IsUnique();
+            b.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(128);
+            b.Property(x => x.IdempotencyPayloadHash).HasColumnName("idempotency_payload_hash").HasMaxLength(64);
+            b.HasIndex(x => new { x.TenantId, x.MgmtNo }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique();
         });
 
         modelBuilder.Entity<PurchaseOrderLine>(b =>
@@ -470,7 +499,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
 
             b.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId);
             b.HasMany(x => x.Deliveries).WithOne(d => d.PurchaseOrderLine!).HasForeignKey(d => d.PurchaseOrderLineId).OnDelete(DeleteBehavior.Cascade);
-            b.HasIndex(x => new { x.PurchaseOrderId, x.LineNo }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.PurchaseOrderId, x.LineNo }).IsUnique();
         });
 
         // 分納×倉庫の多次元明細 (PR5b、Phase 5 §5.2b)。発注明細の作成/更新時に全置換するコレクション
@@ -569,7 +598,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasOne(x => x.ProductFamily).WithMany().HasForeignKey(x => x.ProductFamilyId);
             b.HasOne(x => x.FactorySupplier).WithMany().HasForeignKey(x => x.FactorySupplierId);
             b.HasMany(x => x.Lines).WithOne(l => l.ProductionInstruction!).HasForeignKey(l => l.ProductionInstructionId).OnDelete(DeleteBehavior.Cascade);
-            b.HasIndex(x => x.InstructionNo).IsUnique();
+            b.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(128);
+            b.Property(x => x.IdempotencyPayloadHash).HasColumnName("idempotency_payload_hash").HasMaxLength(64);
+            b.HasIndex(x => new { x.TenantId, x.InstructionNo }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique();
         });
 
         modelBuilder.Entity<ProductionInstructionLine>(b =>
@@ -589,8 +621,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
 
             b.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId);
-            b.HasIndex(x => new { x.ProductionInstructionId, x.LineNo }).IsUnique();
-            b.HasIndex(x => new { x.ProductionInstructionId, x.ProductId }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.ProductionInstructionId, x.LineNo }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.ProductionInstructionId, x.ProductId }).IsUnique();
         });
 
         modelBuilder.Entity<MaterialOrder>(b =>
@@ -622,7 +654,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.HasOne(x => x.MaterialSupplier).WithMany().HasForeignKey(x => x.MaterialSupplierId);
             b.HasOne(x => x.ProductionInstruction).WithMany().HasForeignKey(x => x.ProductionInstructionId);
             b.HasMany(x => x.Lines).WithOne(l => l.MaterialOrder!).HasForeignKey(l => l.MaterialOrderId).OnDelete(DeleteBehavior.Cascade);
-            b.HasIndex(x => x.OrderNo).IsUnique();
+            b.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(128);
+            b.Property(x => x.IdempotencyPayloadHash).HasColumnName("idempotency_payload_hash").HasMaxLength(64);
+            b.HasIndex(x => new { x.TenantId, x.OrderNo }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique();
         });
 
         modelBuilder.Entity<MaterialOrderLine>(b =>
@@ -652,8 +687,83 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
 
             b.HasOne(x => x.Material).WithMany().HasForeignKey(x => x.MaterialId);
             b.HasOne(x => x.ProductFamily).WithMany().HasForeignKey(x => x.ProductFamilyId);
-            b.HasIndex(x => new { x.MaterialOrderId, x.LineNo }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.MaterialOrderId, x.LineNo }).IsUnique();
         });
+
+        // ─────────────────────────────────────────────
+        // プラットフォーム統合: テナントスコープの一括配線
+        // ITenantScoped 実装エンティティ全てに
+        //   1. tenant_id 列マッピング (uuid NOT NULL)
+        //   2. グローバルクエリフィルタ (アプリ層 WHERE、多層防御の 1 層。DB 側 RLS が第 2 層)
+        // を適用する。個別の entity 設定に tenant_id を書き足す必要はない。
+        // ─────────────────────────────────────────────
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes()
+                     .Where(t => typeof(ITenantScoped).IsAssignableFrom(t.ClrType)))
+        {
+            modelBuilder.Entity(entityType.ClrType)
+                .Property<Guid>(nameof(ITenantScoped.TenantId))
+                .HasColumnName("tenant_id");
+
+            typeof(AkebonoDbContext)
+                .GetMethod(nameof(ApplyTenantFilter),
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .MakeGenericMethod(entityType.ClrType)
+                .Invoke(this, [modelBuilder]);
+        }
+    }
+
+    /// <summary>
+    /// テナントスコープのグローバルクエリフィルタ。CurrentTenantId は DbContext インスタンス
+    /// 参照のため EF がクエリごとにパラメータとして評価する (クエリキャッシュ汚染なし)。
+    /// 認証エントリポイント (firebase_uid → users 引当) 等、テナント確定前の参照は
+    /// IgnoreQueryFilters() を明示する。
+    /// </summary>
+    private void ApplyTenantFilter<T>(ModelBuilder modelBuilder) where T : class, ITenantScoped
+        => modelBuilder.Entity<T>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+
+    /// <summary>
+    /// SaveChanges 時のテナント整合ガード (多層防御のアプリ層):
+    ///   - 追加行: TenantId 未設定なら現在テナントを自動スタンプ。現在テナント未確定なら
+    ///     AKB-TENANT-005 で拒否 (フェイルクローズ)。別テナントの値が明示されていたら拒否。
+    ///   - 更新行: TenantId の書換を無効化 (テナント付替の禁止)。
+    /// DB 側では RLS の WITH CHECK が最終防壁になる。
+    /// </summary>
+    private void EnforceTenantOnChanges()
+    {
+        foreach (var entry in ChangeTracker.Entries<ITenantScoped>())
+        {
+            switch (entry.State)
+            {
+                case EntityState.Added:
+                    var current = _tenantContext.RequireTenantId();
+                    if (entry.Entity.TenantId == Guid.Empty)
+                    {
+                        entry.Entity.TenantId = current;
+                    }
+                    else if (entry.Entity.TenantId != current)
+                    {
+                        throw new DomainException(
+                            AkbErrorCodes.TenantContextNotInjected, 500,
+                            "現在テナントと異なる tenant_id での追加が要求されました (内部安全違反)。");
+                    }
+                    break;
+                case EntityState.Modified:
+                    entry.Property(nameof(ITenantScoped.TenantId)).IsModified = false;
+                    break;
+            }
+        }
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        EnforceTenantOnChanges();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        EnforceTenantOnChanges();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
     /// <summary>マスタ共通基底カラム (id / code / name / delete_flag / 監査列 / legacy_id) の Fluent 設定。</summary>
@@ -676,7 +786,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options)
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
             b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
-            b.HasIndex(x => x.Code).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
             extension?.Invoke(b);
         });
     }

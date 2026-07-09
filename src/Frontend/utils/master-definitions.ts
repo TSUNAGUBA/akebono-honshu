@@ -31,7 +31,7 @@ export interface FieldDef {
 }
 
 export interface MasterDef {
-  /** URL slug + API パス (例: 'brands' → /api/v1/masters/brands) */
+  /** URL slug + API パス (例: 'brands' → /api/maker/v1/masters/brands) */
   slug: string
   /** 画面表示名 (日本語) */
   label: string

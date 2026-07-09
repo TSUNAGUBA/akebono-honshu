@@ -16,6 +16,22 @@ public static class AuthEndpoints
     public const string AkebonoUserIdClaim = "akebono_user_id";
 
     /// <summary>
+    /// OnTokenValidated で解決したテナント ID (uuid) を保持する Claim 名。
+    /// 一次ソースは Firebase Custom Claims の tenant_id (SoT = akebono-backoffice)、
+    /// MVP 暫定フォールバックは users.tenant_id。TenantResolutionMiddleware が
+    /// この Claim を ITenantContext へ確定する。
+    /// </summary>
+    public const string AkebonoTenantIdClaim = "akebono_tenant_id";
+
+    /// <summary>
+    /// OnTokenValidated で解決したテナントステータス (tenant.status) を保持する Claim 名。
+    /// TenantResolutionMiddleware が trial/active 以外を 403 AKB-TENANT-004 で拒否する。
+    /// Firebase Custom Claims 経由でテナントが確定した場合 (bko 接続後) は本 Claim を
+    /// 付与しない (停止はプラットフォーム側の Claims 剥奪で反映される)。
+    /// </summary>
+    public const string AkebonoTenantStatusClaim = "akebono_tenant_status";
+
+    /// <summary>
     /// Firebase ID Token の ClaimsPrincipal から Firebase UID を取得する。
     /// Firebase は `user_id` claim を発行するが、ASP.NET Core の JwtBearer ハンドラが
     /// 一部の claim を `ClaimTypes.NameIdentifier` にマップするケースに備え両方を試す。
@@ -24,37 +40,55 @@ public static class AuthEndpoints
         => principal?.FindFirst("user_id")?.Value
            ?? principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
+    /// <summary>
+    /// akebono_user_id クレーム未解決時のエラー封筒。
+    ///   - 未認証 (トークンなし/無効): 401 AKB-AUTH-001
+    ///   - 認証済みだが業務ユーザ未解決 (未紐付け・無効化・キャッシュ失効後の再解決失敗):
+    ///     403 AKB-AUTH-005 (台帳の意味論に合わせる。トークンは有効なため 001 は不正確)
+    /// </summary>
+    internal static IResult UnauthorizedError(HttpContext http)
+        => http.User.Identity?.IsAuthenticated == true
+            ? ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                "業務ユーザに紐付いていないか無効化されています",
+                userAction: "管理者にお問合せください")
+            : ApiEnvelope.Error(http, 401, AkbErrorCodes.AuthTokenMissing, "Unauthorized");
+
+    /// <summary>ID 指定リソース未検出時の 404 エラー封筒 (AKB-TENANT-010、越境含む存在秘匿)。</summary>
+    internal static IResult NotFoundError(HttpContext http)
+        => ApiEnvelope.Error(http, 404, AkbErrorCodes.TenantResourceConcealed,
+            "指定されたリソースが見つかりません");
+
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/v1/auth");
+        var group = app.MapGroup("/api/maker/v1/auth");
 
         // フロントが Firebase Auth ログイン直後に呼ぶ。ClaimsPrincipal から Firebase UID を取得し、
         // users.firebase_uid 引当 + 業務情報返却 + audit log (Login.Success のみ)。
-        // 未紐付け / inactive / soft-deleted ユーザは OnTokenValidated 段で Claim 未付与となり、
-        // [Authorize] の 401 で本 endpoint に到達しない (拒否監査は OnTokenValidated 内で
+        // 未紐付け / inactive / soft-deleted ユーザは OnTokenValidated 段で akebono_user_id
+        // Claim が付与されない。トークン自体は有効なため [Authorize] は通過し、本 endpoint の
+        // SyncAsync が null を返して 403 AKB-AUTH-005 になる (拒否監査は OnTokenValidated 内で
         // Auth.LoginRejected.Inactive / Auth.UidUnboundProbe として 5 分 de-dup で記録)。
-        // 通過後に user 編集 race で users 行が引けない極稀ケースのみ 403。
         group.MapPost("/sync", [Authorize] async (HttpContext http, AuthService svc, CancellationToken ct) =>
         {
             var firebaseUid = GetFirebaseUid(http.User);
             if (string.IsNullOrEmpty(firebaseUid))
-                return Results.Problem(statusCode: 401, title: "Unauthorized",
-                    detail: "Firebase UID claim missing");
+                return ApiEnvelope.Error(http, 401, AkbErrorCodes.AuthTokenMissing,
+                    "Firebase UID claim missing");
 
             var result = await svc.SyncAsync(firebaseUid, ct);
             return result is null
-                ? Results.Problem(statusCode: 403, title: "Forbidden",
-                    detail: "Firebase ユーザは認証済ですが、業務ユーザに紐付いていないか無効化されています。管理者にお問合せください")
-                : Results.Ok(result);
+                ? ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                    "Firebase ユーザは認証済ですが、業務ユーザに紐付いていないか無効化されています。管理者にお問合せください")
+                : ApiEnvelope.Ok(http, result);
         });
 
         group.MapGet("/me", [Authorize] async (HttpContext http, AuthService svc, CancellationToken ct) =>
         {
             if (!TryGetUserId(http, out var userId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return UnauthorizedError(http);
 
             var me = await svc.GetMeAsync(userId, ct);
-            return me is null ? Results.NotFound() : Results.Ok(me);
+            return me is null ? NotFoundError(http) : ApiEnvelope.Ok(http, me);
         });
 
         return app;
@@ -82,16 +116,17 @@ public static class AuthEndpoints
         CancellationToken ct)
     {
         if (!TryGetUserId(http, out var userId))
-            return new(null, Results.Problem(statusCode: 401, title: "Unauthorized"));
+            return new(null, UnauthorizedError(http));
 
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
         if (actor is null || !actor.IsActive || actor.IsDeleted)
-            return new(null, Results.Problem(statusCode: 401, title: "Unauthorized",
-                detail: "ユーザが無効化されています"));
+            // 台帳 (AKB-DOC-12 §14.5) の AUTH-005 代表ステータスに合わせ 403
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                "ユーザが無効化されています"));
 
         if (actor.ProductLedgerPermission < 1)
-            return new(null, Results.Problem(statusCode: 403, title: "Forbidden",
-                detail: "この操作には品番台帳管理権限 (更新可能) が必要です"));
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                "この操作には品番台帳管理権限 (更新可能) が必要です"));
 
         return new(userId, null);
     }
@@ -106,16 +141,17 @@ public static class AuthEndpoints
         CancellationToken ct)
     {
         if (!TryGetUserId(http, out var userId))
-            return new(null, Results.Problem(statusCode: 401, title: "Unauthorized"));
+            return new(null, UnauthorizedError(http));
 
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
         if (actor is null || !actor.IsActive || actor.IsDeleted)
-            return new(null, Results.Problem(statusCode: 401, title: "Unauthorized",
-                detail: "ユーザが無効化されています"));
+            // 台帳 (AKB-DOC-12 §14.5) の AUTH-005 代表ステータスに合わせ 403
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                "ユーザが無効化されています"));
 
         if (actor.PurchaseOrderCreatePermission < 1)
-            return new(null, Results.Problem(statusCode: 403, title: "Forbidden",
-                detail: "この操作には発注書作成権限 (更新可能) が必要です"));
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                "この操作には発注書作成権限 (更新可能) が必要です"));
 
         return new(userId, null);
     }

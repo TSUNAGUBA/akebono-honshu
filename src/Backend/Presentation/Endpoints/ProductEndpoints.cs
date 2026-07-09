@@ -22,16 +22,16 @@ public static class ProductEndpoints
 
     public static IEndpointRouteBuilder MapProductEndpoints(this IEndpointRouteBuilder app)
     {
-        var families = app.MapGroup("/api/v1/products/families");
+        var families = app.MapGroup("/api/maker/v1/products/families");
 
         // 一覧 (P-04)
         families.MapGet("/", async (HttpContext http, ProductFamilyService svc,
                                      bool? includeDeleted, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
-            return Results.Ok(new { data = items });
+            return ApiEnvelope.Ok(http, items);
         });
 
         // 詳細 (P-05)
@@ -39,12 +39,12 @@ public static class ProductEndpoints
                                               long id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var detail = await svc.GetDetailAsync(id, actorId, ct);
-            return detail is null ? Results.NotFound() : Results.Ok(detail);
+            return detail is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, detail);
         });
 
-        // バルク登録 (P-01〜P-03)
+        // バルク登録 (P-01〜P-03)。入力検証は service 層の DomainException を中央ハンドラが変換する。
         families.MapPost("/complete", async (HttpContext http, IAkebonoDbContext db,
                                               ProductFamilyService svc, CompleteFamilyRequest req, CancellationToken ct) =>
         {
@@ -53,47 +53,36 @@ public static class ProductEndpoints
             try
             {
                 var resp = await svc.CreateCompleteAsync(req, auth.ActorId!.Value, ct);
-                return Results.Created($"/api/v1/products/families/{resp.Family.Id}", resp);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: ex.Message);
+                return ApiEnvelope.Created(http, $"/api/maker/v1/products/families/{resp.Family.Id}", resp);
             }
             catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains("uq_product_families") == true)
             {
-                return Results.Problem(statusCode: 409, title: "Conflict", detail: "同一企画キーの product_families が既に存在します (PROD-003)");
+                return ApiEnvelope.Error(http, 409, AkbErrorCodes.SysUniqueViolation,
+                    "同一企画キーの product_families が既に存在します");
             }
             catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains("uq_psp_family_supplier_size_from") == true)
             {
                 // 仕入単価行の (仕入先, サイズ, 有効開始日) 重複 (review #2 の防御。500 を避け 409 で返す)。
-                return Results.Problem(statusCode: 409, title: "Conflict",
-                    detail: "仕入単価に「仕入先 × サイズ × 有効開始日」が重複した行があります (PROD-004)");
+                return ApiEnvelope.Error(http, 409, AkbErrorCodes.SysUniqueViolation,
+                    "仕入単価に「仕入先 × サイズ × 有効開始日」が重複した行があります");
             }
         });
 
-        // 更新 (P-05)
+        // 更新 (P-05)。アソート/セット明細の検証エラーは service 層の DomainException (422) を
+        // 中央ハンドラが変換する。
         families.MapPatch("/{id:long}", async (HttpContext http, IAkebonoDbContext db,
                                                  ProductFamilyService svc, long id, UpdateFamilyRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                // PR3: アソート/セット明細の検証 (SETC-001/002) が ArgumentException を投げるため
-                // 422 にマップする (POST /complete と対称。グローバル例外ハンドラは無い)。
-                var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
-                if (updated is null) return Results.NotFound();
-                // 204 を返す。tracked entity を直接返すと PR3 で populate される
-                // ProductFamily ⇄ ProductSetComponent の参照循環で System.Text.Json が
-                // シリアライズ失敗するため (ReferenceHandler 未設定)。Frontend は更新後に
-                // 詳細を再取得 (reload) するため body は不要。他の Update endpoint が NoContent/
-                // DTO 射影を返すのと対称 (raw entity を返さない)。
-                return Results.NoContent();
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: ex.Message);
-            }
+            var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+            if (updated is null) return AuthEndpoints.NotFoundError(http);
+            // 204 を返す。tracked entity を直接返すと PR3 で populate される
+            // ProductFamily ⇄ ProductSetComponent の参照循環で System.Text.Json が
+            // シリアライズ失敗するため (ReferenceHandler 未設定)。Frontend は更新後に
+            // 詳細を再取得 (reload) するため body は不要。他の Update endpoint が NoContent/
+            // DTO 射影を返すのと対称 (raw entity を返さない)。
+            return Results.NoContent();
         });
 
         // 論理削除 (P-05)
@@ -103,7 +92,7 @@ public static class ProductEndpoints
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
-            return ok ? Results.NoContent() : Results.NotFound();
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
         // 単価追加 (BR-04 履歴管理)
@@ -112,16 +101,9 @@ public static class ProductEndpoints
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
-            try
-            {
-                var entity = await svc.AddAsync(id, req, auth.ActorId!.Value, ct);
-                return Results.Created($"/api/v1/products/families/{id}/supplier-prices/{entity.Id}",
-                    new SupplierPriceSummary(entity.Id, entity.SupplierId, entity.UnitPrice, entity.EffectiveFrom, entity.SizeId));
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: ex.Message);
-            }
+            var entity = await svc.AddAsync(id, req, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/products/families/{id}/supplier-prices/{entity.Id}",
+                new SupplierPriceSummary(entity.Id, entity.SupplierId, entity.UnitPrice, entity.EffectiveFrom, entity.SizeId));
         });
 
         // 単価履歴一覧
@@ -129,7 +111,7 @@ public static class ProductEndpoints
                                                                ProductSupplierPriceService svc, long id, CancellationToken ct) =>
         {
             if (!AuthEndpoints.TryGetUserId(http, out var actorId))
-                return Results.Problem(statusCode: 401, title: "Unauthorized");
+                return AuthEndpoints.UnauthorizedError(http);
             var items = await svc.ListHistoryAsync(id, actorId, ct);
             var data = items.Select(p => new CurrentSupplierPrice(
                 p.Id, p.SupplierId, p.Supplier?.Code ?? "?", p.Supplier?.Name ?? "?",
@@ -139,7 +121,7 @@ public static class ProductEndpoints
                 p.PurchaseCost, p.PurchaseMarginRate, p.LossCost, p.DrayageCost, p.TaxRate,
                 // サイズ別仕入単価 (PR2)。SizeId=NULL は全サイズ共通の既定単価 (SizeName も null)。
                 p.SizeId, p.Size?.Name));
-            return Results.Ok(new { data });
+            return ApiEnvelope.Ok(http, data);
         });
 
         // ── P-06 画像管理 ─────────────────────────────────
@@ -153,26 +135,26 @@ public static class ProductEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             if (file is null || file.Length == 0)
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: "ファイルが空です");
+                return ApiEnvelope.Error(http, 422, AkbErrorCodes.SysValidation, "ファイルが空です");
             if (file.Length > MaxImageBytes)
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: "ファイルサイズは 5MB 以下にしてください");
+                return ApiEnvelope.Error(http, 422, AkbErrorCodes.SysValidation, "ファイルサイズは 5MB 以下にしてください");
             if (!AllowedMimeTypes.Contains(file.ContentType))
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: "対応形式は JPEG / PNG / WebP のみ");
+                return ApiEnvelope.Error(http, 422, AkbErrorCodes.SysValidation, "対応形式は JPEG / PNG / WebP のみ");
 
             // 画像区分 (§2a)。0=企画 / 1=本番。未指定は企画 (0、下位互換)。
             var imageCategory = category ?? 0;
             if (imageCategory is not (0 or 1))
-                return Results.Problem(statusCode: 422, title: "Validation error", detail: "画像区分は 0(企画) / 1(本番) を指定してください");
+                return ApiEnvelope.Error(http, 422, AkbErrorCodes.SysValidation, "画像区分は 0(企画) / 1(本番) を指定してください");
 
             var family = await db.ProductFamilies.FirstOrDefaultAsync(pf => pf.Id == id && !pf.IsDeleted, ct);
-            if (family is null) return Results.NotFound();
+            if (family is null) return AuthEndpoints.NotFoundError(http);
 
             // 上限・order_no は区分ごとに独立 (企画最大5 + 本番最大5、§2a)。
             var currentCount = await db.ProductImages.CountAsync(
                 i => i.ProductFamilyId == id && i.ImageCategory == imageCategory && !i.IsDeleted, ct);
             if (currentCount >= 5)
-                return Results.Problem(statusCode: 409, title: "Conflict",
-                    detail: $"{(imageCategory == 1 ? "本番" : "企画")}画像は最大 5 枚までです (BR-10)");
+                return ApiEnvelope.Error(http, 409, AkbErrorCodes.SysUniqueViolation,
+                    $"{(imageCategory == 1 ? "本番" : "企画")}画像は最大 5 枚までです");
 
             var ext = Path.GetExtension(file.FileName);
             if (string.IsNullOrEmpty(ext))
@@ -194,7 +176,7 @@ public static class ProductEndpoints
             // ストレージ書込後 → DB save の順。DB save 失敗時は S3 孤児を best-effort 削除する
             // (reviewer 指摘 M5、CLAUDE.md 原則 4 非ブロッキング・原則 6 SoT 一貫性)。
             // 削除失敗は logger に記録のみで主要フローに伝播させない。
-            var now = SystemTime.Now;
+            var now = SystemTime.UtcNow;
             var image = new ProductImage
             {
                 ProductFamilyId = id,
@@ -229,7 +211,7 @@ public static class ProductEndpoints
             }
 
             var url = await imageStorage.GetUrlAsync(s3Key, ct);
-            return Results.Created($"/api/v1/products/families/{id}/images/{image.Id}",
+            return ApiEnvelope.Created(http, $"/api/maker/v1/products/families/{id}/images/{image.Id}",
                 new ImageSummary(image.Id, image.OrderNo, image.ImageCategory, image.S3Key, image.ThumbS3Key,
                     image.MimeType, image.FileSizeBytes, image.OriginalFilename, url));
         }).DisableAntiforgery();
@@ -260,7 +242,7 @@ public static class ProductEndpoints
                 var img = images.FirstOrDefault(x => x.Id == imageId);
                 if (img is null) continue;
                 img.OrderNo = newOrder++;
-                img.UpdatedAt = SystemTime.Now;
+                img.UpdatedAt = SystemTime.UtcNow;
                 img.UpdatedByUserId = auth.ActorId!.Value;
             }
             await db.SaveChangesAsync(ct);
@@ -277,10 +259,10 @@ public static class ProductEndpoints
 
             var image = await db.ProductImages
                 .FirstOrDefaultAsync(i => i.Id == imageId && i.ProductFamilyId == id, ct);
-            if (image is null) return Results.NotFound();
+            if (image is null) return AuthEndpoints.NotFoundError(http);
 
             image.IsDeleted = true;
-            image.UpdatedAt = SystemTime.Now;
+            image.UpdatedAt = SystemTime.UtcNow;
             image.UpdatedByUserId = auth.ActorId!.Value;
             await db.SaveChangesAsync(ct);
 

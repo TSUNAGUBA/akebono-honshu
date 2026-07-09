@@ -37,15 +37,15 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
     public async Task<ExchangeRate?> GetAsync(long id, CancellationToken ct = default)
         => await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
 
-    // 有効行 (未削除) の (年月, 通貨) 重複を検出して InvalidOperationException を投げる (endpoint で 409)。
-    // 部分 UNIQUE 索引による DB 例外 (500) に頼らず、アプリ層で分かりやすいメッセージにする (review #1 対応)。
+    // 有効行 (未削除) の (年月, 通貨) 重複を検出して DomainException (AKB-SYS-007 / 409) を投げる。
+    // 部分 UNIQUE 索引による DB 例外に頼らず、アプリ層で分かりやすいメッセージにする (review #1 対応)。
     private async Task EnsureNoActiveDuplicateAsync(string yearMonth, string currency, long? excludeId, CancellationToken ct)
     {
         var dup = await db.ExchangeRates.AnyAsync(
             e => !e.DeleteFlag && e.YearMonth == yearMonth && e.CurrencyCode == currency
                  && (excludeId == null || e.Id != excludeId), ct);
         if (dup)
-            throw new InvalidOperationException($"{yearMonth} {currency} の為替レートは既に登録されています (EXR-004)");
+            throw DomainException.UniqueViolation($"{yearMonth} {currency} の為替レートは既に登録されています");
     }
 
     public async Task<ExchangeRate> CreateAsync(ExchangeRateWriteRequest req, long actorUserId, CancellationToken ct = default)
@@ -53,7 +53,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         var (yearMonth, currency) = Validate(req);
         await EnsureNoActiveDuplicateAsync(yearMonth, currency, null, ct);
 
-        var now = SystemTime.Now;
+        var now = SystemTime.UtcNow;
         var entity = new ExchangeRate
         {
             YearMonth = yearMonth,
@@ -84,7 +84,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         entity.YearMonth = yearMonth;
         entity.CurrencyCode = currency;
         entity.Rate = req.Rate;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -100,7 +100,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         var entity = await db.ExchangeRates.FirstOrDefaultAsync(e => e.Id == id, ct);
         if (entity is null) return false;
         entity.DeleteFlag = true;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -116,7 +116,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         if (entity.DeleteFlag) // 既に有効なら何もしない。復元時は同一 (年月,通貨) の有効行が無いことを保証する。
             await EnsureNoActiveDuplicateAsync(entity.YearMonth, entity.CurrencyCode, id, ct);
         entity.DeleteFlag = false;
-        entity.UpdatedAt = SystemTime.Now;
+        entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
 
@@ -130,14 +130,14 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
     {
         var yearMonth = (req.YearMonth ?? "").Trim();
         if (!YearMonthPattern().IsMatch(yearMonth))
-            throw new ArgumentException("年月は YYYY-MM 形式で指定してください (EXR-001)");
+            throw DomainException.Validation("年月は YYYY-MM 形式で指定してください");
 
         var currency = (req.CurrencyCode ?? "").Trim().ToUpperInvariant();
         if (currency.Length != 3)
-            throw new ArgumentException("通貨コードは 3 桁で指定してください (EXR-002)");
+            throw DomainException.Validation("通貨コードは 3 桁で指定してください");
 
         if (req.Rate <= 0)
-            throw new ArgumentException("レートは正の数で指定してください (EXR-003)");
+            throw DomainException.Validation("レートは正の数で指定してください");
 
         return (yearMonth, currency);
     }

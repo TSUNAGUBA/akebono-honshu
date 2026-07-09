@@ -68,8 +68,7 @@ const save = async () => {
     successMessage.value = 'BOM を保存しました'
     await reload()
   } catch (e) {
-    const err = e as { data?: { detail?: string } }
-    errorMessage.value = err.data?.detail ?? 'BOM の保存に失敗しました'
+    errorMessage.value = getApiErrorMessage(e, 'BOM の保存に失敗しました')
   } finally { saving.value = false }
 }
 </script>

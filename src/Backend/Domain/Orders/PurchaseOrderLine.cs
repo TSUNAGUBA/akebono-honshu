@@ -1,14 +1,17 @@
 using Akebono.Domain.Products;
 
+using Akebono.Domain.Common;
+
 namespace Akebono.Domain.Orders;
 
 /// <summary>
 /// 発注明細 (Phase 5 §5.2)。スナップショット (sku/name/unit_price/currency) で発注時点を凍結。
 /// subtotal は DB の GENERATED ALWAYS AS (quantity * unit_price_snapshot) STORED 計算列。
 /// </summary>
-public class PurchaseOrderLine
+public class PurchaseOrderLine : ITenantScoped
 {
     public long Id { get; set; }
+    public Guid TenantId { get; set; }
     public long PurchaseOrderId { get; set; }
     public short LineNo { get; set; }
     public long ProductId { get; set; }
