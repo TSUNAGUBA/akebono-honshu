@@ -4,7 +4,7 @@ import { piStatusLabel } from '~/composables/useProduction'
 
 const { piList } = useProduction()
 const { user } = useAuth()
-const canCreate = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canCreate = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 
 const items = ref<PiListItem[]>([])
 const loading = ref(true)

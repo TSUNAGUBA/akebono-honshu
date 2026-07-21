@@ -6,7 +6,7 @@ using Akebono.Domain.Entities;
 namespace Akebono.Api.Endpoints;
 
 /// <summary>
-/// 17 マスタの REST エンドポイント定義 (M-01 / M-02 共通テンプレート + 個別拡張)。
+/// 汎用マスタの REST エンドポイント定義 (M-01 / M-02 共通テンプレート + 個別拡張。Part2 工場 / Part5 税率 を含む)。
 /// Phase 5 api-design.md §2.3 + Iteration 1.F の C-02 権限制御:
 ///   - GET (list/single) は認証必須のみ
 ///   - POST/PATCH/DELETE/Restore は product_ledger_permission >= 1 必須

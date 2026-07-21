@@ -7,7 +7,7 @@ const route = useRoute()
 const id = computed(() => String(route.params.id))
 const { moGet, moOrder, moCancel, moDownloadExcel } = useProduction()
 const { user } = useAuth()
-const canEdit = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canEdit = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 
 const detail = ref<MaterialOrderDetail | null>(null)
 const loading = ref(true)

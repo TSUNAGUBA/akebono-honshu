@@ -8,7 +8,7 @@ const route = useRoute()
 const familyId = computed(() => String(route.params.familyId))
 const { user, canEditMaster } = useAuth()
 // 操作導線（次アクション）の権限: 生産指示・発注書の作成は発注書作成権限が必要。
-const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 const {
   getFamily, updateFamily, deleteFamily,
   addSupplierPrice, uploadImage, deleteImage,

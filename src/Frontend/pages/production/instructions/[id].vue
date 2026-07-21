@@ -7,7 +7,7 @@ const route = useRoute()
 const id = computed(() => String(route.params.id))
 const { piGet, piIssue, piComplete, piCancel, piDownloadExcel } = useProduction()
 const { user } = useAuth()
-const canEdit = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canEdit = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 
 const detail = ref<PiDetail | null>(null)
 const loading = ref(true)

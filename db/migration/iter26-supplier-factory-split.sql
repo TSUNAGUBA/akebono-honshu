@@ -25,8 +25,10 @@
 --   既存の全 factory_supplier_id 値は複製済 factories に存在するため FK 検証を通過する。
 --
 -- RLS 注意:
---   本スクリプトは RLS をバイパスする管理ユーザ (RDS master / superuser) で実行される前提
---   (iter21 等の既存データ移行と同じ)。suppliers 全テナント分を factories へ複製する。
+--   suppliers/factories は FORCE ROW LEVEL SECURITY のため、管理ユーザが RLS をバイパスしない
+--   環境 (BYPASSRLS を持たない RDS master 等) では GUC 未設定だと SELECT が 0 行になり複製が空になる。
+--   これを避けるため、複製 (手順3) は tenant ごとに app.tenant_id を設定してから行う
+--   (バイパスする環境でも ON CONFLICT で冪等なため安全)。DDL (手順1/2/4) は RLS の影響を受けない。
 -- ════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -65,15 +67,26 @@ CREATE POLICY tenant_isolation ON factories
 -- 新規テーブルには ALL TABLES の一括 GRANT が届かないため明示的に付与する。
 GRANT SELECT, INSERT, UPDATE, DELETE ON factories TO akebono_app;
 
--- 3. 既存 suppliers を「同一 id」で複製 (全テナント、管理ユーザは RLS バイパス)。
-INSERT INTO factories (id, tenant_id, code, name, official_name, item_conversion_code,
-                       country_id, supplier_type, alert_target, deleted_at,
-                       created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id)
-    SELECT id, tenant_id, code, name, official_name, item_conversion_code,
-           country_id, supplier_type, alert_target, deleted_at,
-           created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id
-    FROM suppliers
-ON CONFLICT (id) DO NOTHING;
+-- 3. 既存 suppliers を「同一 id」で複製する。FORCE RLS 下で管理ロールが RLS をバイパスしない環境でも
+--    確実にコピーするため、tenant ごとに app.tenant_id を設定してから複製する (トランザクション local)。
+--    バイパスする環境でも ON CONFLICT (id) により冪等 (初回全件コピー→以降スキップ) で安全。
+--    tenant 表は RLS 対象外 (レジストリ、読取のみ) のため列挙可能。
+DO $$
+DECLARE
+    t RECORD;
+BEGIN
+    FOR t IN SELECT tenant_id FROM tenant LOOP
+        PERFORM set_config('app.tenant_id', t.tenant_id::text, true);
+        INSERT INTO factories (id, tenant_id, code, name, official_name, item_conversion_code,
+                               country_id, supplier_type, alert_target, deleted_at,
+                               created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id)
+            SELECT id, tenant_id, code, name, official_name, item_conversion_code,
+                   country_id, supplier_type, alert_target, deleted_at,
+                   created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id
+            FROM suppliers
+        ON CONFLICT (id) DO NOTHING;
+    END LOOP;
+END $$;
 
 -- 4. FK 付け替え: factory_supplier_id を suppliers → factories(id) へ。
 --    列名 (factory_supplier_id) は互換のため維持。複製済のため全既存値が factories に存在する。

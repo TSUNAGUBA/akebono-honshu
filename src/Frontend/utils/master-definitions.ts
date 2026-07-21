@@ -1,5 +1,5 @@
 /**
- * 17 マスタのスキーマ定義 (Phase 5 data-design.md §3.1-3.17)。
+ * 汎用マスタのスキーマ定義 (Phase 5 data-design.md §3.1-3.17 + Part2 工場 + Part5 税率)。
  * Frontend の動的フォーム生成 + 一覧表示列に使用。
  */
 

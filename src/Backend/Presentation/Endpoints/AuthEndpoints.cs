@@ -124,7 +124,9 @@ public static class AuthEndpoints
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
                 "ユーザが無効化されています"));
 
-        if (actor.ProductLedgerPermission < 1)
+        // 権限スケールは非単調 (0=なし, 1=更新可能, 2=参照のみ, 3=参照のみ制限)。
+        // 書込は「更新可能 (==1)」のみ許可する。参照のみ (2/3) は書込不可 (旧 >=1 は 2/3 に誤って書込を許していた)。
+        if (actor.ProductLedgerPermission != 1)
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
                 "この操作には品番台帳管理権限 (更新可能) が必要です"));
 
@@ -149,7 +151,9 @@ public static class AuthEndpoints
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
                 "ユーザが無効化されています"));
 
-        if (actor.PurchaseOrderCreatePermission < 1)
+        // 権限スケールは非単調 (0=なし, 1=更新可能, 2=参照のみ)。書込は「更新可能 (==1)」のみ許可する
+        // (旧 >=1 は 参照のみ(2) に誤って書込を許していた)。
+        if (actor.PurchaseOrderCreatePermission != 1)
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
                 "この操作には発注書作成権限 (更新可能) が必要です"));
 

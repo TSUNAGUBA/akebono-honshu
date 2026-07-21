@@ -3,7 +3,7 @@ import type { MasterItem } from '~/composables/useMasters'
 import type { CreateOrderPayload, CommunicationSuggestion } from '~/composables/useOrders'
 
 const { user } = useAuth()
-const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 const { list } = useMasters()
 const { create, communicationSuggestions, priceSuggestion } = useOrders()
 const { listFamiliesAll } = useProducts()
@@ -38,8 +38,8 @@ const errorMessage = ref('')
 
 // フォーム
 const today = todayJst() // 業務日付は JST 基準 (UTC 由来だと JST 00:00-08:59 に前日になる)
-// 発注区分 (国内/海外) は入力項目の出し分けには使わない (§5 統一)。国内/海外で共通の入力項目とし、
-// is_overseas は帳票の言語切替 (国内=日本語/海外=英語) と一覧の区分バッジのみに使う。
+// 発注区分 (国内/海外)。Part6: 既定は海外。海外のみ表示・入力する項目 (発注先/荷揚地/工場出荷日/
+// 納品所出荷日/海外出港日) を is_overseas で出し分ける。is_overseas は帳票の言語切替・一覧バッジにも使う。
 const form = ref({
   orderNo: '',            // 発注書番号 (§5)。従来は初回 Excel 出力時に採番だが、作成時に手入力も可能 (任意)。
   // ID 系は uuid 文字列 (第二段階契約)。未選択は '' で表し、送信前の必須チェックで弾く。
@@ -47,14 +47,14 @@ const form = ref({
   customerRef: '',        // 得意先 / 受注先 (国内/海外共通)
   deliveryDestinationId: '', // 納品先
   departmentId: '',        // 発注事業部
-  landingPlace: '',       // 荷揚地 (国内/海外共通)
+  landingPlace: '',       // 荷揚地 (Part6: 海外のみ)
   warehouseId: '',         // 納入倉庫1
   warehouse2Id: null as string | null, // 納入倉庫2 (国内/海外共通)
   warehouse3Id: null as string | null, // 納入倉庫3 (国内/海外共通)
   dueDate: today,         // 取引先納入日 (旧「納入日」、§5 名称変更)
-  factoryShippingDate: '',        // 工場出荷日 (国内/海外共通)
-  deliveryPlaceShippingDate: '',  // 検品場出荷日 (列 delivery_place_shipping_date、国内/海外共通)
-  overseasDepartureDate: '',      // 海外出港日 (国内/海外共通)
+  factoryShippingDate: '',        // 工場出荷日 (Part6: 海外のみ)
+  deliveryPlaceShippingDate: '',  // 納品所出荷日 (列 delivery_place_shipping_date、Part6: 海外のみ)
+  overseasDepartureDate: '',      // 海外出港日 (Part6: 海外のみ)
   ordererUserId: '',       // 発注担当者
   managerUserId: '',       // 発注管理者
   // 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」。各行はテンプレ

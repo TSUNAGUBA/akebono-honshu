@@ -86,11 +86,25 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
         return (await GetAsync(entity.Id, ct))!;
     }
 
+    // 有効なオーナー (process_record_permission>=1 かつ 有効 かつ 未削除) の人数 (現テナント)。
+    private Task<int> CountActiveOwnersAsync(CancellationToken ct)
+        => db.Users.CountAsync(u => u.ProcessRecordPermission >= 1 && u.IsActive && u.DeletedAt == null, ct);
+
     public async Task<UserListItem?> UpdateAsync(Guid id, UserWriteRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         ValidatePermissions(req);
         var entity = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (entity is null) return null;
+
+        // 自己ロックアウト防止: 自分自身のオーナー権限の解除・自分の無効化は禁止。
+        if (id == actorUserId && (req.ProcessRecordPermission < 1 || !req.IsActive))
+            throw DomainException.Validation("自分自身のオーナー権限の解除・無効化はできません");
+
+        // 全体ロックアウト防止: 最後の有効オーナーを「非オーナー化 or 無効化」することは禁止。
+        var wasActiveOwner = entity.ProcessRecordPermission >= 1 && entity.IsActive && entity.DeletedAt == null;
+        var willBeActiveOwner = req.ProcessRecordPermission >= 1 && req.IsActive;
+        if (wasActiveOwner && !willBeActiveOwner && await CountActiveOwnersAsync(ct) <= 1)
+            throw DomainException.Validation("最後の有効なオーナーの権限解除・無効化はできません");
 
         entity.EmployeeNo = req.EmployeeNo.Trim();
         entity.LoginId = req.LoginId.Trim();
@@ -122,6 +136,11 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
         if (id == actorUserId) throw DomainException.Validation("自分自身は削除できません");
         var entity = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (entity is null) return false;
+
+        // 全体ロックアウト防止: 最後の有効オーナーの削除は禁止。
+        var wasActiveOwner = entity.ProcessRecordPermission >= 1 && entity.IsActive && entity.DeletedAt == null;
+        if (wasActiveOwner && await CountActiveOwnersAsync(ct) <= 1)
+            throw DomainException.Validation("最後の有効なオーナーは削除できません");
 
         var now = SystemTime.UtcNow;
         entity.DeletedAt = now;
