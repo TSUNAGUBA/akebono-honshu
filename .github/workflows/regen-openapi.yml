@@ -3,13 +3,11 @@
 #
 # 目的: docs/api/openapi.json を CI 上で scripts/generate-openapi.sh により再生成し、
 #   (1) 生成物をアーティファクトとして出力 (openapi-json)
-#   (2) 変化があればトリガーブランチへコミット & push (コミットは [skip ci] で無限ループ防止)
+#   (2) 変化があればトリガーブランチ(PR head)へコミット & push
 #   これにより、ローカルに dotnet/bash/jq が無くても実装と一致した openapi.json を得られる。
 #
-# 使い方:
-#   - このワークフローファイルを含むブランチ (chore/regen-openapi) を push すると自動実行される。
-#   - もしくは Actions 画面から手動実行 (workflow_dispatch)。
-#   生成物がコミットされたブランチで PR を作成すれば ci.yml の openapi-check が green になる。
+# トリガー: chore/regen-openapi ブランチを main 向けに PR にすると pull_request で自動実行される
+#   (同一リポジトリの PR は head ブランチのワークフローが動くため確実)。push / 手動実行にも対応。
 # ===========================================================================
 name: Regenerate OpenAPI spec
 
@@ -17,6 +15,8 @@ on:
   workflow_dispatch:
   push:
     branches: [chore/regen-openapi]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -26,12 +26,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # PR の head ブランチをチェックアウトして、生成物を同ブランチへ push できるようにする。
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
       - name: Regenerate openapi.json
         # ci.yml の openapi-check と同一スクリプト (dotnet run で swagger を取得し jq -S で整形)。
-        # jq / curl は GitHub ubuntu ランナーにプリインストール済み。
         run: bash scripts/generate-openapi.sh
       - name: Upload generated spec as artifact
         uses: actions/upload-artifact@v4
@@ -47,6 +49,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/api/openapi.json
-          # [skip ci] で本ワークフロー/CI の再トリガーを防ぐ (無限ループ防止)。
-          git commit -m "docs: regenerate openapi.json (factories/tax-rates/users) [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git commit -m "docs: regenerate openapi.json (factories/tax-rates/users)"
+          git push origin "HEAD:${{ github.head_ref || github.ref_name }}"
