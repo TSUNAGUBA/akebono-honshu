@@ -10,7 +10,8 @@ const { list } = useMasters()
 const { piCreate } = useProduction()
 
 const family = ref<FamilyDetail | null>(null)
-const suppliers = ref<MasterItem[]>([])
+// 加工先 = 工場 (Part2)。工場マスタを参照する (旧: 仕入先兼用)。
+const factories = ref<MasterItem[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
 const submitting = ref(false)
@@ -29,7 +30,7 @@ const reload = async () => {
   try {
     if (!familyId.value) { errorMessage.value = '品番が指定されていません。生産手配状況または商品一覧から選択してください。'; return }
     family.value = await getFamily(familyId.value)
-    suppliers.value = await list('suppliers')
+    factories.value = await list('factories')
     for (const p of family.value?.products ?? []) qty.value[p.id] = 0
   } catch {
     errorMessage.value = '商品情報の取得に失敗しました'
@@ -79,7 +80,7 @@ const submit = async () => {
           <label class="block text-sm">
             <span class="text-gray-600">加工先 (工場)</span>
             <div class="mt-1">
-              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="加工先を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
+              <MasterSelect :model-value="form.factorySupplierId" :items="factories" placeholder="加工先を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
             </div>
           </label>
           <label class="block text-sm">

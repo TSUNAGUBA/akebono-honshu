@@ -13,6 +13,8 @@ const { apiData } = useApi()
 // マスタ参照データ
 const productTypes = ref<MasterItem[]>([])
 const productSeasons = ref<MasterItem[]>([])
+// 工場 (Part2)。品番7桁目の工場マスタ。仕入先 (suppliers) とは別。
+const factories = ref<MasterItem[]>([])
 const suppliers = ref<MasterItem[]>([])
 const brands = ref<MasterItem[]>([])
 const functions_ = ref<MasterItem[]>([])
@@ -404,9 +406,10 @@ onMounted(async () => {
   // 失敗してもフォームは使えるようにする (原則 4 非ブロッキング、await しない)。
   loadReferenceSources()
   try {
-    const [pt, ps, sup, br, fn, pg, mt, co, sz, usrRes, exrRes] = await Promise.all([
+    const [pt, ps, fac, sup, br, fn, pg, mt, co, sz, usrRes, exrRes] = await Promise.all([
       list('product-types'),
       list('product-seasons'),
+      list('factories'),
       list('suppliers'),
       list('brands'),
       list('functions'),
@@ -420,6 +423,7 @@ onMounted(async () => {
     ])
     productTypes.value = pt
     productSeasons.value = ps
+    factories.value = fac
     suppliers.value = sup
     brands.value = br
     functions_.value = fn
@@ -433,10 +437,9 @@ onMounted(async () => {
     // 初期値設定
     if (pt.length) form.value.productTypeId = pt[0].id
     if (ps.length) form.value.productSeasonId = ps[0].id
-    if (sup.length) {
-      form.value.factorySupplierId = sup[0].id
-      supplierPrices.value[0].supplierId = sup[0].id
-    }
+    // 工場 (Part2) の初期値は工場マスタの先頭。仕入単価の仕入先は仕入先マスタの先頭。
+    if (fac.length) form.value.factorySupplierId = fac[0].id
+    if (sup.length) supplierPrices.value[0].supplierId = sup[0].id
     if (br.length) form.value.brandId = br[0].id
     if (pg.length) form.value.productGroupId = pg[0].id
     if (mt.length) {
@@ -691,7 +694,7 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">工場 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.factorySupplierId" :items="suppliers" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
+              <MasterSelect :model-value="form.factorySupplierId" :items="factories" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
               <span class="text-xs text-gray-500">11 桁品番の 7 桁目 (工場コード)</span>
             </label>
           </div>

@@ -80,7 +80,8 @@ public class ProductFamily : ITenantScoped
     // ナビプロパティ (Include で FK ネスト返却に使用)
     public ProductType? ProductType { get; set; }
     public ProductSeason? ProductSeason { get; set; }
-    public Supplier? FactorySupplier { get; set; }
+    // 工場 (Part2)。従来 Supplier を兼用していたが工場マスタへ分離。FK 列名 (factory_supplier_id) は互換維持。
+    public Factory? FactorySupplier { get; set; }
     public Brand? Brand { get; set; }
     public Function? Function { get; set; }
     public ProductGroup? ProductGroup { get; set; }

@@ -45,6 +45,7 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
             Code = req.Code,
             Name = req.Name,
             OfficialName = req.OfficialName,
+            // 工場コード (Part2 で工場マスタへ分離)。仕入先では未入力 ("") が既定。
             ItemConversionCode = req.ItemConversionCode,
             CountryId = req.CountryId,
             SupplierType = req.SupplierType,
@@ -75,7 +76,9 @@ public class SupplierService(IAkebonoDbContext db, IAuditLogger audit)
         entity.Code = req.Code;
         entity.Name = req.Name;
         entity.OfficialName = req.OfficialName;
-        entity.ItemConversionCode = req.ItemConversionCode;
+        // 工場コード (Part2 で分離)。仕入先フォームからは送られないため、空なら既存値を保持する (非破壊)。
+        if (!string.IsNullOrWhiteSpace(req.ItemConversionCode))
+            entity.ItemConversionCode = req.ItemConversionCode;
         entity.CountryId = req.CountryId;
         entity.SupplierType = req.SupplierType;
         entity.AlertTarget = req.AlertTarget;

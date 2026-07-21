@@ -26,6 +26,7 @@ public static class MasterEndpoints
 
         MapSizes(app);
         MapSuppliers(app);
+        MapFactories(app);
         MapExchangeRates(app);
         MapProductTypes(app);
         MapProductSeasons(app);
@@ -200,6 +201,64 @@ public static class MasterEndpoints
 
         group.MapPost("/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
                                                      SupplierService svc, Guid id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
+        });
+    }
+
+    // 工場マスタ (Part2)。仕入先 (MapSuppliers) から分離した工場専用エンドポイント。
+    // GET は認証のみ、POST/PATCH/DELETE/Restore は product_ledger_permission >= 1 必須 (Supplier と同権限)。
+    private static void MapFactories(IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/api/maker/v1/masters/factories");
+
+        group.MapGet("/", async (HttpContext http, FactoryService svc,
+                                  bool? includeDeleted, CancellationToken ct) =>
+        {
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
+                return AuthEndpoints.UnauthorizedError(http);
+            var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
+            return ApiEnvelope.Ok(http, items);
+        });
+
+        group.MapGet("/{id:guid}", async (HttpContext http, Guid id, FactoryService svc, CancellationToken ct) =>
+        {
+            var entity = await svc.GetAsync(id, ct);
+            return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
+        });
+
+        group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
+                                    FactoryService svc, FactoryWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/factories/{created.Id}", created);
+        });
+
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              FactoryService svc, Guid id, FactoryWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
+        });
+
+        group.MapDelete("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              FactoryService svc, Guid id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
+        });
+
+        group.MapPost("/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
+                                                     FactoryService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

@@ -30,6 +30,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
     public DbSet<Function> Functions => Set<Function>();
     public DbSet<Country> Countries => Set<Country>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
+    // 工場マスタ (Part2)。仕入先 (Suppliers) から分離。品番7桁目の工場コード生成元。
+    public DbSet<Factory> Factories => Set<Factory>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<ProductType> ProductTypes => Set<ProductType>();
     public DbSet<ProductSeason> ProductSeasons => Set<ProductSeason>();
@@ -153,6 +155,16 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             // 適用通貨 (§2f) / ドレー代 (§2i、仕入先ごと)
             b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
             b.Property(x => x.DrayageCost).HasColumnName("drayage_cost").HasColumnType("numeric(12,2)");
+            b.HasOne(x => x.Country).WithMany().HasForeignKey(x => x.CountryId);
+        });
+        // 工場マスタ (Part2)。仕入先 (suppliers) から分離。通貨・ドレー代は持たない (仕入先固有)。
+        ConfigureMaster<Factory>(modelBuilder, "factories", b =>
+        {
+            b.Property(x => x.OfficialName).HasColumnName("official_name").HasMaxLength(255);
+            b.Property(x => x.ItemConversionCode).HasColumnName("item_conversion_code").IsRequired().HasMaxLength(1).IsFixedLength();
+            b.Property(x => x.CountryId).HasColumnName("country_id");
+            b.Property(x => x.SupplierType).HasColumnName("supplier_type");
+            b.Property(x => x.AlertTarget).HasColumnName("alert_target");
             b.HasOne(x => x.Country).WithMany().HasForeignKey(x => x.CountryId);
         });
         ConfigureMaster<Department>(modelBuilder, "departments");

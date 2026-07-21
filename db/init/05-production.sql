@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS production_instructions (
     idempotency_payload_hash        VARCHAR(64)  NULL,
     instruction_no                  VARCHAR(16)  NOT NULL,
     product_family_id               UUID         NOT NULL REFERENCES product_families(id),
-    factory_supplier_id             UUID         NOT NULL REFERENCES suppliers(id),
+    -- 工場 (Part2)。加工先。工場マスタ (factories) を参照。列名は互換のため維持。
+    factory_supplier_id             UUID         NOT NULL REFERENCES factories(id),
     planned_quantity                INTEGER      NOT NULL,
     due_date                        DATE         NOT NULL,
     status                          SMALLINT     NOT NULL DEFAULT 0,

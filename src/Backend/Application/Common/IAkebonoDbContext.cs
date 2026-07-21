@@ -20,6 +20,8 @@ public interface IAkebonoDbContext
     DbSet<Function> Functions { get; }
     DbSet<Country> Countries { get; }
     DbSet<Supplier> Suppliers { get; }
+    // 工場マスタ (Part2)。仕入先から分離。
+    DbSet<Factory> Factories { get; }
     DbSet<Department> Departments { get; }
     DbSet<ProductType> ProductTypes { get; }
     DbSet<ProductSeason> ProductSeasons { get; }

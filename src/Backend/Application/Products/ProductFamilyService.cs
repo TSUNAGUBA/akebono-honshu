@@ -60,7 +60,8 @@ public class ProductFamilyService(
             ?? throw DomainException.Validation($"product_type_id={req.Family.ProductTypeId} 不在");
         var season = await db.ProductSeasons.FirstOrDefaultAsync(x => x.Id == req.Family.ProductSeasonId, ct)
             ?? throw DomainException.Validation($"product_season_id={req.Family.ProductSeasonId} 不在");
-        var factory = await db.Suppliers.FirstOrDefaultAsync(x => x.Id == req.Family.FactorySupplierId, ct)
+        // 工場 (Part2)。品番7桁目の工場コードは工場マスタ (factories) から取得する (仕入先から分離)。
+        var factory = await db.Factories.FirstOrDefaultAsync(x => x.Id == req.Family.FactorySupplierId, ct)
             ?? throw DomainException.Validation($"factory_supplier_id={req.Family.FactorySupplierId} 不在");
 
         var colors = await db.Colors.Where(c => req.Expansion.ColorIds.Contains(c.Id)).ToListAsync(ct);

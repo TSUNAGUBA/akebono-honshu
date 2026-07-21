@@ -78,11 +78,10 @@ export const masterDefinitions: MasterDef[] = [
   },
   {
     slug: 'suppliers',
-    label: '仕入先 (工場)',
-    description: 'M-04 仕入先マスタ。official_name は発注書 Excel 帳票の宛名印字に使用 (F-22)。',
+    label: '仕入先',
+    description: 'M-04 仕入先マスタ。材料の仕入れ先。⑤仕入単価・発注書の発注先で使用。official_name は発注書 Excel 帳票の宛名印字 (F-22)。工場は「工場マスタ」で別管理 (Part2)。',
     extensionFields: [
       { key: 'officialName', label: '法的書面用正式名', type: 'text', maxLength: 255, placeholder: 'DEPARTURES', help: '発注書 Excel 帳票の宛名 (英字スペル可)' },
-      { key: 'itemConversionCode', label: '品番変換コード', type: 'text', required: true, maxLength: 1, placeholder: 'A', help: '11桁品番の 7桁目 (工場コード)' },
       { key: 'countryId', label: '国', type: 'select-master', required: true, master: 'countries', displayKey: 'countryName' },
       { key: 'supplierType', label: '区分', type: 'number', required: true, help: '0=国内, 1=海外' },
       { key: 'alertTarget', label: 'アラート対象', type: 'number', help: '0=対象外, 1=対象' },
@@ -91,11 +90,28 @@ export const masterDefinitions: MasterDef[] = [
     ],
     extensionColumns: [
       { key: 'officialName', label: '法的正式名' },
-      { key: 'itemConversionCode', label: '工場コード' },
       { key: 'countryName', label: '国' },
       { key: 'supplierType', label: '区分' },
       { key: 'currencyCode', label: '通貨' },
       { key: 'drayageCost', label: 'ドレー代' },
+    ],
+  },
+  {
+    slug: 'factories',
+    label: '工場',
+    description: '工場マスタ (Part2)。製品を製造する工場。仕入先 (材料の仕入れ先) とは別マスタ。品番7桁目の工場コードの生成元。official_name は生産指示書 Excel 帳票の宛名印字。',
+    extensionFields: [
+      { key: 'officialName', label: '法的書面用正式名', type: 'text', maxLength: 255, placeholder: 'AN-HUI TUO-CHI', help: '生産指示書 Excel 帳票の宛名 (英字スペル可)' },
+      { key: 'itemConversionCode', label: '工場コード', type: 'text', required: true, maxLength: 1, placeholder: 'A', help: '11桁品番の 7桁目 (工場コード)' },
+      { key: 'countryId', label: '国', type: 'select-master', required: true, master: 'countries', displayKey: 'countryName' },
+      { key: 'supplierType', label: '区分', type: 'number', required: true, help: '0=国内, 1=海外' },
+      { key: 'alertTarget', label: 'アラート対象', type: 'number', help: '0=対象外, 1=対象' },
+    ],
+    extensionColumns: [
+      { key: 'officialName', label: '法的正式名' },
+      { key: 'itemConversionCode', label: '工場コード' },
+      { key: 'countryName', label: '国' },
+      { key: 'supplierType', label: '区分' },
     ],
   },
   {

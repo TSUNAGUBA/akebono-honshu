@@ -60,6 +60,7 @@ public class ProductionInstruction : ITenantScoped
 
     // ナビプロパティ
     public ProductFamily? ProductFamily { get; set; }
-    public Supplier? FactorySupplier { get; set; }
+    // 工場 (Part2)。加工先。従来 Supplier を兼用していたが工場マスタへ分離。
+    public Factory? FactorySupplier { get; set; }
     public List<ProductionInstructionLine> Lines { get; set; } = new();
 }
