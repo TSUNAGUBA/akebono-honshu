@@ -172,7 +172,7 @@ const filtered = computed(() => {
   const nameQ = f.productName.trim()
   const provQ = f.provisionalNumber.trim()
   return items.value.filter((i) => {
-    // 品番 (企画コード) は品番 / 他品番 / 旧品番 のいずれかに部分一致 (商品名と同じ複数フィールド OR)。
+    // 品番 (商品コード) は品番 / 他品番 / 旧品番 のいずれかに部分一致 (商品名と同じ複数フィールド OR)。
     if (itemQ !== '' && !(inc(i.itemNumber, itemQ) || inc(i.itemFamilyNumber, itemQ) || inc(i.legacyId, itemQ))) return false
     if (yearQ !== '' && !inc(i.productYear != null ? String(i.productYear) : '', yearQ)) return false
     if (f.productTypeId != null && i.productTypeId !== f.productTypeId) return false

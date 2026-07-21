@@ -36,9 +36,7 @@ const errorMessage = ref('')
 const successMessage = ref('')
 
 // フォーム
-const yearCodes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'N', 'Z']
 const form = ref({
-  plannedYearCode: 'N',
   // ID 系は uuid 文字列 (第二段階契約)。未選択は '' で表し、送信前の必須チェックで弾く。
   productTypeId: '',
   productSeasonId: '',
@@ -71,6 +69,48 @@ const expansion = ref({
   colorIds: [] as string[],
   sizeIds: [] as string[],
 })
+
+// ───────────────────────────────────────────────────────────────────────────
+// 商品コード 年式 (11 桁品番 1 桁目) の自動決定 (Part1)。
+// 採番ルール: 西暦の下 1 桁 → 年式コード。I は使用不可のため 9→J / 0→K に読み替える。
+//   1→A 2→B 3→C 4→D 5→E 6→F 7→G 8→H 9→J 0→K
+// 年度に紐づかない「定番(N)」「統合(Z)」は "年度なし" トグルで別途選択する (ユーザ確認済 2026-07-21)。
+// これにより 1 桁目は直接入力せず、商品年度 or 区分トグルから自動決定する。
+const YEAR_DIGIT_TO_CODE: Record<number, string> = { 1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'E', 6: 'F', 7: 'G', 8: 'H', 9: 'J', 0: 'K' }
+type YearMode = 'year' | 'teiban' | 'tougou'
+// 年式区分。'year'=商品年度から自動 / 'teiban'=定番(N) / 'tougou'=統合(Z)。
+const yearMode = ref<YearMode>('teiban')
+const deriveYearCode = (year: number | null): string | null => {
+  if (year == null || !Number.isFinite(year)) return null
+  const d = ((Math.trunc(year) % 10) + 10) % 10
+  return YEAR_DIGIT_TO_CODE[d] ?? null
+}
+// 11 桁品番 1 桁目 (年式)。区分/商品年度から決まる。'year' で商品年度未入力なら null (未確定)。
+const plannedYearCode = computed<string | null>(() => {
+  if (yearMode.value === 'teiban') return 'N'
+  if (yearMode.value === 'tougou') return 'Z'
+  return deriveYearCode(form.value.productYear)
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// 商品コード プレビュー (Part1)。入力に応じて常時表示する。
+// 構成: [年式1][型式1][季節1][連番3][工場1] = 上位 7 桁 (品番)。連番(4-6桁)はサーバ自動採番のため "＊＊＊"。
+// カラー(8-9)・サイズ(10-11) は色×サイズ展開ごとに決まる SKU 単位 (下の④参照)。
+const codeCharOf = (item: MasterItem | undefined): string => {
+  const c = item?.itemConversionCode
+  return typeof c === 'string' && c.length > 0 ? c : '?'
+}
+const selectedType = computed(() => productTypes.value.find((t) => t.id === form.value.productTypeId))
+const selectedSeason = computed(() => productSeasons.value.find((s) => s.id === form.value.productSeasonId))
+const selectedFactory = computed(() => factories.value.find((f) => f.id === form.value.factorySupplierId))
+// 年式・型式・季節・工場の各コード (未確定は '?')。
+const previewYear = computed(() => plannedYearCode.value ?? '?')
+const previewType = computed(() => codeCharOf(selectedType.value))
+const previewSeason = computed(() => codeCharOf(selectedSeason.value))
+const previewFactory = computed(() => codeCharOf(selectedFactory.value))
+// 上位 7 桁の品番プレビュー (連番はサーバ自動採番のため "＊＊＊")。
+const previewItemNumber = computed(() =>
+  `${previewYear.value}${previewType.value}${previewSeason.value}＊＊＊${previewFactory.value}`)
 
 // ブランド費 自動計算 (§2c)。ブランド費 = 版権対象で選んだ価格 × 版権料率(%)。
 // 版権対象 1=小売価格(retailPrice), 2=納品価格(deliveryPrice)。対象/料率/基準価格が揃わなければ null。
@@ -359,8 +399,9 @@ const onCopyFromReference = async () => {
     form.value.royaltyRate = f.royaltyRate
     form.value.remark = f.remark ?? ''
     form.value.colorRemark = f.colorRemark ?? ''
-    // 年式 (planned_year_code) は family ヘッダ由来でコピー可。新採番は連番のみ。
-    form.value.plannedYearCode = f.plannedYearCode
+    // 年式 (Part1)。コピー元の 1 桁目から年式区分を復元する。N=定番 / Z=統合、それ以外は商品年度由来 (year)。
+    // 商品年度 (productYear) は上でコピー済のため、year モードなら年度から年式が再計算される。
+    yearMode.value = f.plannedYearCode === 'N' ? 'teiban' : f.plannedYearCode === 'Z' ? 'tougou' : 'year'
 
     // (2) 色サイズ展開を SKU 一覧から復元 (distinct colorId / sizeId)。
     //     削除済み SKU (isDeleted) は除外し、生きている組合せの色・サイズのみ採用する。
@@ -490,6 +531,8 @@ const priceRowIssue = computed<string | null>(() => {
 
 const canSubmit = computed(() =>
   form.value.productName1.trim() !== '' &&
+  // 年式が確定していること (Part1: year モードで商品年度が未入力/不正だと null)。
+  plannedYearCode.value != null &&
   expansion.value.colorIds.length > 0 &&
   expansion.value.sizeIds.length > 0 &&
   // 全ての仕入単価行が 仕入先選択済 かつ 単価 > 0 (§2d 複数行対応)
@@ -507,15 +550,19 @@ const onSubmit = async () => {
   // createComplete 失敗で再送信する経路に備えた前回値クリア (成功後は canSubmit=false で再入しない)
   imageUploadedByCat.value = { 0: 0, 1: 0 }
   if (!canSubmit.value) {
-    // 仕入単価行の具体的な問題があればそれを優先表示 (review #2/#4)。
-    errorMessage.value = priceRowIssue.value ?? '必須項目を入力してください (商品名 / 色 / サイズ / 単価)'
+    // 仕入単価行の具体的な問題があればそれを優先表示 (review #2/#4)。年式未確定 (Part1) も個別表示。
+    errorMessage.value = priceRowIssue.value
+      ?? (plannedYearCode.value == null
+        ? '年式が未確定です。年式区分「年度から自動」の場合は商品年度を入力してください。'
+        : '必須項目を入力してください (商品名 / 色 / サイズ / 単価)')
     return
   }
   submitting.value = true
   try {
     const payload: CompleteFamilyPayload = {
       family: {
-        plannedYearCode: form.value.plannedYearCode,
+        // 年式 (Part1) は商品年度 or 区分トグルから自動決定した値を送る。canSubmit で null を弾く。
+        plannedYearCode: plannedYearCode.value ?? 'N',
         productTypeId: form.value.productTypeId,
         productSeasonId: form.value.productSeasonId,
         factorySupplierId: form.value.factorySupplierId,
@@ -675,30 +722,72 @@ const onSubmit = async () => {
           </p>
         </details>
 
-        <!-- Section 1: 企画コード構成 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">① 企画コード構成 (11 桁品番の上位 9 桁)</h2>
-          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
+        <!-- Section 1: 商品コード構成 (Part1)。商品コード附番に影響する入力をフォーム最初にまとめて配置。
+             1 桁目(年式) は直接入力せず、商品年度 or 区分トグルから自動決定する。プレビューを常時表示。 -->
+        <section class="rounded-lg border border-blue-200 bg-white p-3 shadow-sm">
+          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">① 商品コード構成 <span class="ml-2 text-xs font-normal text-gray-500">(11 桁品番。1 桁目は自動決定)</span></h2>
+
+          <!-- 年式 (1 桁目)。年式区分で「年度から自動 / 定番(N) / 統合(Z)」を選び、年度からは商品年度の下1桁で決まる。 -->
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
             <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">年式 <span class="text-red-500">*</span></span>
-              <AutoComplete :model-value="form.plannedYearCode" :options="yearCodes.map((y) => ({ value: y, label: y }))" :allow-empty="false" placeholder="年式を検索…" @update:model-value="(v) => form.plannedYearCode = v" />
-              <span class="text-xs text-gray-500">11 桁品番の 1 桁目 (A-K, N, Z)</span>
+              <span class="text-sm font-medium">年式区分 <span class="text-red-500">*</span></span>
+              <div class="inline-flex overflow-hidden rounded-md border border-gray-300 text-sm">
+                <button type="button" class="flex-1 px-2 py-1.5 font-medium transition-colors" :class="yearMode === 'year' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" @click="yearMode = 'year'">年度から</button>
+                <button type="button" class="flex-1 border-l border-gray-300 px-2 py-1.5 font-medium transition-colors" :class="yearMode === 'teiban' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" @click="yearMode = 'teiban'">定番</button>
+                <button type="button" class="flex-1 border-l border-gray-300 px-2 py-1.5 font-medium transition-colors" :class="yearMode === 'tougou' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" @click="yearMode = 'tougou'">統合</button>
+              </div>
+              <span class="text-xs text-gray-500">定番=N / 統合=Z / 年度から=西暦下1桁</span>
             </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">商品年度 <span v-if="yearMode === 'year'" class="text-red-500">*</span></span>
+              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" :class="yearMode !== 'year' && 'bg-gray-50 text-gray-400'" />
+              <span class="text-xs text-gray-500">年式区分「年度から」の年式決定に使用 (下1桁)</span>
+            </label>
+            <div class="flex flex-col gap-1">
+              <span class="text-sm font-medium">年式 (1 桁目) <span class="text-xs font-normal text-gray-400">(自動)</span></span>
+              <div class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-mono font-semibold" :class="plannedYearCode == null ? 'text-red-600' : 'text-gray-800'">
+                {{ plannedYearCode ?? '未確定' }}
+              </div>
+              <span class="text-xs text-gray-500">直接入力せず自動決定</span>
+            </div>
+          </div>
+
+          <!-- 型式(2桁目)/季節(3桁目)/工場(7桁目)。各マスタの選択から各桁が自動決定される。 -->
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品タイプ <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.productTypeId" :items="productTypes" placeholder="商品タイプを検索…" @update:model-value="(v) => form.productTypeId = v ?? ''" />
+              <span class="text-xs text-gray-500">2 桁目 (型式): <span class="font-mono font-semibold">{{ previewType }}</span></span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品季節 <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.productSeasonId" :items="productSeasons" placeholder="商品季節を検索…" @update:model-value="(v) => form.productSeasonId = v ?? ''" />
+              <span class="text-xs text-gray-500">3 桁目 (季節): <span class="font-mono font-semibold">{{ previewSeason }}</span></span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">工場 <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.factorySupplierId" :items="factories" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
-              <span class="text-xs text-gray-500">11 桁品番の 7 桁目 (工場コード)</span>
+              <span class="text-xs text-gray-500">7 桁目 (工場): <span class="font-mono font-semibold">{{ previewFactory }}</span></span>
             </label>
           </div>
-          <p class="mt-3 text-xs text-gray-500">連番 (4-6 桁目) はサーバ側で自動採番</p>
+
+          <!-- 商品コード プレビュー (常時表示)。連番(4-6桁)はサーバ自動採番、カラー/サイズ(8-11桁)は色×サイズ展開ごと。 -->
+          <div class="mt-3 rounded-md border border-blue-200 bg-blue-50/60 p-3">
+            <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span class="text-xs font-medium text-blue-900">商品コード プレビュー (品番 7 桁)</span>
+              <span class="font-mono text-lg font-bold tracking-widest text-blue-900">{{ previewItemNumber }}</span>
+            </div>
+            <div class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-600">
+              <span>年式 <span class="font-mono font-semibold">{{ previewYear }}</span></span>
+              <span>型式 <span class="font-mono font-semibold">{{ previewType }}</span></span>
+              <span>季節 <span class="font-mono font-semibold">{{ previewSeason }}</span></span>
+              <span>連番 <span class="font-mono font-semibold">＊＊＊</span> (自動採番)</span>
+              <span>工場 <span class="font-mono font-semibold">{{ previewFactory }}</span></span>
+            </div>
+            <p class="mt-1 text-xs text-gray-500">
+              連番 (4-6 桁目) はサーバ側で自動採番。カラー (8-9 桁目)・サイズ (10-11 桁目) は下記「④ 色 × サイズ展開」で SKU ごとに決まります。
+            </p>
+          </div>
         </section>
 
         <!-- Section 2: 商品画像 (§2a 企画/本番の 2 区分。「登録」と同時に採番 familyId へ区分付きでアップロード) -->
@@ -802,12 +891,8 @@ const onSubmit = async () => {
             </label>
           </div>
 
-          <!-- 旧 品番台帳 項目 (Phase A、全て任意) -->
+          <!-- 旧 品番台帳 項目 (Phase A、全て任意)。商品年度は「① 商品コード構成」に移動 (Part1、年式の決定に使用)。 -->
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
-            <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">商品年度</span>
-              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026 (9999=通年)" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
-            </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">管理季節</span>
               <MasterSelect :model-value="form.managementSeasonId" :items="productSeasons" allow-empty empty-label="(なし)" placeholder="管理季節を検索…" @update:model-value="(v) => form.managementSeasonId = v" />
