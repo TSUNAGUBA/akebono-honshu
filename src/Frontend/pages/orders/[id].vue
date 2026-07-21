@@ -589,7 +589,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           >{{ detail.isOverseas ? '海外' : '国内' }}</span>
         </div>
         <div class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div><span class="text-gray-500">発注先:</span> {{ detail.supplierCode }} {{ detail.supplierName }}</div>
+          <!-- 発注先 (仕入先マスタ)。Part6: 国内発注は発注先なし (null) → 「—」表示。 -->
+          <div><span class="text-gray-500">発注先:</span> {{ detail.supplierId ? `${detail.supplierCode} ${detail.supplierName}` : '—' }}</div>
           <div><span class="text-gray-500">納品先:</span> {{ detail.deliveryDestinationName }}</div>
           <div><span class="text-gray-500">発注事業部:</span> {{ detail.departmentName }}</div>
           <div><span class="text-gray-500">納入倉庫1:</span> {{ detail.warehouseName }}</div>

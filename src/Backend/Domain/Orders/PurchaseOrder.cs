@@ -58,7 +58,11 @@ public class PurchaseOrder : ITenantScoped
     /// <summary>論理削除操作者 (users.id)</summary>
     public Guid? DeletedByUserId { get; set; }
 
-    public Guid SupplierId { get; set; }
+    /// <summary>
+    /// 発注先 (仕入先マスタ、suppliers.id)。Part6: 海外発注のみ必須、国内発注では NULL 許容
+    /// (発注区分=国内では発注先を入力しない)。既存行は全て非 NULL。
+    /// </summary>
+    public Guid? SupplierId { get; set; }
     /// <summary>仕入先 official_name のスナップショット (F-22 帳票宛名第 1 要素)</summary>
     public string? SupplierOfficialNameSnapshot { get; set; }
     /// <summary>仕入先 code のスナップショット (F-22 帳票宛名第 2 要素)</summary>

@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     deleted_at                      TIMESTAMPTZ  NULL,
     deleted_by_user_id              UUID         NULL REFERENCES users(id),
 
-    supplier_id                     UUID         NOT NULL REFERENCES suppliers(id),
+    -- 発注先 (仕入先マスタ)。Part6: 海外発注のみ必須、国内発注では NULL (発注先を入力しない)。
+    supplier_id                     UUID         REFERENCES suppliers(id),
     supplier_official_name_snapshot VARCHAR(255) NULL,
     supplier_code_snapshot          VARCHAR(3)   NULL,
 
