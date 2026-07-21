@@ -3,7 +3,7 @@ import type { MasterItem } from '~/composables/useMasters'
 import type { CreateOrderPayload, CommunicationSuggestion } from '~/composables/useOrders'
 
 const { user } = useAuth()
-const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 const { list } = useMasters()
 const { create, communicationSuggestions, priceSuggestion } = useOrders()
 const { listFamiliesAll } = useProducts()
@@ -38,31 +38,32 @@ const errorMessage = ref('')
 
 // フォーム
 const today = todayJst() // 業務日付は JST 基準 (UTC 由来だと JST 00:00-08:59 に前日になる)
-// 発注区分 (国内/海外) は入力項目の出し分けには使わない (§5 統一)。国内/海外で共通の入力項目とし、
-// is_overseas は帳票の言語切替 (国内=日本語/海外=英語) と一覧の区分バッジのみに使う。
+// 発注区分 (国内/海外)。Part6: 既定は海外。海外のみ表示・入力する項目 (発注先/荷揚地/工場出荷日/
+// 納品所出荷日/海外出港日) を is_overseas で出し分ける。is_overseas は帳票の言語切替・一覧バッジにも使う。
 const form = ref({
   orderNo: '',            // 発注書番号 (§5)。従来は初回 Excel 出力時に採番だが、作成時に手入力も可能 (任意)。
   // ID 系は uuid 文字列 (第二段階契約)。未選択は '' で表し、送信前の必須チェックで弾く。
-  supplierId: '',          // 発注先 (旧「仕入先」、§5 名称変更)
+  supplierId: '',          // 発注先 (仕入先マスタ、Part6: 海外のみ表示・入力)
   customerRef: '',        // 得意先 / 受注先 (国内/海外共通)
   deliveryDestinationId: '', // 納品先
   departmentId: '',        // 発注事業部
-  landingPlace: '',       // 荷揚地 (国内/海外共通)
+  landingPlace: '',       // 荷揚地 (Part6: 海外のみ)
   warehouseId: '',         // 納入倉庫1
   warehouse2Id: null as string | null, // 納入倉庫2 (国内/海外共通)
   warehouse3Id: null as string | null, // 納入倉庫3 (国内/海外共通)
   dueDate: today,         // 取引先納入日 (旧「納入日」、§5 名称変更)
-  factoryShippingDate: '',        // 工場出荷日 (国内/海外共通)
-  deliveryPlaceShippingDate: '',  // 検品場出荷日 (列 delivery_place_shipping_date、国内/海外共通)
-  overseasDepartureDate: '',      // 海外出港日 (国内/海外共通)
+  factoryShippingDate: '',        // 工場出荷日 (Part6: 海外のみ)
+  deliveryPlaceShippingDate: '',  // 納品所出荷日 (列 delivery_place_shipping_date、Part6: 海外のみ)
+  overseasDepartureDate: '',      // 海外出港日 (Part6: 海外のみ)
   ordererUserId: '',       // 発注担当者
   managerUserId: '',       // 発注管理者
   // 連絡文書 6 行 (構造化、PR6)。旧 spec 発注明細 No.27-32「連絡文書01行〜06行」。各行はテンプレ
   // 選択式 (連絡文書サジェスト再利用) + 自由編集可。新フローは本 6 列を SoT として送る (communicationText
   // は新フロントから書かない)。固定長 6 の配列で各スロットを保持する。
   communicationLines: ['', '', '', '', '', ''] as string[],
-  // 発注区分 (国内=false/海外=true)。帳票の言語切替・区分バッジのみに使用 (入力欄の出し分けはしない §5)。
-  isOverseas: false,
+  // 発注区分 (国内=false/海外=true)。Part6: 既定は「海外」。海外のみ表示する項目 (発注先/荷揚地/
+  // 工場出荷日/納品所出荷日/海外出港日) を発注区分で出し分ける。帳票の言語切替・区分バッジにも使う。
+  isOverseas: true,
 })
 
 // 分納×倉庫の多次元明細 (PR5b)。1 明細を「(倉庫 × 納期) の分納行」の集合で多次元化する。
@@ -290,7 +291,8 @@ const applyTemplateToLine = (slot: number, optionValue: string) => {
 const lineQuantityValid = (l: LineRow): boolean => lineQuantity(l) > 0
 
 const canSubmit = computed(() =>
-  form.value.supplierId !== '' &&
+  // 発注先は海外のみ必須 (Part6: 国内は非表示・任意)。
+  (!form.value.isOverseas || form.value.supplierId !== '') &&
   form.value.deliveryDestinationId !== '' &&
   form.value.departmentId !== '' &&
   form.value.warehouseId !== '' &&
@@ -302,7 +304,9 @@ const canSubmit = computed(() =>
 const onSubmit = async () => {
   errorMessage.value = ''
   if (!canSubmit.value) {
-    errorMessage.value = '必須項目を入力してください (発注先 / 納品先 / 担当者 / 明細)'
+    errorMessage.value = form.value.isOverseas
+      ? '必須項目を入力してください (発注先 / 納品先 / 担当者 / 明細)'
+      : '必須項目を入力してください (納品先 / 担当者 / 明細)'
     return
   }
   submitting.value = true
@@ -310,7 +314,8 @@ const onSubmit = async () => {
     const payload: CreateOrderPayload = {
       // 発注書番号 (§5)。空欄は null (初回 Excel 出力時に自動採番される従来挙動にフォールバック)。
       orderNo: form.value.orderNo.trim() || null,
-      supplierId: form.value.supplierId,
+      // 発注先は海外のみ (Part6)。国内は null を送る (発注先=仕入先マスタは任意)。
+      supplierId: form.value.isOverseas ? (form.value.supplierId || null) : null,
       deliveryDestinationId: form.value.deliveryDestinationId,
       departmentId: form.value.departmentId,
       warehouseId: form.value.warehouseId,
@@ -361,11 +366,13 @@ const onSubmit = async () => {
       // 発注区分 (国内/海外)。§5 で入力項目は国内/海外共通に統一したため、以下の項目は区分に関わらず常に送る。
       // is_overseas は帳票の言語切替・区分バッジのみに使う。
       isOverseas: form.value.isOverseas,
-      landingPlace: form.value.landingPlace.trim() || null,
+      // 荷揚地/工場出荷日/納品所出荷日/海外出港日は海外のみ (Part6)。国内は null 送信。
+      // 得意先 (customerRef) は海外/国内共通のため常に送る。
+      landingPlace: form.value.isOverseas ? (form.value.landingPlace.trim() || null) : null,
       customerRef: form.value.customerRef.trim() || null,
-      factoryShippingDate: form.value.factoryShippingDate || null,
-      deliveryPlaceShippingDate: form.value.deliveryPlaceShippingDate || null,
-      overseasDepartureDate: form.value.overseasDepartureDate || null,
+      factoryShippingDate: form.value.isOverseas ? (form.value.factoryShippingDate || null) : null,
+      deliveryPlaceShippingDate: form.value.isOverseas ? (form.value.deliveryPlaceShippingDate || null) : null,
+      overseasDepartureDate: form.value.isOverseas ? (form.value.overseasDepartureDate || null) : null,
       warehouse2Id: form.value.warehouse2Id,
       warehouse3Id: form.value.warehouse3Id,
     }
@@ -406,30 +413,31 @@ const onSubmit = async () => {
       </div>
 
       <form v-else class="space-y-3" @submit.prevent="onSubmit">
-        <!-- ① 発注区分 (国内/海外)。§5 で入力項目は国内/海外共通に統一。区分は帳票の言語切替
-             (国内=日本語/海外=英語) と一覧の区分バッジのみに使い、入力欄の出し分けはしない。 -->
+        <!-- ① 発注区分 (海外/国内)。Part6: 並びは「海外」→「国内」、既定は「海外」。海外のみ表示する
+             項目 (発注先/荷揚地/工場出荷日/納品所出荷日/海外出港日) を区分で出し分ける。区分は帳票の言語
+             切替 (国内=日本語/海外=英語) と一覧の区分バッジにも使う。 -->
         <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="font-semibold">① 発注区分 <span class="text-red-500">*</span></h2>
               <p class="mt-0.5 text-xs text-gray-500">
-                国内 / 海外 を選択してください。帳票の言語 (国内=日本語 / 海外=英語) と一覧の区分に使われます。入力項目は共通です。
+                海外 / 国内 を選択してください。海外のみ「発注先・荷揚地・工場出荷日・納品所出荷日・海外出港日」を入力します。帳票の言語 (国内=日本語 / 海外=英語) と一覧の区分にも使われます。
               </p>
             </div>
-            <!-- 発注区分 国内/海外 セグメントトグル (is_overseas、二択モードスイッチ) -->
+            <!-- 発注区分 海外/国内 セグメントトグル (is_overseas、二択モードスイッチ、海外を先頭に) -->
             <div class="inline-flex self-start overflow-hidden rounded-md border border-gray-300 text-sm">
               <button
                 type="button"
                 class="px-6 py-1.5 font-medium transition-colors"
-                :class="!form.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
-                @click="form.isOverseas = false"
-              >国内</button>
-              <button
-                type="button"
-                class="border-l border-gray-300 px-6 py-1.5 font-medium transition-colors"
                 :class="form.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
                 @click="form.isOverseas = true"
               >海外</button>
+              <button
+                type="button"
+                class="border-l border-gray-300 px-6 py-1.5 font-medium transition-colors"
+                :class="!form.isOverseas ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                @click="form.isOverseas = false"
+              >国内</button>
             </div>
           </div>
         </section>
@@ -446,7 +454,8 @@ const onSubmit = async () => {
               <span class="font-medium">発注書番号</span>
               <input v-model="form.orderNo" type="text" maxlength="16" placeholder="例: S3858 (未入力なら初回出力時に自動採番)" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
-            <label class="flex flex-col gap-1">
+            <!-- 発注先 (仕入先マスタ)。Part6: 海外のみ表示・必須。国内は非表示 (supplierId は null 送信)。 -->
+            <label v-if="form.isOverseas" class="flex flex-col gap-1">
               <span class="font-medium">発注先 <span class="text-red-500">*</span></span>
               <MasterSelect v-model="form.supplierId" :items="suppliers" />
             </label>
@@ -466,7 +475,8 @@ const onSubmit = async () => {
               <span class="font-medium">発注事業部 <span class="text-red-500">*</span></span>
               <MasterSelect v-model="form.departmentId" :items="departments" />
             </label>
-            <label class="flex flex-col gap-1">
+            <!-- 荷揚地。Part6: 海外のみ表示。 -->
+            <label v-if="form.isOverseas" class="flex flex-col gap-1">
               <span class="font-medium">荷揚地</span>
               <input v-model="form.landingPlace" type="text" maxlength="128" placeholder="Port of entry" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
@@ -484,21 +494,22 @@ const onSubmit = async () => {
             </label>
           </div>
 
-          <!-- 日付: 取引先納入日 / 工場出荷日 / 検品場出荷日 / 海外出港日 -->
+          <!-- 日付: 取引先納入日 / 工場出荷日 / 納品所出荷日 / 海外出港日 (工場出荷日以降は Part6: 海外のみ) -->
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="font-medium">取引先納入日 <span class="text-red-500">*</span></span>
               <input v-model="form.dueDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
-            <label class="flex flex-col gap-1">
+            <!-- 工場出荷日 / 納品所出荷日 / 海外出港日。Part6: 海外のみ表示。 -->
+            <label v-if="form.isOverseas" class="flex flex-col gap-1">
               <span class="font-medium">工場出荷日</span>
               <input v-model="form.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
-            <label class="flex flex-col gap-1">
-              <span class="font-medium">検品場出荷日</span>
+            <label v-if="form.isOverseas" class="flex flex-col gap-1">
+              <span class="font-medium">納品所出荷日</span>
               <input v-model="form.deliveryPlaceShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>
-            <label class="flex flex-col gap-1">
+            <label v-if="form.isOverseas" class="flex flex-col gap-1">
               <span class="font-medium">海外出港日</span>
               <input v-model="form.overseasDepartureDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
             </label>

@@ -6,7 +6,8 @@ namespace Akebono.Application.Orders;
 // 新規作成 (POST /api/maker/v1/orders、O-01)
 // ─────────────────────────────────────────────────
 public record CreateOrderRequest(
-    Guid SupplierId,
+    // 発注先 (仕入先マスタ)。Part6: 海外のみ必須、国内は null 許容 (発注区分=国内では発注先を入力しない)。
+    Guid? SupplierId,
     Guid DeliveryDestinationId,
     Guid DepartmentId,
     Guid WarehouseId,
@@ -113,7 +114,8 @@ public record OrderDetail(
     short Status,
     DateTime? CancelledAt,
     string? CancelReason,
-    Guid SupplierId,
+    // 発注先 (仕入先マスタ)。Part6: 国内発注では null (発注先なし)。
+    Guid? SupplierId,
     string SupplierCode,
     string SupplierName,
     string? SupplierOfficialNameSnapshot,
@@ -210,7 +212,8 @@ public record OrderLineDeliverySummary(
 public record UpdateOrderRequest(
     EditReason EditReason,
     string? EditNote,
-    Guid SupplierId,
+    // 発注先 (仕入先マスタ)。Part6: 国内発注では null 許容。
+    Guid? SupplierId,
     Guid DeliveryDestinationId,
     Guid DepartmentId,
     Guid WarehouseId,

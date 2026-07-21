@@ -6,7 +6,7 @@ using Akebono.Domain.Entities;
 namespace Akebono.Api.Endpoints;
 
 /// <summary>
-/// 17 マスタの REST エンドポイント定義 (M-01 / M-02 共通テンプレート + 個別拡張)。
+/// 汎用マスタの REST エンドポイント定義 (M-01 / M-02 共通テンプレート + 個別拡張。Part2 工場 / Part5 税率 を含む)。
 /// Phase 5 api-design.md §2.3 + Iteration 1.F の C-02 権限制御:
 ///   - GET (list/single) は認証必須のみ
 ///   - POST/PATCH/DELETE/Restore は product_ledger_permission >= 1 必須
@@ -26,10 +26,12 @@ public static class MasterEndpoints
 
         MapSizes(app);
         MapSuppliers(app);
+        MapFactories(app);
         MapExchangeRates(app);
         MapProductTypes(app);
         MapProductSeasons(app);
         MapProductGroups(app);
+        MapTaxRates(app);
         MapColors(app);
         MapMaterials(app);
         MapDeliveryDestinations(app);
@@ -45,6 +47,7 @@ public static class MasterEndpoints
     private record ProductTypeWriteRequest(string Code, string Name, string ItemConversionCode, string SizeDemographicCode);
     private record ProductSeasonWriteRequest(string Code, string Name, string ItemConversionCode, string? ConversionOrder);
     private record ProductGroupWriteRequest(string Code, string Name, decimal PlanningFee);
+    private record TaxRateWriteRequest(string Code, string Name, decimal Rate);
     private record ColorWriteRequest(string Code, string Name, string ItemConversionCode);
     private record MaterialWriteRequest(string Code, string Name, Guid MaterialClassificationId);
     private record DeliveryDestinationWriteRequest(
@@ -208,6 +211,64 @@ public static class MasterEndpoints
         });
     }
 
+    // 工場マスタ (Part2)。仕入先 (MapSuppliers) から分離した工場専用エンドポイント。
+    // GET は認証のみ、POST/PATCH/DELETE/Restore は product_ledger_permission >= 1 必須 (Supplier と同権限)。
+    private static void MapFactories(IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/api/maker/v1/masters/factories");
+
+        group.MapGet("/", async (HttpContext http, FactoryService svc,
+                                  bool? includeDeleted, CancellationToken ct) =>
+        {
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
+                return AuthEndpoints.UnauthorizedError(http);
+            var items = await svc.ListAsync(actorId, includeDeleted ?? false, ct);
+            return ApiEnvelope.Ok(http, items);
+        });
+
+        group.MapGet("/{id:guid}", async (HttpContext http, Guid id, FactoryService svc, CancellationToken ct) =>
+        {
+            var entity = await svc.GetAsync(id, ct);
+            return entity is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, entity);
+        });
+
+        group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
+                                    FactoryService svc, FactoryWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/factories/{created.Id}", created);
+        });
+
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              FactoryService svc, Guid id, FactoryWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
+        });
+
+        group.MapDelete("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              FactoryService svc, Guid id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
+        });
+
+        group.MapPost("/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
+                                                     FactoryService svc, Guid id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
+        });
+    }
+
     // 為替マスタ (§2f、bespoke master)。年月 (YYYY-MM) × 通貨ごとの対円レートを CRUD する。
     // 同一 (年月, 通貨) の重複 (旧 EXR-004) や入力検証は service 層が DomainException を投げ、
     // ApiExceptionMiddleware が 409/422 のエラー封筒へ変換する。
@@ -352,6 +413,32 @@ public static class MasterEndpoints
             var updated = await svc.UpdateAsync(id, e =>
             {
                 e.Code = req.Code; e.Name = req.Name; e.PlanningFee = req.PlanningFee;
+            }, auth.ActorId!.Value, ct);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
+        });
+    }
+
+    // 税率マスタ (Part5)。ProductGroup と同型 (数値フィールド 1 つ)。
+    private static void MapTaxRates(IEndpointRouteBuilder app)
+    {
+        var group = MapBase<TaxRate>(app, "tax-rates");
+        group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
+                                    MasterService<TaxRate> svc, TaxRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var entity = new TaxRate { Code = req.Code, Name = req.Name, Rate = req.Rate };
+            var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/tax-rates/{created.Id}", created);
+        });
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<TaxRate> svc, Guid id, TaxRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var updated = await svc.UpdateAsync(id, e =>
+            {
+                e.Code = req.Code; e.Name = req.Name; e.Rate = req.Rate;
             }, auth.ActorId!.Value, ct);
             return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });

@@ -22,10 +22,12 @@ public record SupplierWriteRequest(
     string Code,
     string Name,
     string? OfficialName,
-    string ItemConversionCode,
     Guid CountryId,
     short SupplierType,
     short AlertTarget,
     // 適用通貨 (§2f) / ドレー代 (§2i)。末尾追加 = 下位互換 (旧クライアントは既定 JPY / null)。
     string CurrencyCode = "JPY",
-    decimal? DrayageCost = null);
+    decimal? DrayageCost = null,
+    // 工場コード (item_conversion_code)。Part2 で工場マスタへ分離したため仕入先では入力しない (任意・既定 "")。
+    // UPDATE 時に空なら既存値を保持する (SupplierService、非破壊 = 原則2/7)。
+    string ItemConversionCode = "");

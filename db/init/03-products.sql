@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS product_families (
     product_type_id       UUID         NOT NULL REFERENCES product_types(id),
     product_season_id     UUID         NOT NULL REFERENCES product_seasons(id),
     sequence_no           VARCHAR(3)   NOT NULL,
-    factory_supplier_id   UUID         NOT NULL REFERENCES suppliers(id),
+    -- 工場 (Part2)。工場マスタ (factories) を参照。列名は互換のため factory_supplier_id を維持。
+    factory_supplier_id   UUID         NOT NULL REFERENCES factories(id),
     brand_id              UUID         NOT NULL REFERENCES brands(id),
     function_id           UUID         NULL     REFERENCES functions(id),
     product_group_id      UUID         NOT NULL REFERENCES product_groups(id),
@@ -218,7 +219,8 @@ BEGIN
     SELECT id INTO owner_id FROM users WHERE login_id = 'owner';
     SELECT id INTO type_id  FROM product_types WHERE code = '001';
     SELECT id INTO season_id FROM product_seasons WHERE code = '001';
-    SELECT id INTO factory_id FROM suppliers WHERE code = '336';
+    -- 工場 (Part2)。factory_supplier_id は工場マスタ (factories) を参照するため factories から解決する。
+    SELECT id INTO factory_id FROM factories WHERE code = '336';
     SELECT id INTO brand_id FROM brands WHERE code = '001';
     SELECT id INTO func_id  FROM functions WHERE code = '001';
     SELECT id INTO group_id FROM product_groups WHERE code = '001';

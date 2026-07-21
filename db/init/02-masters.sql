@@ -171,6 +171,35 @@ CREATE INDEX IF NOT EXISTS idx_suppliers_tenant ON suppliers (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_suppliers_legacy_id ON suppliers (legacy_id) WHERE legacy_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────
+-- §3.5b factories — 工場マスタ (Part2)。仕入先 (suppliers) から分離。
+--   仕入先=材料の仕入れ先 / 工場=製造 の別概念。品番7桁目の工場コード (item_conversion_code) 生成元。
+--   通貨・ドレー代は仕入先固有のため持たない。product_families / production_instructions の
+--   factory_supplier_id はこの表を参照する。既存 suppliers を複製してシードする (下の DO ブロック)。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS factories (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id             UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                  VARCHAR(3)   NOT NULL,
+    name                  VARCHAR(255) NOT NULL,
+    official_name         VARCHAR(255) NULL,
+    item_conversion_code  CHAR(1)      NOT NULL,
+    country_id            UUID         NOT NULL REFERENCES countries(id),
+    supplier_type         SMALLINT     NOT NULL,
+    alert_target          SMALLINT     NOT NULL DEFAULT 0,
+    deleted_at            TIMESTAMPTZ  NULL,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id    UUID         NOT NULL REFERENCES users(id),
+    legacy_id             VARCHAR(64)  NULL,
+    CONSTRAINT uq_factories_tenant_code UNIQUE (tenant_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_factories_country ON factories (country_id);
+CREATE INDEX IF NOT EXISTS idx_factories_active ON factories (deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_factories_tenant ON factories (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_factories_legacy_id ON factories (legacy_id) WHERE legacy_id IS NOT NULL;
+
+-- ─────────────────────────────────────────────────
 -- §3.6 departments — 事業部マスタ (拡張なし)
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS departments (
@@ -246,6 +275,25 @@ CREATE TABLE IF NOT EXISTS product_groups (
     CONSTRAINT uq_product_groups_tenant_code UNIQUE (tenant_id, code)
 );
 CREATE INDEX IF NOT EXISTS idx_product_groups_tenant ON product_groups (tenant_id);
+
+-- ─────────────────────────────────────────────────
+-- §3.9b tax_rates — 税率マスタ (Part5)。税区分ごとの税率(%)。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tax_rates (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
+    name                VARCHAR(255) NOT NULL,
+    rate                NUMERIC(5,2) NOT NULL DEFAULT 0,
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_tax_rates_tenant_code UNIQUE (tenant_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_tax_rates_tenant ON tax_rates (tenant_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.10 colors — 色マスタ
@@ -524,6 +572,13 @@ BEGIN
         ('999', 'その他',       0.00,    owner_id, owner_id)
     ON CONFLICT (tenant_id, code) DO NOTHING;
 
+    -- tax_rates (Part5)。標準税率 10% / 軽減税率 8% / 非課税 0%。
+    INSERT INTO tax_rates (code, name, rate, created_by_user_id, updated_by_user_id) VALUES
+        ('010', '標準税率', 10.00, owner_id, owner_id),
+        ('008', '軽減税率', 8.00,  owner_id, owner_id),
+        ('000', '非課税',   0.00,  owner_id, owner_id)
+    ON CONFLICT (tenant_id, code) DO NOTHING;
+
     -- colors
     INSERT INTO colors (code, name, item_conversion_code, created_by_user_id, updated_by_user_id) VALUES
         ('030', 'ブルー',  '30', owner_id, owner_id),
@@ -559,6 +614,18 @@ BEGIN
         ('336', 'デパーチャーズ',         'DEPARTURES',     'A', jp_id, 0, owner_id, owner_id),
         ('404', '安徽拓馳鞋業有限公司',     'AN-HUI TUO-CHI', 'B', cn_id, 1, owner_id, owner_id),
         ('437', '南通本州貿易有限公司',     'NAN-TONG HONSHU','C', cn_id, 1, owner_id, owner_id)
+    ON CONFLICT (tenant_id, code) DO NOTHING;
+
+    -- factories (Part2): 既存 suppliers を「同一 id」で複製して工場マスタをシードする (非破壊分離)。
+    -- product_families / production_instructions の factory_supplier_id は suppliers.id と同値の
+    -- factories.id を参照するため、id を明示コピーして FK 整合を保つ。通貨・ドレー代は工場に持たない。
+    INSERT INTO factories (id, tenant_id, code, name, official_name, item_conversion_code,
+                           country_id, supplier_type, alert_target, deleted_at,
+                           created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id)
+        SELECT id, tenant_id, code, name, official_name, item_conversion_code,
+               country_id, supplier_type, alert_target, deleted_at,
+               created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id
+        FROM suppliers
     ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- delivery_destinations (Phase 6 サンプル準拠)

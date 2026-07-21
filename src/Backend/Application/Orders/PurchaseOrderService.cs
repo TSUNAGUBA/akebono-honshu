@@ -221,7 +221,8 @@ public class PurchaseOrderService(IAkebonoDbContext db, IAuditLogger audit, ITen
             // 発注状態 4 値モデル (§3b): 発注削除 導出フィールド + フィルタ用フィールド (DeliveredAt は未使用列)
             x.Order.DeliveredAt,
             x.Order.DeletedAt != null,
-            x.Order.SupplierId,
+            // 一覧 SPLIT フィルタ用。発注先なし (国内、null) は Guid.Empty で表す (未設定扱い)。
+            x.Order.SupplierId ?? Guid.Empty,
             x.Order.OrdererUserId,
             // 得意先: 発注時凍結スナップショット優先、未設定時は納品先マスタの取引先名で補完
             x.Order.CustomerNameSnapshot ?? x.Order.DeliveryDestination?.CustomerName,

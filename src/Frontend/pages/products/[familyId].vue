@@ -8,7 +8,7 @@ const route = useRoute()
 const familyId = computed(() => String(route.params.familyId))
 const { user, canEditMaster } = useAuth()
 // 操作導線（次アクション）の権限: 生産指示・発注書の作成は発注書作成権限が必要。
-const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 const {
   getFamily, updateFamily, deleteFamily,
   addSupplierPrice, uploadImage, deleteImage,
@@ -439,9 +439,8 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
           <div><span class="text-gray-500">ブランド費:</span> {{ detail.family.brandCost != null ? detail.family.brandCost.toLocaleString() : '—' }}</div>
           <div><span class="text-gray-500">版権対象:</span> {{ royaltyTargetLabel(detail.family.royaltyTarget) }}</div>
           <div><span class="text-gray-500">版権料率:</span> {{ detail.family.royaltyRate != null ? `${detail.family.royaltyRate}%` : '—' }}</div>
-          <!-- 備考 / 備考（色）(旧 品番台帳 項目 追補 PR1、未設定は —)。長文のため横幅をまたぐ。 -->
+          <!-- 備考 (旧 品番台帳 項目 追補 PR1、未設定は —)。長文のため横幅をまたぐ。備考（色）は Part3 で除外。 -->
           <div class="col-span-2 sm:col-span-3 lg:col-span-4"><span class="text-gray-500">備考:</span> <span class="whitespace-pre-wrap">{{ detail.family.remark ?? '—' }}</span></div>
-          <div class="col-span-2 sm:col-span-3 lg:col-span-4"><span class="text-gray-500">備考（色）:</span> <span class="whitespace-pre-wrap">{{ detail.family.colorRemark ?? '—' }}</span></div>
         </div>
 
         <!-- 登録/更新 情報 (旧 spec No.27/28、PR1)。編集不可の表示のみ。 -->
@@ -536,14 +535,10 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <span class="font-medium">商品名 2</span>
             <input v-model="editForm.productName2" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
           </label>
-          <!-- 備考 / 備考（色）(旧 品番台帳 項目 追補 PR1、任意) -->
+          <!-- 備考 (旧 品番台帳 項目 追補 PR1、任意)。備考（色）は Part3 で除外 (既存値は保持)。 -->
           <label class="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
             <span class="font-medium">備考</span>
             <textarea v-model="editForm.remark" rows="2" maxlength="2000" placeholder="商品本体に関する備考 (任意)" class="rounded-md border border-gray-300 px-2.5 py-1.5"></textarea>
-          </label>
-          <label class="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
-            <span class="font-medium">備考（色）</span>
-            <textarea v-model="editForm.colorRemark" rows="2" maxlength="2000" placeholder="色に関する備考 (商品全体で 1 つ、任意)" class="rounded-md border border-gray-300 px-2.5 py-1.5"></textarea>
           </label>
           <div class="flex justify-end gap-2 pt-2 sm:col-span-2 lg:col-span-3">
             <button type="button" class="rounded-md border border-gray-300 bg-white px-4 py-1.5 hover:bg-gray-50" @click="onCancelEdit">キャンセル</button>
@@ -684,7 +679,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <MasterSelect :model-value="priceForm.sizeId" :items="sizes" allow-empty empty-label="全サイズ共通" placeholder="サイズを検索…" @update:model-value="(v) => priceForm.sizeId = v" />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="font-medium">単価</span>
+            <span class="font-medium">仕入単価</span>
             <div class="flex gap-1">
               <input v-model.number="priceForm.unitPrice" type="number" step="0.01" min="0.01"
                      class="flex-1 rounded-md border border-gray-300 px-2 py-1.5" />
@@ -702,7 +697,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <input v-model="priceForm.effectiveFrom" type="date" class="rounded-md border border-gray-300 px-2 py-1.5" />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="font-medium">決定日</span>
+            <span class="font-medium">仕入単価決定日</span>
             <input v-model="priceForm.decidedAt" type="date" class="rounded-md border border-gray-300 px-2 py-1.5" />
           </label>
 
@@ -759,13 +754,13 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
             <tr>
               <th class="px-2 py-1.5 text-left">仕入先</th>
               <th class="px-2 py-1.5 text-left">サイズ</th>
-              <th class="px-2 py-1.5 text-right">単価</th>
+              <th class="px-2 py-1.5 text-right">仕入単価</th>
               <th class="px-2 py-1.5 text-right">為替レート</th>
               <th class="px-2 py-1.5 text-right">見積単価</th>
               <th class="px-2 py-1.5 text-right">仕入原価</th>
               <th class="px-2 py-1.5 text-right">税率</th>
               <th class="px-2 py-1.5 text-left">有効開始</th>
-              <th class="px-2 py-1.5 text-left">決定日</th>
+              <th class="px-2 py-1.5 text-left">仕入単価決定日</th>
             </tr>
           </thead>
           <tbody>

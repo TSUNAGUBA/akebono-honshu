@@ -30,6 +30,10 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
     public DbSet<Function> Functions => Set<Function>();
     public DbSet<Country> Countries => Set<Country>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
+    // 工場マスタ (Part2)。仕入先 (Suppliers) から分離。品番7桁目の工場コード生成元。
+    public DbSet<Factory> Factories => Set<Factory>();
+    // 税率マスタ (Part5)。
+    public DbSet<TaxRate> TaxRates => Set<TaxRate>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<ProductType> ProductTypes => Set<ProductType>();
     public DbSet<ProductSeason> ProductSeasons => Set<ProductSeason>();
@@ -155,6 +159,16 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.DrayageCost).HasColumnName("drayage_cost").HasColumnType("numeric(12,2)");
             b.HasOne(x => x.Country).WithMany().HasForeignKey(x => x.CountryId);
         });
+        // 工場マスタ (Part2)。仕入先 (suppliers) から分離。通貨・ドレー代は持たない (仕入先固有)。
+        ConfigureMaster<Factory>(modelBuilder, "factories", b =>
+        {
+            b.Property(x => x.OfficialName).HasColumnName("official_name").HasMaxLength(255);
+            b.Property(x => x.ItemConversionCode).HasColumnName("item_conversion_code").IsRequired().HasMaxLength(1).IsFixedLength();
+            b.Property(x => x.CountryId).HasColumnName("country_id");
+            b.Property(x => x.SupplierType).HasColumnName("supplier_type");
+            b.Property(x => x.AlertTarget).HasColumnName("alert_target");
+            b.HasOne(x => x.Country).WithMany().HasForeignKey(x => x.CountryId);
+        });
         ConfigureMaster<Department>(modelBuilder, "departments");
         ConfigureMaster<ProductType>(modelBuilder, "product_types", b =>
         {
@@ -169,6 +183,11 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
         ConfigureMaster<ProductGroup>(modelBuilder, "product_groups", b =>
         {
             b.Property(x => x.PlanningFee).HasColumnName("planning_fee").HasColumnType("numeric(12,2)");
+        });
+        // 税率マスタ (Part5)。税率(%) を numeric(5,2) で保持。
+        ConfigureMaster<TaxRate>(modelBuilder, "tax_rates", b =>
+        {
+            b.Property(x => x.Rate).HasColumnName("rate").HasColumnType("numeric(5,2)");
         });
         ConfigureMaster<Color>(modelBuilder, "colors", b =>
         {

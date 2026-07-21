@@ -1,0 +1,26 @@
+-- ════════════════════════════════════════════════════════════════════
+-- Iteration 25: 発注書 発注先 (supplier_id) を NULL 許容へ (Part6 発注区分 表示制御)
+-- ════════════════════════════════════════════════════════════════════
+-- 背景 (なぜ必要か):
+--   新規発注書 (/orders/new) の発注区分を「海外」既定にし、発注区分=海外のときのみ以下を入力する:
+--     発注先 / 荷揚地 / 工場出荷日 / 納品所出荷日 / 海外出港日。
+--   国内発注では「発注先」を入力しない (画面で非表示) ため、purchase_orders.supplier_id を NULL 許容へ
+--   変更する。荷揚地・各出荷日は元々 NULL 許容のため列変更は supplier_id のみ。
+--
+--   これは db/init/04-orders.sql の CREATE TABLE に反映済だが、db/init/*.sql は「空 DB の初期化」でのみ
+--   適用されるため、既に init 済の本番 RDS には本マイグレーション (action=migrate) で ALTER TABLE により
+--   追加適用する。
+--
+-- 下位互換 (CLAUDE.md 原則 7):
+--   NOT NULL 制約を外すだけ = 既存データ非破壊。既存発注は全て supplier_id 非 NULL のまま。
+--   FK (REFERENCES suppliers(id)) は維持し、NULL は FK 検証対象外 (PostgreSQL の MATCH SIMPLE 既定)。
+--
+-- 冪等性 (CLAUDE.md 原則 2):
+--   DROP NOT NULL は既に NULL 許容でも成功する (再実行安全)。
+--
+-- 適用方法 (自動・推奨):
+--   GitHub Actions「DB Init / Migrate (RDS)」を action=migrate で実行する。run-migrations.sh が
+--   schema_migrations 台帳で二重適用を防止する (前進専用)。
+-- ════════════════════════════════════════════════════════════════════
+
+ALTER TABLE purchase_orders ALTER COLUMN supplier_id DROP NOT NULL;

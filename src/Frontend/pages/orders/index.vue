@@ -8,7 +8,7 @@ const { list: listMaster } = useMasters()
 const { apiData } = useApi()
 const { user } = useAuth()
 
-const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 
 const items = ref<OrderListItem[]>([])
 const loading = ref(true)

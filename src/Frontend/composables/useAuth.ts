@@ -178,7 +178,8 @@ export const useAuth = () => {
     }
   }
 
-  const canEditMaster = computed(() => (auth.value?.productLedgerPermission ?? 0) >= 1)
+  // 書込 (マスタ編集) は「更新可能 (==1)」のみ。参照のみ (2/3) は編集不可 (バックエンドと一致)。
+  const canEditMaster = computed(() => (auth.value?.productLedgerPermission ?? 0) === 1)
 
   return {
     user: auth,

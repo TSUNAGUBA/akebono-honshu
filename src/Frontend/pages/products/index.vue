@@ -17,7 +17,8 @@ const view = ref<'table' | 'card'>('table')
 // --- フィルタ用マスタ参照 (商品タイプ / 商品季節 / 仕入先=工場 / ブランド / 企画者) ---
 const productTypes = ref<MasterItem[]>([])
 const productSeasons = ref<MasterItem[]>([])
-const suppliers = ref<MasterItem[]>([])
+// 工場 (Part2)。一覧の「工場」絞込は工場マスタを参照する (旧: 仕入先兼用)。
+const factories = ref<MasterItem[]>([])
 const brands = ref<MasterItem[]>([])
 interface UserOption { id: string; loginId: string; displayName: string }
 const users = ref<UserOption[]>([])
@@ -135,16 +136,16 @@ const loadMore = async () => {
 // 失敗しても一覧本体 (reload) は表示する (原則 4 非ブロッキング)。
 const loadFilterSources = async () => {
   try {
-    const [pt, ps, sup, br, usr] = await Promise.all([
+    const [pt, ps, fac, br, usr] = await Promise.all([
       listMaster('product-types'),
       listMaster('product-seasons'),
-      listMaster('suppliers'),
+      listMaster('factories'),
       listMaster('brands'),
       apiData<UserOption[]>('/users'),
     ])
     productTypes.value = pt
     productSeasons.value = ps
-    suppliers.value = sup
+    factories.value = fac
     brands.value = br
     users.value = usr
   } catch (e) {
@@ -171,7 +172,7 @@ const filtered = computed(() => {
   const nameQ = f.productName.trim()
   const provQ = f.provisionalNumber.trim()
   return items.value.filter((i) => {
-    // 品番 (企画コード) は品番 / 他品番 / 旧品番 のいずれかに部分一致 (商品名と同じ複数フィールド OR)。
+    // 品番 (商品コード) は品番 / 他品番 / 旧品番 のいずれかに部分一致 (商品名と同じ複数フィールド OR)。
     if (itemQ !== '' && !(inc(i.itemNumber, itemQ) || inc(i.itemFamilyNumber, itemQ) || inc(i.legacyId, itemQ))) return false
     if (yearQ !== '' && !inc(i.productYear != null ? String(i.productYear) : '', yearQ)) return false
     if (f.productTypeId != null && i.productTypeId !== f.productTypeId) return false
@@ -295,10 +296,10 @@ const formatPriceRange = (min: number | null, max: number | null, currency: stri
           />
         </label>
         <label class="flex flex-col gap-1">
-          <span class="font-medium">仕入先</span>
+          <span class="font-medium">工場</span>
           <MasterSelect
             v-model="filters.factorySupplierId"
-            :items="suppliers"
+            :items="factories"
             allow-empty
             empty-label="（すべて）"
             placeholder="（すべて）"

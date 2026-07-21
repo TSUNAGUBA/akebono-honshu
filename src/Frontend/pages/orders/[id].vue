@@ -6,7 +6,7 @@ const route = useRoute()
 // 第二段階契約: 発注 id は uuid 文字列。数値変換せず文字列のまま使う。
 const id = computed(() => String(route.params.id))
 const { user } = useAuth()
-const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) >= 1)
+const canEditOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
 
 const { get, update, cancel, markOrdered, unmarkOrdered, softDelete, exportOrder, communicationSuggestions } = useOrders()
 
@@ -589,7 +589,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
           >{{ detail.isOverseas ? '海外' : '国内' }}</span>
         </div>
         <div class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div><span class="text-gray-500">発注先:</span> {{ detail.supplierCode }} {{ detail.supplierName }}</div>
+          <!-- 発注先 (仕入先マスタ)。Part6: 国内発注は発注先なし (null) → 「—」表示。 -->
+          <div><span class="text-gray-500">発注先:</span> {{ detail.supplierId ? `${detail.supplierCode} ${detail.supplierName}` : '—' }}</div>
           <div><span class="text-gray-500">納品先:</span> {{ detail.deliveryDestinationName }}</div>
           <div><span class="text-gray-500">発注事業部:</span> {{ detail.departmentName }}</div>
           <div><span class="text-gray-500">納入倉庫1:</span> {{ detail.warehouseName }}</div>
@@ -609,7 +610,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
             <div><span class="text-gray-500">荷揚地:</span> {{ detail.landingPlace || '—' }}</div>
             <div><span class="text-gray-500">得意先:</span> {{ detail.customerRef || '—' }}</div>
             <div><span class="text-gray-500">工場出荷日:</span> {{ detail.factoryShippingDate || '—' }}</div>
-            <div><span class="text-gray-500">検品場出荷日:</span> {{ detail.deliveryPlaceShippingDate || '—' }}</div>
+            <div><span class="text-gray-500">納品所出荷日:</span> {{ detail.deliveryPlaceShippingDate || '—' }}</div>
             <div><span class="text-gray-500">海外出港日:</span> {{ detail.overseasDepartureDate || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫2:</span> {{ detail.warehouse2Name || '—' }}</div>
             <div><span class="text-gray-500">納入倉庫3:</span> {{ detail.warehouse3Name || '—' }}</div>
@@ -810,7 +811,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
                 <input v-model="editHeader.factoryShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">
-                <span class="font-medium">検品場出荷日</span>
+                <span class="font-medium">納品所出荷日</span>
                 <input v-model="editHeader.deliveryPlaceShippingDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
               </label>
               <label class="flex flex-col gap-1">

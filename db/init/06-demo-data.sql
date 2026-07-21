@@ -97,6 +97,18 @@ BEGIN
         ('405', '寧波生地廠',        'NINGBO TEXTILE','E', cn_id, 2, owner_id, owner_id)
     ON CONFLICT (tenant_id, code) DO NOTHING;
 
+    -- factories (Part2): デモで追加した suppliers も同一 id で factories へ複製 (工場コードで参照するため)。
+    -- 02-masters のシード分は ON CONFLICT でスキップ。以降 product_families / production_instructions は
+    -- factories を工場マスタとして参照する。
+    INSERT INTO factories (id, tenant_id, code, name, official_name, item_conversion_code,
+                           country_id, supplier_type, alert_target, deleted_at,
+                           created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id)
+        SELECT id, tenant_id, code, name, official_name, item_conversion_code,
+               country_id, supplier_type, alert_target, deleted_at,
+               created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id
+        FROM suppliers
+    ON CONFLICT (tenant_id, code) DO NOTHING;
+
     -- 連絡文章 (発注書用) 追加
     INSERT INTO document_text_purchases (code, name, body, standard_print_flag, created_by_user_id, updated_by_user_id) VALUES
         ('003', '副資材手配', '値札・証紙等の副資材は発注数×5%にて手配しています。', FALSE, owner_id, owner_id)
@@ -134,7 +146,8 @@ BEGIN
     SELECT id INTO v_owner FROM users WHERE login_id = 'owner';
     SELECT id, item_conversion_code INTO v_type_id, v_type_conv     FROM product_types   WHERE code = p_type_code;
     SELECT id, item_conversion_code INTO v_season_id, v_season_conv  FROM product_seasons WHERE code = p_season_code;
-    SELECT id, item_conversion_code INTO v_factory_id, v_factory_conv FROM suppliers      WHERE code = p_factory_code;
+    -- 工場 (Part2)。factory_supplier_id は factories を参照するため factories から解決する。
+    SELECT id, item_conversion_code INTO v_factory_id, v_factory_conv FROM factories      WHERE code = p_factory_code;
     SELECT id INTO v_brand_id FROM brands         WHERE code = p_brand_code;
     IF p_func_code IS NOT NULL THEN SELECT id INTO v_func_id FROM functions WHERE code = p_func_code; END IF;
     SELECT id INTO v_group_id FROM product_groups WHERE code = p_group_code;
@@ -285,7 +298,8 @@ DECLARE
 BEGIN
     SELECT id INTO v_owner FROM users WHERE login_id = 'owner';
     SELECT id, product_name_1 INTO v_fam, v_name FROM product_families WHERE product_name_1 = p_family AND deleted_at IS NULL ORDER BY id LIMIT 1;
-    SELECT id, official_name, item_conversion_code INTO v_fac, v_fac_name, v_fac_code FROM suppliers WHERE code = p_factory;
+    -- 工場 (Part2)。production_instructions.factory_supplier_id は factories を参照。
+    SELECT id, official_name, item_conversion_code INTO v_fac, v_fac_name, v_fac_code FROM factories WHERE code = p_factory;
     IF v_fam IS NULL THEN RAISE NOTICE 'seed_pi: family % not found, skipped', p_family; RETURN; END IF;
 
     SELECT count(*) INTO v_cnt FROM products WHERE product_family_id = v_fam AND deleted_at IS NULL;

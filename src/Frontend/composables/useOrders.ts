@@ -89,7 +89,8 @@ export interface OrderDetail {
   status: number
   cancelledAt: string | null
   cancelReason: string | null
-  supplierId: string
+  // 発注先 (仕入先マスタ)。Part6: 国内発注では null (発注先なし)。
+  supplierId: string | null
   supplierCode: string
   supplierName: string
   supplierOfficialNameSnapshot: string | null
@@ -149,7 +150,8 @@ export interface CreateOrderPayload {
   // 発注書番号 (§5)。作成時に手入力可能 (任意)。空欄 (null) は初回 Excel 出力時に自動採番される。
   // 編集 (UpdateOrderPayload) では送らないため optional。
   orderNo?: string | null
-  supplierId: string
+  // 発注先 (仕入先マスタ)。Part6: 海外のみ必須。国内は null (発注先=任意) を送る。
+  supplierId: string | null
   deliveryDestinationId: string
   departmentId: string
   warehouseId: string

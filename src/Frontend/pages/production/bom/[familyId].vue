@@ -11,7 +11,7 @@ const { getBom, replaceBom } = useProduction()
 const { getFamily } = useProducts()
 const { list } = useMasters()
 const { user } = useAuth()
-const canEdit = computed(() => (user.value?.productLedgerPermission ?? 0) >= 1)
+const canEdit = computed(() => (user.value?.productLedgerPermission ?? 0) === 1)
 
 const ROLES = [0, 1, 2, 3, 4]
 const UNITS = ['組', '足', '枚', '個', 'm', '㎡', 'cm', '本']
