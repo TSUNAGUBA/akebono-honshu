@@ -494,7 +494,7 @@ const onSubmit = async () => {
             </label>
           </div>
 
-          <!-- 日付: 取引先納入日 / 工場出荷日 / 検品場出荷日 / 海外出港日 -->
+          <!-- 日付: 取引先納入日 / 工場出荷日 / 納品所出荷日 / 海外出港日 (工場出荷日以降は Part6: 海外のみ) -->
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="font-medium">取引先納入日 <span class="text-red-500">*</span></span>
