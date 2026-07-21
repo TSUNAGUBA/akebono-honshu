@@ -277,6 +277,25 @@ CREATE TABLE IF NOT EXISTS product_groups (
 CREATE INDEX IF NOT EXISTS idx_product_groups_tenant ON product_groups (tenant_id);
 
 -- ─────────────────────────────────────────────────
+-- §3.9b tax_rates — 税率マスタ (Part5)。税区分ごとの税率(%)。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tax_rates (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID         NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                VARCHAR(3)   NOT NULL,
+    name                VARCHAR(255) NOT NULL,
+    rate                NUMERIC(5,2) NOT NULL DEFAULT 0,
+    deleted_at          TIMESTAMPTZ  NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_user_id  UUID         NOT NULL REFERENCES users(id),
+    legacy_id           VARCHAR(64)  NULL,
+    CONSTRAINT uq_tax_rates_tenant_code UNIQUE (tenant_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_tax_rates_tenant ON tax_rates (tenant_id);
+
+-- ─────────────────────────────────────────────────
 -- §3.10 colors — 色マスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS colors (
@@ -551,6 +570,13 @@ BEGIN
         ('004', '第2他商品',   0.00,    owner_id, owner_id),
         ('005', '第1バーゲン', 0.00,    owner_id, owner_id),
         ('999', 'その他',       0.00,    owner_id, owner_id)
+    ON CONFLICT (tenant_id, code) DO NOTHING;
+
+    -- tax_rates (Part5)。標準税率 10% / 軽減税率 8% / 非課税 0%。
+    INSERT INTO tax_rates (code, name, rate, created_by_user_id, updated_by_user_id) VALUES
+        ('010', '標準税率', 10.00, owner_id, owner_id),
+        ('008', '軽減税率', 8.00,  owner_id, owner_id),
+        ('000', '非課税',   0.00,  owner_id, owner_id)
     ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- colors

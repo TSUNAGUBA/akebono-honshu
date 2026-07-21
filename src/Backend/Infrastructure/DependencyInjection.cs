@@ -60,6 +60,8 @@ public static class DependencyInjection
         services.AddScoped<MasterService<ProductType>>();
         services.AddScoped<MasterService<ProductSeason>>();
         services.AddScoped<MasterService<ProductGroup>>();
+        // 税率マスタ (Part5)。
+        services.AddScoped<MasterService<TaxRate>>();
         services.AddScoped<MasterService<Color>>();
         services.AddScoped<MasterService<Material>>();
         services.AddScoped<MasterService<DeliveryDestination>>();

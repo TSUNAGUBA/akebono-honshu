@@ -155,6 +155,30 @@ public static class AuthEndpoints
 
         return new(userId, null);
     }
+
+    /// <summary>
+    /// 利用者マスタ管理 (Part5、利用者の作成/更新/権限変更/論理削除) に必要な権限チェック。
+    /// オーナー権限 (process_record_permission >= 1) を要求する (利用者・権限の管理は最上位権限に限定)。
+    /// </summary>
+    internal static async Task<MasterEditAuth> CheckUserAdminAsync(
+        HttpContext http,
+        IAkebonoDbContext db,
+        CancellationToken ct)
+    {
+        if (!TryGetUserId(http, out var userId))
+            return new(null, UnauthorizedError(http));
+
+        var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (actor is null || !actor.IsActive || actor.DeletedAt != null)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                "ユーザが無効化されています"));
+
+        if (actor.ProcessRecordPermission < 1)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                "この操作には利用者管理権限 (オーナー) が必要です"));
+
+        return new(userId, null);
+    }
 }
 
 internal sealed record MasterEditAuth(Guid? ActorId, IResult? ErrorResult);

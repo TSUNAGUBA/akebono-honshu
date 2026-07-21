@@ -153,6 +153,15 @@ export const masterDefinitions: MasterDef[] = [
     extensionColumns: [{ key: 'planningFee', label: '企画費' }],
   },
   {
+    slug: 'tax-rates',
+    label: '税率',
+    description: '税率マスタ (Part5)。税区分ごとの税率(%)。',
+    extensionFields: [
+      { key: 'rate', label: '税率 (%)', type: 'decimal', required: true, help: '例: 10.00 = 10%' },
+    ],
+    extensionColumns: [{ key: 'rate', label: '税率(%)' }],
+  },
+  {
     slug: 'colors',
     label: '色',
     extensionFields: [

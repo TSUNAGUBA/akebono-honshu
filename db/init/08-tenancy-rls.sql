@@ -87,9 +87,9 @@ DECLARE
     t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY[
-        -- 02-masters (20)
+        -- 02-masters (21)
         'sizes', 'brands', 'functions', 'countries', 'currencies', 'suppliers',
-        'factories',
+        'factories', 'tax_rates',
         'departments', 'product_types', 'product_seasons', 'product_groups',
         'colors', 'material_classifications', 'materials', 'warehouses',
         'delivery_destinations', 'document_template_purchases',

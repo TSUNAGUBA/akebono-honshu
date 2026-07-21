@@ -32,6 +32,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     // 工場マスタ (Part2)。仕入先 (Suppliers) から分離。品番7桁目の工場コード生成元。
     public DbSet<Factory> Factories => Set<Factory>();
+    // 税率マスタ (Part5)。
+    public DbSet<TaxRate> TaxRates => Set<TaxRate>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<ProductType> ProductTypes => Set<ProductType>();
     public DbSet<ProductSeason> ProductSeasons => Set<ProductSeason>();
@@ -181,6 +183,11 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
         ConfigureMaster<ProductGroup>(modelBuilder, "product_groups", b =>
         {
             b.Property(x => x.PlanningFee).HasColumnName("planning_fee").HasColumnType("numeric(12,2)");
+        });
+        // 税率マスタ (Part5)。税率(%) を numeric(5,2) で保持。
+        ConfigureMaster<TaxRate>(modelBuilder, "tax_rates", b =>
+        {
+            b.Property(x => x.Rate).HasColumnName("rate").HasColumnType("numeric(5,2)");
         });
         ConfigureMaster<Color>(modelBuilder, "colors", b =>
         {

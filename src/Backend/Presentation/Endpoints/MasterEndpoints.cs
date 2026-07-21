@@ -31,6 +31,7 @@ public static class MasterEndpoints
         MapProductTypes(app);
         MapProductSeasons(app);
         MapProductGroups(app);
+        MapTaxRates(app);
         MapColors(app);
         MapMaterials(app);
         MapDeliveryDestinations(app);
@@ -46,6 +47,7 @@ public static class MasterEndpoints
     private record ProductTypeWriteRequest(string Code, string Name, string ItemConversionCode, string SizeDemographicCode);
     private record ProductSeasonWriteRequest(string Code, string Name, string ItemConversionCode, string? ConversionOrder);
     private record ProductGroupWriteRequest(string Code, string Name, decimal PlanningFee);
+    private record TaxRateWriteRequest(string Code, string Name, decimal Rate);
     private record ColorWriteRequest(string Code, string Name, string ItemConversionCode);
     private record MaterialWriteRequest(string Code, string Name, Guid MaterialClassificationId);
     private record DeliveryDestinationWriteRequest(
@@ -411,6 +413,32 @@ public static class MasterEndpoints
             var updated = await svc.UpdateAsync(id, e =>
             {
                 e.Code = req.Code; e.Name = req.Name; e.PlanningFee = req.PlanningFee;
+            }, auth.ActorId!.Value, ct);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
+        });
+    }
+
+    // 税率マスタ (Part5)。ProductGroup と同型 (数値フィールド 1 つ)。
+    private static void MapTaxRates(IEndpointRouteBuilder app)
+    {
+        var group = MapBase<TaxRate>(app, "tax-rates");
+        group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
+                                    MasterService<TaxRate> svc, TaxRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var entity = new TaxRate { Code = req.Code, Name = req.Name, Rate = req.Rate };
+            var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/tax-rates/{created.Id}", created);
+        });
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<TaxRate> svc, Guid id, TaxRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var updated = await svc.UpdateAsync(id, e =>
+            {
+                e.Code = req.Code; e.Name = req.Name; e.Rate = req.Rate;
             }, auth.ActorId!.Value, ct);
             return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
