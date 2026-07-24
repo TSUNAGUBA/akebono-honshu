@@ -124,7 +124,7 @@ const formatCell = (value: unknown): string => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
     <div v-if="!def" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
       マスタが見つかりません: <code>{{ slug }}</code>
       <div class="mt-2">

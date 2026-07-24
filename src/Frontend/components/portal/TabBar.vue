@@ -13,12 +13,12 @@ const route = useRoute()
 
 <template>
   <div class="border-b border-gray-200 bg-white">
-    <div class="mx-auto flex max-w-screen-2xl items-center gap-1 overflow-x-auto px-4">
+    <div class="mx-auto flex max-w-screen-2xl items-center gap-1 overflow-x-auto px-3">
       <NuxtLink
         v-for="link in section.links"
         :key="link.path"
         :to="link.path"
-        class="flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium no-underline transition"
+        class="flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium no-underline transition"
         :class="isLinkActive(link, route.path)
           ? 'border-blue-600 text-blue-700'
           : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-800'"

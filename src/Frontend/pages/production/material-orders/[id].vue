@@ -35,7 +35,7 @@ const onExcel = () => run(() => moDownloadExcel(id.value, detail.value?.orderNo 
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-4">
+  <main class="mx-auto max-w-7xl px-3 py-3">
     <div v-if="errorMessage" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ errorMessage }}</div>
     <div v-if="successMessage" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{{ successMessage }}</div>
     <section v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500 shadow-sm">読み込み中…</section>

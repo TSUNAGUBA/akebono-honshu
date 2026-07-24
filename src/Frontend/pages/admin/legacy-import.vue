@@ -83,8 +83,8 @@ const execute = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-4xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-4xl px-3 py-3">
+    <header class="mb-3">
       <h1 class="text-2xl font-bold">MIG-3 既存データ移行</h1>
       <p class="mt-1 text-sm text-gray-500">
         旧生産管理システムの商品マスタ CSV (1,288 行 × 138 列) を新システム DB に取込みます。

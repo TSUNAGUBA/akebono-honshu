@@ -22,6 +22,12 @@ public class ExchangeRate : ITenantScoped
     /// <summary>対円レート (1 通貨単位 = Rate 円)。例: USD=150.00, CNY=21.50</summary>
     public decimal Rate { get; set; }
 
+    /// <summary>
+    /// 税率(%) (Part5)。仕入税率を通貨(=調達国)×年月ごとに保持する。NULL = 未設定。
+    /// 商品⑤仕入単価では、選択した仕入先の適用通貨と登録時点の年月でこの税率を自動反映する。
+    /// </summary>
+    public decimal? TaxRate { get; set; }
+
     public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public Guid CreatedByUserId { get; set; }

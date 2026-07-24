@@ -72,8 +72,8 @@ const save = async (s: SupplierRow) => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-lg px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-screen-lg px-3 py-3">
+    <header class="mb-3">
       <div class="text-xs text-gray-500">
         <NuxtLink to="/masters" class="hover:underline">マスタ一覧</NuxtLink>
         <span class="mx-1">/</span>

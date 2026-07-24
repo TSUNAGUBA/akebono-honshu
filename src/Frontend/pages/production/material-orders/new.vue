@@ -82,8 +82,8 @@ const createGroup = async (gi: number) => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
+    <header class="mb-3">
       <h1 class="text-2xl font-bold">素材発注書 新規作成</h1>
       <p class="mt-1 text-sm text-gray-500">MO-01 BOM×生産数量で所要量を展開し、素材仕入先ごとに発注書を作成します。</p>
     </header>
@@ -99,7 +99,7 @@ const createGroup = async (gi: number) => {
 
     <template v-else-if="req">
       <p class="mb-4 text-sm text-gray-600">生産数量: <strong>{{ req.totalQuantity.toLocaleString() }}</strong> / 推奨仕入先ごとに {{ groups.length }} 件の発注書候補</p>
-      <section v-for="(g, gi) in groups" :key="gi" class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+      <section v-for="(g, gi) in groups" :key="gi" class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
         <div class="mb-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-3">
           <label class="block text-sm">
             <span class="text-gray-600">素材仕入先</span>

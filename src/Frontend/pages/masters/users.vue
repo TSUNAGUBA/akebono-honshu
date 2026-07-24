@@ -157,8 +157,8 @@ const remove = async (u: UserItem) => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
+    <header class="mb-3">
       <div class="text-xs text-gray-500">
         <NuxtLink to="/masters" class="hover:underline">マスタ一覧</NuxtLink>
         <span class="mx-1">/</span>
@@ -185,8 +185,8 @@ const remove = async (u: UserItem) => {
     <div v-if="successMessage" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{{ successMessage }}</div>
 
     <!-- 作成/編集フォーム -->
-    <section v-if="showForm && canManageUsers" class="mb-4 rounded-lg border border-blue-200 bg-white p-4 shadow-sm">
-      <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">{{ isEditing ? '利用者を編集' : '利用者を追加' }}</h2>
+    <section v-if="showForm && canManageUsers" class="mb-4 rounded-lg border border-blue-200 bg-white p-2.5 shadow-sm">
+      <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">{{ isEditing ? '利用者を編集' : '利用者を追加' }}</h2>
       <form class="space-y-3" @submit.prevent="submit">
         <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
           <label class="flex flex-col gap-1">

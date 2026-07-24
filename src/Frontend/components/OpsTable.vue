@@ -28,9 +28,9 @@ const badgeClass = (s: string): string => {
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-screen-2xl px-4 py-4">
+  <main class="mx-auto w-full max-w-screen-2xl px-3 py-3">
     <div v-if="ds">
-      <div class="mb-4">
+      <div class="mb-3">
         <h1 class="text-xl font-bold text-gray-800">{{ ds.title }}</h1>
         <p class="mt-1 text-sm text-gray-500">{{ ds.note }}</p>
       </div>

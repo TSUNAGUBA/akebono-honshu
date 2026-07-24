@@ -452,6 +452,8 @@ COMMENT ON COLUMN exchange_rates.quote_currency_code IS '相手通貨コード�
 
 > **通貨所有の是正:** 継承実装が持っていた `currencies` テーブル（ISO 4217 通貨マスタ）は、ブリーフ §14 の所有マップにより通貨（`currency`）・単位（`uom`）が [34 MDM/Canonical](./34-mdm-canonical-schema.md) の所有エンティティであるため、本ドキュメントでは**所有を主張せず削除**した。`exchange_rates` はメーカー固有の為替履歴として残すが、通貨識別は §9 の inline `currency_code`（ISO 4217）で表し、通貨の正準定義（表示名・小数桁・記号等）は 34 の canonical `currency` を論理参照する（物理 FK・越境参照は張らない）。トランザクション各表も従来どおり inline `currency_code CHAR(3) DEFAULT 'JPY'` を用い、`currencies` への FK は存在しない。
 
+> **実装ノート（スキーマ SoT は `db/init`）:** 本節は設計ビジョン記述であり、実装済みスキーマの SoT は `db/init/02-masters.sql`（+ `db/migration/iter*.sql`）である。実装の `exchange_rates` は本設計の `base/quote_currency_code` + `effective_from` レンジではなく、**`year_month CHAR(7)` × `currency_code CHAR(3)` の bespoke master**（`rate NUMERIC(12,4)`、有効行の部分 UNIQUE）として実装されている（iter22）。さらに商品⑤仕入単価の税率自動反映のため **`tax_rate NUMERIC(5,2) NULL`** を追加した（Part5 / iter28）。税率は仕入先の適用通貨 × 登録時点の年月で解決し、`product_supplier_prices.tax_rate` へスナップショット保存する（為替レートと同じスナップショット方式）。設計ビジョンと実装の差異は稼働前 MVP の追従省略によるもので、正は `db/init` を参照すること。
+
 ### 4.4 利用者マスタ → app_user 昇格（M5）
 
 継承実装の `users` テーブル（`employee_no`/`login_id`/`display_name` + 4 権限カテゴリ）は、プラットフォームでは Control Plane の `app_user`（37 所有）へ集約する（ブリーフ §5「ユーザ業務情報/権限は RDS Control Plane が SoT」）。

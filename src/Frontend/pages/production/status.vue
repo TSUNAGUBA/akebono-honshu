@@ -43,8 +43,8 @@ const doneBadge = (s: string) => s === 'done'
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
+    <header class="mb-3">
       <h1 class="text-2xl font-bold">生産手配状況</h1>
       <p class="mt-1 text-sm text-gray-500">PS-01 品番ごとの「素材発注」「生産指示」未/済バッジ。未手配の品番を絞り込めます。</p>
     </header>

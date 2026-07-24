@@ -10,6 +10,8 @@ interface ExchangeRateItem {
   yearMonth: string
   currencyCode: string
   rate: number
+  // 税率(%) (Part5)。商品⑤仕入単価で通貨×年月から自動反映する。null = 未設定。
+  taxRate: number | null
   deletedAt: string | null
   createdAt: string
   updatedAt: string
@@ -30,11 +32,11 @@ const submitting = ref(false)
 // 追加/編集フォーム。editingId=null は新規、非 null は該当 id の編集。
 const nowMonth = currentMonthJst() // 'YYYY-MM' (JST 基準。UTC 由来だと月初 09:00 まで前月になる)
 const editingId = ref<string | null>(null)
-const form = ref({ yearMonth: nowMonth, currencyCode: '', rate: null as number | null })
+const form = ref({ yearMonth: nowMonth, currencyCode: '', rate: null as number | null, taxRate: null as number | null })
 
 const resetForm = () => {
   editingId.value = null
-  form.value = { yearMonth: nowMonth, currencyCode: foreignCurrencies.value[0]?.code ?? '', rate: null }
+  form.value = { yearMonth: nowMonth, currencyCode: foreignCurrencies.value[0]?.code ?? '', rate: null, taxRate: null }
 }
 
 // 通貨マスタは対象通貨ドロップダウン用の補助データ。失敗しても本体は使える (原則4 非ブロッキング)。
@@ -71,7 +73,7 @@ onMounted(() => { reload(); loadCurrencies() })
 
 const startEdit = (item: ExchangeRateItem) => {
   editingId.value = item.id
-  form.value = { yearMonth: item.yearMonth, currencyCode: item.currencyCode, rate: item.rate }
+  form.value = { yearMonth: item.yearMonth, currencyCode: item.currencyCode, rate: item.rate, taxRate: item.taxRate }
   successMessage.value = ''
   errorMessage.value = ''
 }
@@ -91,12 +93,23 @@ const onSubmit = async () => {
     errorMessage.value = 'レートは正の数で入力してください'
     return
   }
+  // 税率(%) (Part5) は任意。v-model.number は空欄クリア時に '' を返す (null にならない) ため、
+  // 空文字/未設定は null に正規化する (これをしないと Number('')=0 となり、税率がクリアではなく 0% で保存される)。
+  const taxRaw = form.value.taxRate as number | string | null
+  const taxRate = (taxRaw === null || taxRaw === undefined || (typeof taxRaw === 'string' && taxRaw.trim() === ''))
+    ? null
+    : Number(taxRaw)
+  if (taxRate != null && (Number.isNaN(taxRate) || taxRate < 0)) {
+    errorMessage.value = '税率は 0 以上の数値で入力してください'
+    return
+  }
   submitting.value = true
   try {
     const payload = {
       yearMonth: form.value.yearMonth.trim(),
       currencyCode: form.value.currencyCode.trim().toUpperCase(),
       rate: Number(form.value.rate),
+      taxRate,
     }
     if (editingId.value == null) {
       await apiFetch(`/masters/exchange-rates`, { method: 'POST', body: payload })
@@ -137,8 +150,8 @@ const onRestore = async (item: ExchangeRateItem) => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-7xl px-3 py-3">
+    <header class="mb-3">
       <div class="text-xs text-gray-500">
         <NuxtLink to="/masters" class="hover:underline">マスタ一覧</NuxtLink>
         <span class="mx-1">/</span>
@@ -146,8 +159,8 @@ const onRestore = async (item: ExchangeRateItem) => {
       </div>
       <h1 class="text-2xl font-bold">為替マスタ</h1>
       <p class="mt-1 text-sm text-gray-500">
-        年月 (YYYY-MM) × 通貨ごとの対円レートを登録します。商品⑤仕入単価では、選択した仕入先の適用通貨で
-        この為替レートを解決し、円換算価格を表示します (§2f)。
+        年月 (YYYY-MM) × 通貨ごとの対円レート・税率(%) を登録します。商品⑤仕入単価では、選択した仕入先の適用通貨で
+        この為替レートを解決して円換算価格を表示し、税率も同じ通貨×年月から自動反映します (§2f / Part5)。
       </p>
     </header>
 
@@ -155,9 +168,9 @@ const onRestore = async (item: ExchangeRateItem) => {
     <div v-if="successMessage" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{{ successMessage }}</div>
 
     <!-- 追加/編集フォーム (編集権限がある場合のみ) -->
-    <section v-if="canEditMaster" class="mb-5 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-      <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">{{ editingId == null ? '為替レートを追加' : '為替レートを編集' }}</h2>
-      <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
+    <section v-if="canEditMaster" class="mb-5 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+      <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">{{ editingId == null ? '為替レートを追加' : '為替レートを編集' }}</h2>
+      <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium">年月 <span class="text-red-500">*</span></span>
           <input v-model="form.yearMonth" type="month" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
@@ -176,6 +189,11 @@ const onRestore = async (item: ExchangeRateItem) => {
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium">対円レート <span class="text-red-500">*</span></span>
           <input v-model.number="form.rate" type="number" min="0" step="0.0001" placeholder="例: 150.0000" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+        </label>
+        <!-- 税率(%) (Part5)。任意。商品⑤仕入単価で通貨×年月から自動反映する。 -->
+        <label class="flex flex-col gap-1">
+          <span class="text-sm font-medium">税率 (%)</span>
+          <input v-model.number="form.taxRate" type="number" min="0" step="0.01" placeholder="例: 10.00 (任意)" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
         </label>
         <div class="flex gap-2">
           <button
@@ -210,18 +228,20 @@ const onRestore = async (item: ExchangeRateItem) => {
             <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">年月</th>
             <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">通貨</th>
             <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">対円レート</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">税率(%)</th>
             <th class="px-3 py-2 text-left text-xs font-semibold uppercase text-gray-600">状態</th>
             <th v-if="canEditMaster" class="px-3 py-2 text-right text-xs font-semibold uppercase text-gray-600">操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="items.length === 0">
-            <td :colspan="canEditMaster ? 5 : 4" class="px-4 py-8 text-center text-sm text-gray-500">データがありません</td>
+            <td :colspan="canEditMaster ? 6 : 5" class="px-4 py-8 text-center text-sm text-gray-500">データがありません</td>
           </tr>
           <tr v-for="i in items" :key="i.id" class="border-b border-gray-100 last:border-0" :class="i.deletedAt ? 'opacity-50' : ''">
             <td class="px-3 py-2 font-mono">{{ i.yearMonth }}</td>
             <td class="px-3 py-2"><span class="font-mono">{{ i.currencyCode }}</span> <span class="text-xs text-gray-500">{{ currencyName(i.currencyCode) }}</span></td>
             <td class="px-3 py-2 text-right font-mono">{{ i.rate.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</td>
+            <td class="px-3 py-2 text-right font-mono">{{ i.taxRate != null ? `${i.taxRate.toLocaleString(undefined, { minimumFractionDigits: 2 })}%` : '—' }}</td>
             <td class="px-3 py-2">
               <span v-if="i.deletedAt" class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">削除済</span>
               <span v-else class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">有効</span>

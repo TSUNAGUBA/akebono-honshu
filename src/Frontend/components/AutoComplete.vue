@@ -21,6 +21,8 @@ interface Props {
   allowEmpty?: boolean
   emptyLabel?: string
   inputClass?: string
+  /** スプレッドシート風のセル入力 (枠なし・セルを埋める・フォーカス時のみ強調)。表内の高密度入力向け。 */
+  borderless?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -29,7 +31,16 @@ const props = withDefaults(defineProps<Props>(), {
   allowEmpty: true,
   emptyLabel: '（未選択）',
   inputClass: '',
+  borderless: false,
 })
+
+// 通常は角丸+枠線、borderless は枠なし・角丸なしでセルを埋め、フォーカス時のみ内側リングと淡い背景で示す。
+// 高さは main.css の base で 2rem (h-full 指定時はセルに追従)。表セルではグリッド線を td 側に任せる。
+const inputClasses = computed(() =>
+  props.borderless
+    ? 'w-full border-0 bg-transparent px-2 pr-6 text-sm outline-none focus:bg-blue-50 focus:ring-1 focus:ring-inset focus:ring-blue-400 disabled:bg-gray-50 disabled:text-gray-400'
+    : 'w-full rounded-md border border-gray-300 px-2.5 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400',
+)
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
 
@@ -173,8 +184,7 @@ onUnmounted(() => {
       :value="displayText"
       :placeholder="placeholder"
       :disabled="disabled"
-      class="w-full rounded-md border border-gray-300 px-2.5 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
-      :class="inputClass"
+      :class="[inputClasses, inputClass]"
       autocomplete="off"
       @input="onInput"
       @focus="onFocus"

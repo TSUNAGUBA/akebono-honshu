@@ -14,3 +14,13 @@
     height: 2rem;
   }
 }
+
+@layer components {
+  /* スプレッドシート風セル入力 (発注明細など高密度なテーブル入力向け)。
+     枠線はセル (td) 側のグリッド線に任せ、input 自体は枠なし・セル全体を埋める。
+     フォーカス時のみ内側リングと淡い背景で編集中セルを示し、Excel のような入力感にする。
+     枠あり Material 風 (rounded + border) の <input> と併用しても、本クラスを付けた要素だけが枠なしになる。 */
+  .sheet-input {
+    @apply w-full border-0 bg-transparent px-2 text-sm outline-none focus:relative focus:z-[1] focus:bg-blue-50 focus:ring-1 focus:ring-inset focus:ring-blue-400 disabled:bg-gray-50 disabled:text-gray-400;
+  }
+}

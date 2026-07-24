@@ -521,6 +521,11 @@
             "format": "double",
             "type": "number"
           },
+          "taxRate": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
           "yearMonth": {
             "nullable": true,
             "type": "string"
