@@ -93,9 +93,14 @@ const onSubmit = async () => {
     errorMessage.value = 'レートは正の数で入力してください'
     return
   }
-  // 税率(%) (Part5) は任意。指定時は 0 以上を要求する。
-  if (form.value.taxRate != null && form.value.taxRate < 0) {
-    errorMessage.value = '税率は 0 以上で入力してください'
+  // 税率(%) (Part5) は任意。v-model.number は空欄クリア時に '' を返す (null にならない) ため、
+  // 空文字/未設定は null に正規化する (これをしないと Number('')=0 となり、税率がクリアではなく 0% で保存される)。
+  const taxRaw = form.value.taxRate as number | string | null
+  const taxRate = (taxRaw === null || taxRaw === undefined || (typeof taxRaw === 'string' && taxRaw.trim() === ''))
+    ? null
+    : Number(taxRaw)
+  if (taxRate != null && (Number.isNaN(taxRate) || taxRate < 0)) {
+    errorMessage.value = '税率は 0 以上の数値で入力してください'
     return
   }
   submitting.value = true
@@ -104,7 +109,7 @@ const onSubmit = async () => {
       yearMonth: form.value.yearMonth.trim(),
       currencyCode: form.value.currencyCode.trim().toUpperCase(),
       rate: Number(form.value.rate),
-      taxRate: form.value.taxRate == null ? null : Number(form.value.taxRate),
+      taxRate,
     }
     if (editingId.value == null) {
       await apiFetch(`/masters/exchange-rates`, { method: 'POST', body: payload })

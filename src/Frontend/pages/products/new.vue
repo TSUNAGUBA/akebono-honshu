@@ -578,7 +578,9 @@ const buildPriceEntry = (supplierId: string, unitPrice: number, decidedAt: strin
     purchaseMarginRate: fitOrNull(purchaseMargin(supplierId, unitPrice), NUMERIC_5_2_MAX),
     lossCost: null,
     drayageCost: drayageOf(supplierId),
-    // 税率 (Part5)。仕入先の適用通貨 → 為替マスタ (年月は登録時点で突合) から自動解決した値を保存。
+    // 税率 (Part5)。SoT は為替マスタ (為替レートと同じスナップショット方式)。新規登録時は仕入先の適用通貨
+    // → 為替マスタ (年月は登録時点で突合) から自動解決し、ProductSupplierPrice.taxRate へスナップショット保存する。
+    // 為替レート (exchangeRate) と同様、保存後の値は明細画面 (P-05) で手動補正できる (訂正用の上書き)。
     taxRate: taxRateOf(supplierId),
     // サイズ別仕入単価 (Part3): null=全サイズ共通の基準単価、非null=そのサイズ専用単価。
     sizeId,
@@ -1087,11 +1089,12 @@ const onSubmit = async () => {
                   <span class="text-sm font-medium">仕入単価 <span class="text-red-500">*</span> <span class="text-xs font-normal text-gray-400">({{ currencyOfRow(row) }})</span></span>
                   <input v-model.number="row.unitPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
                 </label>
-                <!-- 税率 (Part5)。手入力せず、仕入先の適用通貨 → 為替マスタ から自動反映 (読取専用)。 -->
+                <!-- 税率 (Part5)。手入力せず、仕入先の適用通貨 → 為替マスタ から自動反映 (読取専用)。
+                     JPY (国内) は為替マスタに行が無いため「対象外」(—) 表示。外貨で税率未登録なら「未登録」。 -->
                 <div class="flex flex-col gap-1">
                   <span class="text-sm font-medium">税率 (%) <span class="text-xs font-normal text-gray-400">(自動)</span></span>
                   <div class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-mono" :class="taxRateOfRow(row) == null ? 'text-gray-400' : 'text-gray-800'">
-                    {{ taxRateOfRow(row) != null ? `${taxRateOfRow(row)}%` : '未登録' }}
+                    {{ taxRateOfRow(row) != null ? `${taxRateOfRow(row)}%` : (currencyOfRow(row) === 'JPY' ? '—' : '未登録') }}
                   </div>
                 </div>
                 <div class="flex items-end gap-2">

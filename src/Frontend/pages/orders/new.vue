@@ -197,6 +197,11 @@ onMounted(async () => {
 })
 
 const addLine = () => {
+  // 分納モード (納期列あり) では新規明細もすぐ有効 (発注数>0) になるよう、先頭納期列に既定数量 1 を入れる。
+  // (deliveryQtys が空だと分納合計 0 で lineQuantityValid=false となり、追加直後は送信不可になるため。
+  //  分納なしモードでは quantity=1 が既定で有効。)
+  const deliveryQtys: Record<number, number | null> = {}
+  if (deliveryColumns.value.length > 0) deliveryQtys[deliveryColumns.value[0].id] = 1
   lines.value.push({
     productId: skus.value[0]?.id ?? '',
     quantity: 1,
@@ -204,7 +209,7 @@ const addLine = () => {
     currencyCodeSnapshot: 'JPY',
     packQuantity: null,
     remark: null,
-    deliveryQtys: {},
+    deliveryQtys,
   })
   // 追加直後の明細にも現単価を補完する (reviewer M-1)。既定選択された SKU に対し size-aware に
   // サジェスト (force=true)。supplier 未選択や現単価なしなら applyPriceSuggestion 内で no-op。
@@ -553,58 +558,58 @@ const onSubmit = async () => {
                枠なしでセルを埋める (Excel/表計算のような入力感)。フォーカス時のみ淡い青背景で編集セルを示す。
                outlined な個別コントロールをやめることで、業務入力としての見やすさ・視認性を上げる。 -->
           <div class="overflow-x-auto rounded-md border border-gray-200">
-          <table class="w-full border-collapse text-sm">
+          <table class="w-full border-separate border-spacing-0 text-sm">
             <thead class="bg-gray-50 text-gray-600">
               <!-- stickyMode (納期列4つ以上) では左6列を固定表示 (frozenColStyle + bg で背景を塗り、
                    スクロールする納期列がすり抜けて見えないようにする)。 -->
               <tr>
-                <th class="border border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(0)">SKU</th>
-                <th class="border border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(1)">発注数</th>
-                <th class="border border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(2)">入数</th>
-                <th class="border border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(3)">仕入単価</th>
-                <th class="border border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(4)">通貨</th>
-                <th class="border border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(5)">備考</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(0)">SKU</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(1)">発注数</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(2)">入数</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(3)">仕入単価</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(4)">通貨</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(5)">備考</th>
                 <!-- 分納 納期列 (全明細共通)。各列ヘッダで納期の日付を編集、× でその列を削除する。 -->
-                <th v-for="col in deliveryColumns" :key="col.id" class="border border-gray-200 px-1 py-1 text-center font-semibold">
+                <th v-for="col in deliveryColumns" :key="col.id" class="border-b border-r border-gray-200 px-1 py-1 text-center font-semibold">
                   <div class="flex items-center justify-center gap-1">
                     <input v-model="col.date" type="date" class="rounded border border-gray-200 bg-white px-1 text-xs" />
                     <button type="button" class="text-base leading-none text-red-500 hover:text-red-700" title="この納期列を削除" @click="removeDeliveryColumn(col.id)">×</button>
                   </div>
                 </th>
-                <th class="border border-gray-200 px-2 py-1 text-right font-semibold">小計</th>
-                <th class="border border-gray-200 px-2 py-1 text-right font-semibold"></th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold">小計</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold"></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(l, idx) in lines" :key="idx">
-                <td class="border border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(0)">
+                <td class="border-b border-r border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(0)">
                   <!-- サイズ別仕入単価 (PR2): SKU 選択時に単価をサジェスト補完 (onLineProductChange)。 -->
                   <MasterSelect :model-value="l.productId" :items="skuOptions" borderless placeholder="SKU・品名で検索…" @update:model-value="(v) => onLineProductChange(idx, v)" />
                 </td>
-                <td class="border border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(1)">
+                <td class="border-b border-r border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(1)">
                   <!-- 分納モード (納期列あり) は発注数 = 各納期列の合計を読取表示。分納なしは単一入力。 -->
                   <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="sheet-input h-8 text-right" />
                   <span v-else class="block w-full px-2 text-right font-mono leading-8 text-gray-700" title="納期列の合計">{{ lineQuantity(l).toLocaleString() }}</span>
                 </td>
-                <td class="border border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(2)">
+                <td class="border-b border-r border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(2)">
                   <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="sheet-input h-8 text-right" />
                 </td>
-                <td class="border border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(3)">
+                <td class="border-b border-r border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(3)">
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="sheet-input h-8 text-right" />
                 </td>
-                <td class="border border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(4)">
+                <td class="border-b border-r border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(4)">
                   <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" borderless @update:model-value="(v) => l.currencyCodeSnapshot = v" />
                 </td>
-                <td class="border border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(5)">
+                <td class="border-b border-r border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(5)">
                   <input v-model="l.remark" type="text" maxlength="255" placeholder="—" class="sheet-input h-8" />
                 </td>
                 <!-- 納期列ごとの発注数セル (SKU × 納期のマトリクス)。空欄は 0 扱い。 -->
-                <td v-for="col in deliveryColumns" :key="col.id" class="border border-gray-200 p-0 text-right">
+                <td v-for="col in deliveryColumns" :key="col.id" class="border-b border-r border-gray-200 p-0 text-right">
                   <input v-model.number="l.deliveryQtys[col.id]" type="number" min="0" placeholder="0" class="sheet-input h-8 text-right" />
                 </td>
                 <!-- 小計は行の通貨を前置して表示 (選択通貨とサマリ表示を一致させる)。 -->
-                <td class="whitespace-nowrap border border-gray-200 px-2 py-1 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ lineSubtotal(l).toLocaleString() }}</td>
-                <td class="border border-gray-200 px-2 py-1 text-center">
+                <td class="whitespace-nowrap border-b border-r border-gray-200 px-2 py-1 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ lineSubtotal(l).toLocaleString() }}</td>
+                <td class="border-b border-r border-gray-200 px-2 py-1 text-center">
                   <button type="button" :disabled="lines.length <= 1" class="text-xs text-red-600 hover:underline disabled:opacity-30" @click="removeLine(idx)">削除</button>
                 </td>
               </tr>
