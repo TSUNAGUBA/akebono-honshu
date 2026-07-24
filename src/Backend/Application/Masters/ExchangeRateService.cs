@@ -25,7 +25,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         var items = await query
             .OrderByDescending(e => e.YearMonth).ThenBy(e => e.CurrencyCode)
             .Select(e => new ExchangeRateListItem(
-                e.Id, e.YearMonth, e.CurrencyCode, e.Rate, e.DeletedAt, e.CreatedAt, e.UpdatedAt))
+                e.Id, e.YearMonth, e.CurrencyCode, e.Rate, e.TaxRate, e.DeletedAt, e.CreatedAt, e.UpdatedAt))
             .ToListAsync(ct);
 
         await audit.LogAsync(actorUserId, "ExchangeRate.List",
@@ -59,6 +59,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
             YearMonth = yearMonth,
             CurrencyCode = currency,
             Rate = req.Rate,
+            TaxRate = req.TaxRate,
             CreatedAt = now,
             CreatedByUserId = actorUserId,
             UpdatedAt = now,
@@ -84,6 +85,7 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
         entity.YearMonth = yearMonth;
         entity.CurrencyCode = currency;
         entity.Rate = req.Rate;
+        entity.TaxRate = req.TaxRate;
         entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;
         await db.SaveChangesAsync(ct);
@@ -138,6 +140,10 @@ public partial class ExchangeRateService(IAkebonoDbContext db, IAuditLogger audi
 
         if (req.Rate <= 0)
             throw DomainException.Validation("レートは正の数で指定してください");
+
+        // 税率(%) (Part5) は任意 (NULL 許容)。指定時は 0 以上を要求する (DB の CHECK と整合)。
+        if (req.TaxRate is < 0)
+            throw DomainException.Validation("税率は 0 以上で指定してください");
 
         return (yearMonth, currency);
     }

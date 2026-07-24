@@ -232,6 +232,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.YearMonth).HasColumnName("year_month").IsRequired().HasMaxLength(7).IsFixedLength();
             b.Property(x => x.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(3).IsFixedLength();
             b.Property(x => x.Rate).HasColumnName("rate").HasColumnType("numeric(12,4)");
+            b.Property(x => x.TaxRate).HasColumnName("tax_rate").HasColumnType("numeric(5,2)");
             b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id");

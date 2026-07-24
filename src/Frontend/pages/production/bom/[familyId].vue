@@ -75,7 +75,7 @@ const save = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
     <header class="mb-4 flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold">素材構成 (BOM)</h1>

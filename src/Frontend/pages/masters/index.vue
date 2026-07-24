@@ -55,8 +55,8 @@ const currentCards = computed(() => categories.find((c) => c.key === selected.va
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
+    <header class="mb-3">
       <h1 class="text-2xl font-bold">マスタ一覧</h1>
       <p class="mt-1 text-sm text-gray-500">
         カテゴリを選択して、そのカテゴリのマスタメンテナンスを開きます。
@@ -85,7 +85,7 @@ const currentCards = computed(() => categories.find((c) => c.key === selected.va
         v-for="m in currentCards"
         :key="m.key"
         :to="m.to"
-        class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition hover:border-blue-500 hover:shadow-md"
+        class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm transition hover:border-blue-500 hover:shadow-md"
       >
         <div class="font-semibold text-gray-900">{{ m.label }}</div>
         <div class="mt-1 text-xs text-gray-500">{{ m.to.replace('/masters/', '') }}</div>

@@ -58,8 +58,8 @@ const exportBadge = (i: MaterialOrderListItem) => i.firstExportedAt ? { label: `
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
+    <header class="mb-3">
       <h1 class="text-2xl font-bold">素材発注書</h1>
       <p class="mt-1 text-sm text-gray-500">
         MO-02 一覧 / MO-04 Excel 出力（生地材料発注）。新規作成は

@@ -34,8 +34,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-4">
-    <header class="mb-4">
+  <main class="mx-auto max-w-7xl px-3 py-3">
+    <header class="mb-3">
       <h1 class="text-2xl font-bold">ユーザ一覧</h1>
       <p class="text-sm text-gray-500">M-03 ユーザマスタ (Iteration 1 で権限管理拡張予定)</p>
     </header>

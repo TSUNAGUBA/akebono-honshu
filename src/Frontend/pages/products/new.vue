@@ -75,6 +75,9 @@ const expansion = ref({
 //   1→A 2→B 3→C 4→D 5→E 6→F 7→G 8→H 9→J 0→K
 // 年度に紐づかない「定番(N)」「統合(Z)」は "年度なし" トグルで別途選択する (ユーザ確認済 2026-07-21)。
 // これにより 1 桁目は直接入力せず、商品年度 or 区分トグルから自動決定する。
+// なお商品年度 (form.productYear) は年式決定 (year モード) 用途とは独立に、定番・統合でも入力可能とする
+// (年度分析などで年度を持たせたいケースがあるため)。定番/統合では年式(1桁目)は N/Z 固定で、
+// 入力した商品年度は年式に影響せず analytics 用の属性として保存される (payload では常に送出)。
 const YEAR_DIGIT_TO_CODE: Record<number, string> = { 1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'E', 6: 'F', 7: 'G', 8: 'H', 9: 'J', 0: 'K' }
 type YearMode = 'year' | 'teiban' | 'tougou'
 // 年式区分。'year'=商品年度から自動 / 'teiban'=定番(N) / 'tougou'=統合(Z)。
@@ -258,10 +261,10 @@ const today0 = todayJst() // 業務日付は JST 基準
 interface PriceRow {
   supplierId: string      // uuid 文字列 ('' = 未選択)
   unitPrice: number       // 仕入単価 (仕入先ごとの基準単価)
-  taxRate: number | null  // 税率(%) (Part4 追加)
   decidedAt: string       // 仕入単価決定日 (Part4 改称: 単価決定日→仕入単価決定日)
+  // 税率(%) は手入力しない (Part5)。仕入先の適用通貨 → 為替マスタ から自動反映する (taxRateOf)。
 }
-const makePriceRow = (): PriceRow => ({ supplierId: '', unitPrice: 0, taxRate: null, decidedAt: today0 })
+const makePriceRow = (): PriceRow => ({ supplierId: '', unitPrice: 0, decidedAt: today0 })
 const supplierPrices = ref<PriceRow[]>([makePriceRow()])
 const addPriceRow = () => {
   const row = makePriceRow()
@@ -275,8 +278,8 @@ const removePriceRow = (idx: number) => { if (supplierPrices.value.length > 1) s
 const sizePrices = ref<Record<string, number | null>>({})
 const primaryPriceRow = computed<PriceRow | null>(() => supplierPrices.value[0] ?? null)
 
-// 為替マスタ (§2f)。年月×通貨の対円レート。onMounted で読み込む。
-interface ExchangeRateItem { yearMonth: string; currencyCode: string; rate: number }
+// 為替マスタ (§2f)。年月×通貨の対円レート + 税率(%)。onMounted で読み込む。
+interface ExchangeRateItem { yearMonth: string; currencyCode: string; rate: number; taxRate: number | null }
 const exchangeRates = ref<ExchangeRateItem[]>([])
 
 // 仕入先の適用通貨/ドレー代を参照するヘルパー (suppliers は MasterItem[]、拡張列を動的保持)。
@@ -287,26 +290,39 @@ const drayageOf = (supplierId: string): number | null => {
   const d = supplierById(supplierId)?.drayageCost
   return d == null ? null : Number(d)
 }
-// (年月, 通貨) の適用レートを解決 (§2f)。JPY=1。厳密一致が無ければ対象年月以前の最新レート。未登録は null。
-const resolveRate = (yearMonth: string, currency: string): number | null => {
-  if (currency === 'JPY') return 1
+// (年月, 通貨) の適用為替レコードを解決 (§2f)。厳密一致が無ければ対象年月以前の最新行。未登録は null。
+// レート・税率とも同一の解決 (通貨→為替マスタ、年月突合) を使うため、行そのものを返す共通ヘルパー。
+const resolveExchangeRow = (yearMonth: string, currency: string): ExchangeRateItem | null => {
   const cands = exchangeRates.value.filter((r) => r.currencyCode === currency && r.yearMonth <= yearMonth)
   if (cands.length === 0) return null
-  return cands.reduce((best, r) => (r.yearMonth > best.yearMonth ? r : best)).rate
+  return cands.reduce((best, r) => (r.yearMonth > best.yearMonth ? r : best))
 }
-// 有効開始日は本日固定 (Part4 で列廃止) のため、レートは本日の年月で解決する。
+// (年月, 通貨) の適用レートを解決 (§2f)。JPY=1。未登録は null。
+const resolveRate = (yearMonth: string, currency: string): number | null => {
+  if (currency === 'JPY') return 1
+  return resolveExchangeRow(yearMonth, currency)?.rate ?? null
+}
+// (年月, 通貨) の適用税率(%) を解決 (Part5)。為替マスタ (通貨×年月) の tax_rate を反映する。
+// JPY (国内) は為替マスタに行が無いのが通常のため、行があればその税率、無ければ null (未登録) を返す。
+const resolveTaxRate = (yearMonth: string, currency: string): number | null =>
+  resolveExchangeRow(yearMonth, currency)?.taxRate ?? null
+// 有効開始日は本日固定 (Part4 で列廃止) のため、レート・税率とも本日の年月で解決する (登録時点で突合)。
 const rateOf = (supplierId: string): number | null => resolveRate(today0.slice(0, 7), currencyOf(supplierId))
+// 税率 (Part5)。仕入先の適用通貨 → 為替マスタ (年月は登録時点 = 本日で突合) から自動反映する。
+const taxRateOf = (supplierId: string): number | null => resolveTaxRate(today0.slice(0, 7), currencyOf(supplierId))
 // 円換算仕入単価 (§2f)。JPY はそのまま、外貨は 単価 × 適用レート。レート未解決は null。
 const yenUnitPrice = (supplierId: string, unitPrice: number): number | null => {
   if (currencyOf(supplierId) === 'JPY') return Number(unitPrice) || 0
   const rate = rateOf(supplierId)
   return rate == null ? null : Math.round((Number(unitPrice) || 0) * rate * 100) / 100
 }
-// 仕入原価 (§2g) = 円換算仕入単価 + ブランド費。円換算不能なら null。
+// 仕入原価 (§2g) = 円換算仕入単価 + ブランド費 + ドレー代。円換算不能なら null。
+// 例) 仕入原価 1400 = 仕入単価(円換算) 1000 + ブランド費 300 + ドレー代 100。
+// ドレー代は仕入先マスタ (Supplier.drayageCost) から取得する (未設定は 0 扱い)。
 const purchaseCost = (supplierId: string, unitPrice: number): number | null => {
   const yenP = yenUnitPrice(supplierId, unitPrice)
   if (yenP == null) return null
-  return Math.round((yenP + (brandCostComputed.value ?? 0)) * 100) / 100
+  return Math.round((yenP + (brandCostComputed.value ?? 0) + (drayageOf(supplierId) ?? 0)) * 100) / 100
 }
 // 仕入利益率 (§2h、%) = 仕入原価 ÷ 納品価格 × 100。納品価格未設定/0 は null。
 const purchaseMargin = (supplierId: string, unitPrice: number): number | null => {
@@ -319,6 +335,7 @@ const purchaseMargin = (supplierId: string, unitPrice: number): number | null =>
 const currencyOfRow = (row: PriceRow) => currencyOf(row.supplierId)
 const drayageOfRow = (row: PriceRow) => drayageOf(row.supplierId)
 const rateOfRow = (row: PriceRow) => rateOf(row.supplierId)
+const taxRateOfRow = (row: PriceRow) => taxRateOf(row.supplierId)
 const yenUnitPriceOfRow = (row: PriceRow) => yenUnitPrice(row.supplierId, row.unitPrice)
 const purchaseCostOfRow = (row: PriceRow) => purchaseCost(row.supplierId, row.unitPrice)
 const purchaseMarginOfRow = (row: PriceRow) => purchaseMargin(row.supplierId, row.unitPrice)
@@ -421,11 +438,12 @@ const onCopyFromReference = async () => {
     expansion.value.sizeIds = [...new Set(liveProducts.map((p) => p.sizeId))]
 
     // (3) 仕入単価をコピー (Part3/4)。基準単価 (size=null) を⑤へ、サイズ別単価 (size 指定) を④の sizePrices へ。
-    //     通貨/為替/仕入原価/利益率/ドレー代は自動算出のため、コピーするのは supplier/単価/税率/決定日のみ。
+    //     通貨/為替/税率/仕入原価/利益率/ドレー代は自動算出のため、コピーするのは supplier/単価/決定日のみ。
+    //     税率 (Part5) は仕入先の適用通貨 → 為替マスタ から再解決するためコピーしない。
     const prices = src.currentSupplierPrices
     const baseRows = prices.filter((p) => p.sizeId == null)
     supplierPrices.value = baseRows.length > 0
-      ? baseRows.map((p) => ({ supplierId: p.supplierId, unitPrice: p.unitPrice, taxRate: p.taxRate ?? null, decidedAt: p.decidedAt }))
+      ? baseRows.map((p) => ({ supplierId: p.supplierId, unitPrice: p.unitPrice, decidedAt: p.decidedAt }))
       : [makePriceRow()]
     // サイズ別単価は代表仕入先 (⑤ 先頭) に紐づく前提で sizeId→単価 を復元する。
     sizePrices.value = {}
@@ -541,8 +559,9 @@ const priceRowIssue = computed<string | null>(() => {
 })
 
 // 仕入単価ペイロード 1 件を組み立てる (⑤基準単価・④サイズ別単価で共用)。通貨/レート/円換算/原価/利益率/
-// ドレー代は仕入先と単価から算出する。有効開始日は本日固定 (Part4)。
-const buildPriceEntry = (supplierId: string, unitPrice: number, taxRate: number | null, decidedAt: string, sizeId: string | null) => {
+// ドレー代は仕入先と単価から算出する。税率(%) は仕入先の適用通貨 → 為替マスタ から自動解決する (Part5、手入力なし)。
+// 有効開始日は本日固定 (Part4)。
+const buildPriceEntry = (supplierId: string, unitPrice: number, decidedAt: string, sizeId: string | null) => {
   const currency = currencyOf(supplierId)
   return {
     supplierId,
@@ -559,8 +578,8 @@ const buildPriceEntry = (supplierId: string, unitPrice: number, taxRate: number 
     purchaseMarginRate: fitOrNull(purchaseMargin(supplierId, unitPrice), NUMERIC_5_2_MAX),
     lossCost: null,
     drayageCost: drayageOf(supplierId),
-    // 税率 (Part4)。⑤ の入力値をそのまま保存。
-    taxRate,
+    // 税率 (Part5)。仕入先の適用通貨 → 為替マスタ (年月は登録時点で突合) から自動解決した値を保存。
+    taxRate: taxRateOf(supplierId),
     // サイズ別仕入単価 (Part3): null=全サイズ共通の基準単価、非null=そのサイズ専用単価。
     sizeId,
   }
@@ -598,12 +617,12 @@ const onSubmit = async () => {
   try {
     // 仕入単価ペイロード: ⑤ 基準単価 (size=null) を仕入先ごとに。加えて ④ サイズ別単価 (>0) を
     // 代表仕入先 (⑤ 先頭) に紐づく size 指定行として追加する (Part3/4)。0/空は基準単価を使用 = 行を作らない。
-    const priceEntries = supplierPrices.value.map((r) => buildPriceEntry(r.supplierId, Number(r.unitPrice), r.taxRate, r.decidedAt, null))
+    const priceEntries = supplierPrices.value.map((r) => buildPriceEntry(r.supplierId, Number(r.unitPrice), r.decidedAt, null))
     const primary = primaryPriceRow.value
     if (primary && primary.supplierId) {
       for (const sizeId of expansion.value.sizeIds) {
         const sp = Number(sizePrices.value[sizeId])
-        if (sp > 0) priceEntries.push(buildPriceEntry(primary.supplierId, sp, primary.taxRate, primary.decidedAt, sizeId))
+        if (sp > 0) priceEntries.push(buildPriceEntry(primary.supplierId, sp, primary.decidedAt, sizeId))
       }
     }
     const payload: CompleteFamilyPayload = {
@@ -679,7 +698,7 @@ const onSubmit = async () => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
     <div v-if="!canEditMaster" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
       品番台帳管理権限がないため、商品の新規登録はできません。
       <div class="mt-2">
@@ -688,7 +707,7 @@ const onSubmit = async () => {
     </div>
 
     <template v-else>
-      <header class="mb-4">
+      <header class="mb-3">
         <div class="text-xs text-gray-500">
           <NuxtLink to="/products" class="hover:underline">商品一覧</NuxtLink>
           <span class="mx-1">/</span>
@@ -704,7 +723,7 @@ const onSubmit = async () => {
         マスタ情報を読み込み中…
       </div>
 
-      <form v-else class="space-y-3" @submit.prevent="onSubmit">
+      <form v-else class="space-y-2.5" @submit.prevent="onSubmit">
         <!-- 参照コピー登録 (PR4、旧 spec No.3 参照コード/コピー、任意操作・折りたたみ可)。
              既存商品を品番/商品名/legacy_id で検索選択 → 「この商品をコピー」で詳細を取得し、
              下記フォームの編集可能項目をプリフィルする。明示ボタン操作時のみ上書き。
@@ -747,8 +766,8 @@ const onSubmit = async () => {
 
         <!-- Section 1: 商品コード構成 (Part1)。商品コード附番に影響する入力をフォーム最初にまとめて配置。
              1 桁目(年式) は直接入力せず、商品年度 or 区分トグルから自動決定する。プレビューを常時表示。 -->
-        <section class="rounded-lg border border-blue-200 bg-white p-3 shadow-sm">
-          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">① 商品コード構成 <span class="ml-2 text-xs font-normal text-gray-500">(11 桁品番。1 桁目は自動決定)</span></h2>
+        <section class="rounded-lg border border-blue-200 bg-white p-2.5 shadow-sm">
+          <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">① 商品コード構成 <span class="ml-2 text-xs font-normal text-gray-500">(11 桁品番。1 桁目は自動決定)</span></h2>
 
           <!-- 年式 (1 桁目)。年式区分で「年度から自動 / 定番(N) / 統合(Z)」を選び、年度からは商品年度の下1桁で決まる。 -->
           <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
@@ -763,8 +782,10 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品年度 <span v-if="yearMode === 'year'" class="text-red-500">*</span></span>
-              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" :class="yearMode !== 'year' && 'bg-gray-50 text-gray-400'" />
-              <span class="text-xs text-gray-500">年式区分「年度から」の年式決定に使用 (下1桁)</span>
+              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+              <span class="text-xs text-gray-500">
+                {{ yearMode === 'year' ? '年式(1桁目)の決定に使用 (下1桁)' : '定番・統合でも年度分析用に入力できます (年式には影響しません)' }}
+              </span>
             </label>
             <div class="flex flex-col gap-1">
               <span class="text-sm font-medium">年式 (1 桁目) <span class="text-xs font-normal text-gray-400">(自動)</span></span>
@@ -814,7 +835,7 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 2: 商品画像 (§2a 企画/本番の 2 区分。「登録」と同時に採番 familyId へ区分付きでアップロード) -->
-        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <h2 class="mb-2 border-b border-gray-100 pb-2 font-semibold">
             ② 商品画像 <span class="ml-2 text-xs font-normal text-gray-500">(任意 — JPEG / PNG / WebP、各 5MB、区分ごと最大 5 枚)</span>
           </h2>
@@ -877,9 +898,16 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 3: 商品属性 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">③ 商品属性</h2>
-          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+        <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+          <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">③ 商品属性</h2>
+          <!-- 商品名 (Part3): ③ の先頭に配置。商品を識別する主要項目のため最初に入力させる。 -->
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">商品名 <span class="text-red-500">*</span></span>
+              <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+            </label>
+          </div>
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">ブランド <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? ''" />
@@ -905,12 +933,6 @@ const onSubmit = async () => {
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">底素材 <span class="text-red-500">*</span></span>
               <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? ''" />
-            </label>
-          </div>
-          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
-            <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">商品名 <span class="text-red-500">*</span></span>
-              <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
             </label>
           </div>
 
@@ -978,8 +1000,8 @@ const onSubmit = async () => {
         </section>
 
         <!-- Section 4: 色×サイズ展開 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-          <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
+        <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+          <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">
             ④ 色 × サイズ展開 <span class="ml-2 text-xs text-gray-500">(SKU {{ skuCount }} 件が生成されます)</span>
           </h2>
           <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
@@ -1041,10 +1063,10 @@ const onSubmit = async () => {
 
         <!-- Section 5: 仕入単価 (Part4)。仕入先ごとの基準単価 (全サイズ共通)。サイズ別単価は④で入力。
              通貨は仕入先の適用通貨から自動決定し、為替マスタで円換算・仕入原価・仕入利益率・ドレー代を自動計算する。 -->
-        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="mb-3 flex flex-col gap-2 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">
-              ⑤ 仕入単価 <span class="ml-2 text-xs font-normal text-gray-500">(仕入先ごとの基準単価。サイズ別は④で入力。通貨・為替・仕入原価・仕入利益率・ドレー代は自動計算)</span>
+              ⑤ 仕入単価 <span class="ml-2 text-xs font-normal text-gray-500">(仕入先ごとの基準単価。サイズ別は④で入力。通貨・為替・税率・仕入原価・仕入利益率・ドレー代は自動計算)</span>
             </h2>
             <button type="button" class="self-start rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="addPriceRow">+ 仕入先を追加</button>
           </div>
@@ -1065,10 +1087,13 @@ const onSubmit = async () => {
                   <span class="text-sm font-medium">仕入単価 <span class="text-red-500">*</span> <span class="text-xs font-normal text-gray-400">({{ currencyOfRow(row) }})</span></span>
                   <input v-model.number="row.unitPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
                 </label>
-                <label class="flex flex-col gap-1">
-                  <span class="text-sm font-medium">税率 (%)</span>
-                  <input v-model.number="row.taxRate" type="number" min="0" step="0.01" placeholder="例: 10" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
-                </label>
+                <!-- 税率 (Part5)。手入力せず、仕入先の適用通貨 → 為替マスタ から自動反映 (読取専用)。 -->
+                <div class="flex flex-col gap-1">
+                  <span class="text-sm font-medium">税率 (%) <span class="text-xs font-normal text-gray-400">(自動)</span></span>
+                  <div class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-mono" :class="taxRateOfRow(row) == null ? 'text-gray-400' : 'text-gray-800'">
+                    {{ taxRateOfRow(row) != null ? `${taxRateOfRow(row)}%` : '未登録' }}
+                  </div>
+                </div>
                 <div class="flex items-end gap-2">
                   <label class="flex flex-1 flex-col gap-1">
                     <span class="text-sm font-medium">仕入単価決定日 <span class="text-red-500">*</span></span>
@@ -1083,13 +1108,14 @@ const onSubmit = async () => {
                 </div>
               </div>
 
-              <!-- 自動計算 (§2f/g/h/i): 適用通貨 / 適用レート / 円換算 / 仕入原価 / 仕入利益率 / ドレー代 -->
+              <!-- 自動計算 (§2f/g/h/i/Part5): 適用通貨 / 適用レート / 税率 / 円換算 / 仕入原価 / 仕入利益率 / ドレー代 -->
               <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-gray-100 bg-white px-3 py-2 text-xs text-gray-600">
                 <span>適用通貨: <span class="font-mono font-semibold text-gray-800">{{ currencyOfRow(row) }}</span></span>
                 <span v-if="currencyOfRow(row) !== 'JPY'">
                   適用レート:
                   <span class="font-mono font-semibold" :class="rateOfRow(row) == null ? 'text-red-600' : 'text-gray-800'">{{ rateOfRow(row) != null ? rateOfRow(row) : '未登録' }}</span>
                 </span>
+                <span>税率: <span class="font-mono font-semibold text-gray-800">{{ taxRateOfRow(row) != null ? `${taxRateOfRow(row)}%` : '—' }}</span></span>
                 <span>円換算: <span class="font-mono font-semibold text-gray-800">{{ yen(yenUnitPriceOfRow(row)) }}</span></span>
                 <span>仕入原価: <span class="font-mono font-semibold text-gray-800">{{ yen(purchaseCostOfRow(row)) }}</span></span>
                 <span>仕入利益率: <span class="font-mono font-semibold text-gray-800">{{ purchaseMarginOfRow(row) != null ? `${purchaseMarginOfRow(row)}%` : '—' }}</span></span>
@@ -1099,15 +1125,15 @@ const onSubmit = async () => {
           </div>
 
           <p class="mt-2 text-xs text-gray-500">
-            通貨は仕入先マスタの「適用通貨」、ドレー代は仕入先マスタの「ドレー代」から自動反映します。為替レートは
+            通貨は仕入先マスタの「適用通貨」、ドレー代は仕入先マスタの「ドレー代」から自動反映します。為替レートと税率は
             <NuxtLink to="/masters/exchange-rates" class="text-blue-600 hover:underline">為替マスタ</NuxtLink>
-            で登録します。仕入原価 = 円換算仕入単価 + ブランド費、仕入利益率 = 仕入原価 ÷ 納品価格。
+            で登録し、選択した仕入先の適用通貨 × 登録時点の年月で自動解決します。仕入原価 = 円換算仕入単価 + ブランド費 + ドレー代、仕入利益率 = 仕入原価 ÷ 納品価格。
             サイズ別の仕入単価は「④ 色 × サイズ展開」で入力できます。見積単価・ロス費など原価明細は登録後の詳細画面で追加できます。
           </p>
         </section>
 
         <!-- Section 6: アソート/セット明細 (PR3、旧 spec No.37/38、任意) -->
-        <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+        <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
             <h2 class="font-semibold">
               ⑥ アソート/セット明細 <span class="ml-2 text-xs font-normal text-gray-500">(任意 — アソート/セット品のみ)</span>

@@ -330,7 +330,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
     <div v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
       読み込み中…
     </div>
@@ -379,7 +379,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       <!-- 次のアクション（操作導線）: この商品からの業務の次工程へ直接遷移する -->
       <section
         v-if="canEditMaster || canCreateOrder"
-        class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
+        class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm"
       >
         <h2 class="mb-3 text-sm font-semibold text-gray-700">次のアクション</h2>
         <div class="flex flex-wrap gap-2">
@@ -411,8 +411,8 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- 企画情報 -->
-      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">企画情報</h2>
+      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+        <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">企画情報</h2>
 
         <div v-if="!editing" class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
           <div><span class="text-gray-500">年式:</span> <strong>{{ detail.family.plannedYearCode }}</strong></div>
@@ -548,8 +548,8 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- SKU 一覧 -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">SKU 一覧 ({{ detail.products.length }} 件)</h2>
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+        <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">SKU 一覧 ({{ detail.products.length }} 件)</h2>
         <table class="w-full text-sm">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
@@ -572,8 +572,8 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- アソート/セット明細 (PR3、旧 spec No.37/38) -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+        <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">
           アソート/セット明細
           <span class="ml-2 text-xs font-normal text-gray-500">(子品番 + 数量、アソート/セット品のみ)</span>
         </h2>
@@ -655,7 +655,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- 仕入単価 -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
           <h2 class="font-semibold">現在有効な仕入単価 ({{ detail.currentSupplierPrices.length }} 件)</h2>
           <button
@@ -787,7 +787,7 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
       </section>
 
       <!-- 画像管理 (§2a: 企画画像 / 本番画像 の区分ごとに表示・追加) -->
-      <section class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+      <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
         <div class="mb-3 flex flex-col gap-2 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 class="font-semibold">画像 <span class="text-xs font-normal text-gray-500">(区分ごと最大 5 枚)</span></h2>
           <div v-if="canEditMaster" class="flex items-center gap-2">

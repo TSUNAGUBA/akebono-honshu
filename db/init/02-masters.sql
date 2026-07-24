@@ -462,6 +462,7 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     year_month           CHAR(7)      NOT NULL,                -- 'YYYY-MM'
     currency_code        CHAR(3)      NOT NULL,                -- USD/CNY 等
     rate                 NUMERIC(12,4) NOT NULL,               -- 1 通貨単位 = rate 円
+    tax_rate             NUMERIC(5,2) NULL,                    -- 税率(%) (Part5)。商品⑤仕入単価で通貨×年月から自動反映する。
     deleted_at           TIMESTAMPTZ  NULL,
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     created_by_user_id   UUID         NOT NULL REFERENCES users(id),
@@ -469,7 +470,8 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     updated_by_user_id   UUID         NOT NULL REFERENCES users(id),
     legacy_id            VARCHAR(64)  NULL,
     CONSTRAINT chk_exr_year_month CHECK (year_month ~ '^[0-9]{4}-[0-9]{2}$'),
-    CONSTRAINT chk_exr_rate CHECK (rate > 0)
+    CONSTRAINT chk_exr_rate CHECK (rate > 0),
+    CONSTRAINT chk_exr_tax_rate CHECK (tax_rate IS NULL OR tax_rate >= 0)
 );
 -- 有効行 (未削除) の (年月, 通貨) 一意。削除済みは重複を許容 (再登録可)。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_exr_year_month_currency
@@ -485,6 +487,7 @@ DECLARE
     owner_id UUID;
     jp_id    UUID;
     cn_id    UUID;
+    unset_country_id UUID;   -- 工場マスタ (Part2) 用の「未設定」国。添付データに国情報が無いため暫定割当。
     mc_natural UUID;
 BEGIN
     SELECT id INTO owner_id FROM users WHERE login_id = 'owner';
@@ -496,7 +499,9 @@ BEGIN
     INSERT INTO countries (code, name, created_by_user_id, updated_by_user_id) VALUES
         ('001', '日本',     owner_id, owner_id),
         ('002', '中国',     owner_id, owner_id),
-        ('003', 'ベトナム', owner_id, owner_id)
+        ('003', 'ベトナム', owner_id, owner_id),
+        -- 工場マスタ (Part2) の暫定国。添付データに国情報が無い工場に割り当てる (マスタ画面で個別修正可)。
+        ('999', '未設定',   owner_id, owner_id)
     ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- currencies (為替マスタ / 仕入先 適用通貨 の参照先)。code = ISO 4217 3 文字。
@@ -508,6 +513,7 @@ BEGIN
 
     SELECT id INTO jp_id FROM countries WHERE code = '001';
     SELECT id INTO cn_id FROM countries WHERE code = '002';
+    SELECT id INTO unset_country_id FROM countries WHERE code = '999';
 
     -- material_classifications (materials の FK 参照先)
     INSERT INTO material_classifications (code, name, created_by_user_id, updated_by_user_id) VALUES
@@ -626,6 +632,39 @@ BEGIN
                country_id, supplier_type, alert_target, deleted_at,
                created_at, created_by_user_id, updated_at, updated_by_user_id, legacy_id
         FROM suppliers
+    ON CONFLICT (tenant_id, code) DO NOTHING;
+
+    -- factories (Part2 添付データ): 品番7桁目の工場コード (A〜Z) と工場名称。code=item_conversion_code=英字1桁。
+    --   国情報が添付データに無いため country は '未設定' (国内その他のみ日本)。区分は 国内その他=0(国内)/他=1(海外)。
+    --   添付で取り消し線の工場 (B/M/S/T/U/Y) は「廃止」とみなし deleted_at をセットして論理削除で投入する
+    --   (品番の履歴解決・年度分析には残し、新規登録の工場選択肢には出さない)。'－' の I/O は工場が無いためスキップ。
+    --   ON CONFLICT (tenant_id, code) DO NOTHING で冪等 (既存デモ工場 336/404/437 とは code が異なるため独立)。
+    INSERT INTO factories (code, name, item_conversion_code, country_id, supplier_type, alert_target,
+                           deleted_at, created_by_user_id, updated_by_user_id) VALUES
+        ('A', '海外その他',     'A', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('B', '南通本州',       'B', unset_country_id, 1, 0, NOW(),  owner_id, owner_id),  -- 取消線=廃止 (論理削除)
+        ('C', '固安',           'C', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('D', '正書',           'D', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('E', '天宇',           'E', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('F', '藤東',           'F', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('G', '新岡',           'G', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('H', '環球',           'H', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('J', '拓馳',           'J', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('K', '春源',           'K', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('L', '五星・柬埔寨',   'L', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('M', 'Ixora',          'M', unset_country_id, 1, 0, NOW(),  owner_id, owner_id),  -- 取消線=廃止 (論理削除)
+        ('N', '蘭奥',           'N', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('P', '三和繊維',       'P', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('Q', '居美',           'Q', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('R', 'ラッキー産業',   'R', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('S', 'ストロング',     'S', unset_country_id, 1, 0, NOW(),  owner_id, owner_id),  -- 取消線=廃止 (論理削除)
+        ('T', '小澤重',         'T', unset_country_id, 1, 0, NOW(),  owner_id, owner_id),  -- 取消線=廃止 (論理削除)
+        ('U', 'スタル',         'U', unset_country_id, 1, 0, NOW(),  owner_id, owner_id),  -- 取消線=廃止 (論理削除)
+        ('V', '湯誠',           'V', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('W', '金森',           'W', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('X', '評価減',         'X', unset_country_id, 1, 0, NULL,   owner_id, owner_id),
+        ('Y', '夢華達',         'Y', unset_country_id, 1, 0, NOW(),  owner_id, owner_id),  -- 取消線=廃止 (論理削除)
+        ('Z', '国内その他',     'Z', jp_id,            0, 0, NULL,   owner_id, owner_id)
     ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- delivery_destinations (Phase 6 サンプル準拠)

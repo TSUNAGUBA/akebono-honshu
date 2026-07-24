@@ -18,7 +18,7 @@ const trail = computed(() => breadcrumbs.value.slice(1))
 
 <template>
   <header class="border-b border-gray-200 bg-white">
-    <div class="mx-auto flex h-12 max-w-screen-2xl items-center gap-2 px-4 sm:gap-3">
+    <div class="mx-auto flex h-10 max-w-screen-2xl items-center gap-2 px-3 sm:gap-3">
       <!-- 戻る（1 つ上の階層へ） -->
       <NuxtLink
         v-if="parentPath"

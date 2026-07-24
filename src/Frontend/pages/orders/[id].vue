@@ -425,7 +425,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
 </script>
 
 <template>
-  <main class="mx-auto max-w-screen-2xl px-4 py-4">
+  <main class="mx-auto max-w-screen-2xl px-3 py-3">
     <div v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
     <div v-else-if="!detail" class="rounded border border-red-300 bg-red-50 p-4 text-red-700">
@@ -579,7 +579,7 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </div>
 
       <!-- ヘッダ情報 -->
-      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+      <section class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
         <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
           <h2 class="font-semibold">発注書情報</h2>
           <!-- 発注区分 国内/海外 バッジ (Phase B、is_overseas) -->
@@ -643,8 +643,8 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
       </section>
 
       <!-- 明細 -->
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">
+      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+        <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">
           明細 ({{ detail.lines.length }} 件、合計 {{ detail.lines[0]?.currencyCodeSnapshot ?? 'JPY' }} {{ totalAmount.toLocaleString() }})
         </h2>
 
@@ -888,9 +888,9 @@ const editReasonOptions: EditReason[] = ['quantity', 'deadline', 'supplier', 'ty
            新データは 6 列を 1 行ずつ表示。6 列が全て空の旧発注は communicationText にフォールバック。 -->
       <section
         v-if="!editing && (displayCommLines.length > 0 || detail.communicationText)"
-        class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
+        class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm"
       >
-        <h2 class="mb-3 border-b border-gray-100 pb-2 font-semibold">連絡文書</h2>
+        <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">連絡文書</h2>
         <ol v-if="displayCommLines.length > 0" class="space-y-1 text-sm">
           <li v-for="(line, i) in displayCommLines" :key="i" class="flex gap-2">
             <span class="shrink-0 font-mono text-xs text-gray-400">{{ (i + 1).toString().padStart(2, '0') }}</span>
