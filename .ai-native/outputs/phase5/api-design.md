@@ -208,6 +208,8 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 > JSON は camelCase、認可は `user:read` / `user:write` スコープではなく**オーナー**（`process_record_permission >= 1`）。
 > **`PATCH /api/maker/v1/users/{id}` の現行契約（`UserPatchRequest` による部分更新 = `null` は現在値保持、
 > `clearHireDate` / `clearAttendanceRule` の明示クリアフラグ、`email` は空文字でクリア）は §2.7.9 に記載している。**
+> **`GET`（一覧・詳細）も同様で、実装は認証のみ（権限チェック無し）だが、勤怠 6 列（労務個人情報）は
+> オーナー以外には `null` で返す。詳細は §2.7.9。**
 > 本節の全面改訂は別途行うこと（実装 SoT: `src/Backend/Presentation/Endpoints/UserEndpoints.cs`）。
 
 #### POST /api/v1/users
@@ -1488,12 +1490,47 @@ LeaveGrantResultDto { id, skipped }        LeaveGrantBulkResultDto { granted, sk
 
 - クリアフラグ（`clearAttendanceRule` / `clearHireDate`）は `UserPatchRequest` の**末尾に追加**した
   `bool`（既定 `false`）。送らなければ従来どおり現在値を保持するため、既存クライアントは無改修で動く（下位互換）。
-- 勤怠 4 列（`attendancePermission` / `punchRequired` / `attendanceRuleId` / `hireDate` /
+- 勤怠 6 列（`attendancePermission` / `punchRequired` / `attendanceRuleId` / `hireDate` /
   `weeklyDays` / `weeklyHours`）は利用者フォームからも編集できる。勤務体系は `MasterSelect` で選択し、
   選択肢の取得失敗は握りつぶす（原則4）。これが無いと周期自動付与が一度も動かず、
   DB を直接操作するという手動手順が必要になっていた（原則1）。
 - ロックアウト防止の検証は**マージ後の値**に対して行う（自分自身のオーナー権限解除・無効化の禁止、
   最後の有効オーナーの権限解除・無効化の禁止）。
+
+**`GET /api/maker/v1/users` / `GET /api/maker/v1/users/{id:guid}` は勤怠 6 列をオーナーにのみ返す（`7ee8284`）。**
+
+| 項目 | 内容 |
+|---|---|
+| 認可 | **認証のみ**（`AuthEndpoints.TryGetUserId`。未認証は 401 `AKB-AUTH-001`）。発注／商品フォームの**担当者候補**の取得にも使うため、権限チェックは掛けない |
+| レスポンス | **200** `UserListItem`（一覧は配列）。ただし**勤怠 6 列（`attendancePermission` / `punchRequired` / `attendanceRuleId` / `hireDate` / `weeklyDays` / `weeklyHours`）は、呼び出し元がオーナーでなければ全て `null` で返す** |
+| オーナー判定 | `UserQueryService.IsOwnerAsync` = `u.Id == actorUserId && u.IsActive && u.DeletedAt == null && u.ProcessRecordPermission >= 1`（**`AuthEndpoints.CheckUserAdminAsync` と同一の判定式**。オーナー判定のみ `>= 1` を使う）|
+| 非オーナー時の扱い | **403 にはせず、200 のまま 6 列を `null` へ落とす**（`UserQueryService.WithoutLaborInfo`）。担当者候補の取得という主用途を壊さないため |
+
+- **`null` の意味は「取得権限が無い」であって「0 / 未設定」ではない。** 受け手はこの 2 つを区別できないため、
+  **表示・判定は fail-close 側へ倒すこと**（**勤怠権限は `0`（なし）、打刻対象は `false`** と解釈する）。
+  DB 既定値（`attendancePermission = 1` / `punchRequired = true` / `weeklyDays = 5` / `weeklyHours = 40`）へ
+  フォールバックしてはならない。**権限を DB 既定で補うと、権限 0 の利用者を「更新可能(1)」と表示し、
+  全量 PATCH を送る編集フォームでは開いて保存しただけで権限が昇格する**
+  （`src/Frontend/pages/masters/users.vue` の `startEdit` / 一覧セルはいずれも
+  `u.attendancePermission ?? 0` / `u.punchRequired ?? false` で揃えている。
+  DB 既定値の初期表示は**新規作成フォーム（`emptyForm`）だけの責務**）。
+- **なぜこの扱いにしたか。** 本一覧・単票は権限チェック無しで広く使われる経路であり、そのままでは
+  **勤怠権限 0 の利用者でも全在籍者の入社日と週所定を列挙できた**。入社日と週所定は
+  **有給の比例付与判定に直結する労務個人情報**で、勤怠 API 側は「**他人の勤怠の参照はオーナー限定**」を
+  全経路で徹底している（§2.7.0 認可の考え方）。利用者 API にも**同じ境界**を引く必要がある。
+  既存 I/F への末尾追加という下位互換の配慮（原則7）が、認可の見直しを見落とさせたのが原因。
+- **実装上の保証（fail-close の構造化）:** 全項目を含む単票取得 `UserQueryService.GetAsync` は **`private` 化**され、
+  **外部公開経路は `GetForActorAsync` の 1 本に絞られている**。`GET /{id:guid}` は `GetForActorAsync` を呼ぶため、
+  レダクションを通さずに返す経路が構造的に存在しない。`private` な `GetAsync` を直接呼ぶのは
+  `CreateAsync` / `UpdateAsync` の応答組み立てのみで、これらのエンドポイントは
+  `CheckUserAdminAsync` でオーナーを検証済みのため全項目を返してよい
+  （= **`POST` / `PATCH` の応答では 6 列は常に実値**）。
+- **型の変更（下位互換）:** `UserListItem` の勤怠 6 列は `short? AttendancePermission = null` /
+  `bool? PunchRequired = null` / `Guid? AttendanceRuleId = null` / `DateOnly? HireDate = null` /
+  `decimal? WeeklyDays = null` / `decimal? WeeklyHours = null` へ変更（既定値 `1` / `true` / `5m` / `40m` は廃止）。
+  **変わったのはレスポンス DTO のみで、リクエスト側の `UserWriteRequest`（作成、既定値付きの非 nullable）と
+  `UserPatchRequest`（更新、`null` = 現在値保持）は不変。** 非オーナーのクライアントには、
+  従来必ず値が入っていたフィールドが `null` で届くようになるため、上記の fail-close 解釈が必要になる。
 
 ---
 
@@ -1658,3 +1695,4 @@ paths:
 | 2026-07-27 | **バックエンド修正コミット `4c6981e`（監査・レビュー指摘の反映）の未反映分を §2.7 へ反映（原則5）。** ドキュメント整合コミット `ce30be6` が `4c6981e` より前にあったため未反映だった。**訂正:** §2.7.1 タイムカードの期間上限 — 「両端を含めて 63 日まで受け付ける（メッセージとの 1 日のずれは実装の現状）」はオフバイワンのバグを仕様として正規化した誤記。実装は `to - from + 1 > 62` で**両端を含めて 62 日まで**（63 日は 422）、フロント 3 箇所も同じ数え方に統一済み。**追記:** #8 / #21 一覧へのキーセットページング（`?limit`（1〜200、当該 2 本は省略時 200）/ `?cursor`、`meta.page = {nextCursor, limit, hasMore}`、不正は 400 `AKB-SYS-011`）/ #6 タイムカード 200 人・#27 休暇管理 500 人の利用者数上限（400 `AKB-SYS-011`）/ #7 `requestedAt` の対象日〜翌日の範囲検証（422）/ 日付・年月の業務日付範囲 `2000-01-01` 〜 実行日の 1 年後（422）/ §2.7.9 として `PATCH /api/maker/v1/users/{id}` の `UserPatchRequest` 化（`null` = 現在値保持、`clearHireDate` / `clearAttendanceRule`、`email` は空文字クリア）。あわせて冒頭に「API 変更は同一コミットでドキュメント更新」の運用ルールを明記 |
 | 2026-07-27 | **第 2 イテレーション修正コミット `48ad9c1` を §2.7 へ反映＋`4c6981e` の残り未反映分を追記（原則5）。** **訂正:** (1) #6 タイムカード / #27 休暇管理一覧の**利用者数上限超過は 400 `AKB-SYS-011` → 422 `AKB-SYS-002`**（`limit` / `cursor` を持たないエンドポイントでのページング不正コードの意味外流用を解消）。§2.7.0 エラーコード表・#6 / #27 の行・計算上の重要事項の 3 箇所を書き換え。(2) #6 の `userAction` から「期間を短くして」を削除し「**氏名で絞り込んで再検索してください**」に訂正（利用者クエリに期間条件は無く、期間短縮では利用者数は減らないため誤誘導だった）。(3) #6 のソートを **日付降順 → 氏名昇順（Ordinal）→ `userId` 昇順**に訂正（`List.Sort` が不安定ソートのため同姓同名で行順が非決定だった）。**追記:** #21 休暇申請一覧の期間絞り込み `?from` / `?to`（取得日の両端含み、片側のみ可、**両方省略時は全期間 = 下位互換**、上限 `LeaveService.RequestRangeMaxDays = 366` 日、超過・`from > to` は 422）/ #14 勤怠ルール復元の同名重複 409 `AKB-SYS-007` 事前検出 / #23 休暇申請の承認・却下の `FOR UPDATE` 行ロック（`4c6981e`、#9 側にのみ記載があった非対称の解消）/ 深夜帯計算の O(1) 化（`4c6981e`、`AttendanceCalc.NightOverlap`）/ `flexEnabled=false` 受信時はコアタイムを**値の指定に関わらず** null にする挙動の補足（`4c6981e`、「空文字を送るとクリアされる」注記の適用範囲を明確化）|
 | 2026-07-27 | **第 3 イテレーション修正コミット `e7d0fbd` を §2.7 へ反映（原則5）。** **訂正:** (1) **#21 休暇申請一覧の `?from` / `?to` は、業務日付の妥当範囲外を 422 で弾かず範囲へ丸める（クランプ）方式へ変更**（`AttendanceCalc.ClampBusinessDate` / `LeaveService.ParseFilterDate`）。§2.7.0 の業務日付の妥当範囲（#21 を 422 対象から除外し例外項を追加）・#21 の行の「主なエラー」（**範囲外エラーを削除**。書式違反の 422、`from > to`、上限 366 日超過の 422 は残る）・§2.7.4 の #21 詳細の 3 箇所を書き換え。理由は、月次サマリ #4 が**月初日**で範囲判定するのに対し絞り込みは**日単位**で判定するため、「当月 + 1 年」の月だけ月末日の `?to` が上限を 1 日超えて必ず 422 になる回帰が生じたこと（絞り込み境界は新規に作る業務日付ではなく、丸めても取得できるデータは変わらない）。上限・逆転の判定はクランプ後の日付に対して行う。(2) **勤怠ルールの同名重複 409 `AKB-SYS-007` ガードを復元（#14）専用から作成（#11）・更新（#12）・復元（#14）の 3 経路へ拡張**。#11 / #12 の行に 409 を追記し、`userAction` を復元前提の「もう一度復元してください」から 3 経路で成立する「**別の名称を指定するか、同名の勤務体系を改名・削除してから操作をやり直してください**」へ訂正 |
+| 2026-07-27 | **第 5 イテレーション修正コミット `7ee8284`（情報露出）を §2.7.9 へ反映（原則5）。** **追記:** **`GET /api/maker/v1/users` / `GET /api/maker/v1/users/{id}` は、勤怠 6 列（`attendancePermission` / `punchRequired` / `attendanceRuleId` / `hireDate` / `weeklyDays` / `weeklyHours`）をオーナー以外には `null` で返す**（`UserQueryService.WithoutLaborInfo`。オーナー判定 `IsOwnerAsync` は `AuthEndpoints.CheckUserAdminAsync` と同一式 = 有効・未削除かつ `process_record_permission >= 1`）。両エンドポイントは担当者候補の取得に使うため認証のみで開いており、そのままでは**勤怠権限 0 の利用者でも全在籍者の入社日・週所定を列挙できた**（有給の比例付与判定に直結する労務個人情報。勤怠 API 側の「他人の勤怠はオーナーのみ」と同じ境界を引く）。非オーナーには 403 にせず 200 のまま列を落とす（担当者候補の主用途を壊さないため）。あわせて、**`null` は「取得権限が無い」であり「0 / 未設定」ではない**こと（受け手は fail-close = 権限 `0` / 打刻対象 `false` で解釈し、DB 既定へフォールバックしない）、`UserListItem` の当該 6 列の nullable 化（既定 `1` / `true` / `5m` / `40m` → `null`。リクエスト側 `UserWriteRequest` / `UserPatchRequest` は不変）、全項目版 `UserQueryService.GetAsync` の `private` 化による**外部公開経路 1 本化**（`GetForActorAsync`。`POST` / `PATCH` はオーナー検証済みのため応答は常に実値）を記載。§2.2 の注記にも `GET` の扱いを追記。**訂正:** §2.7.9 の「勤怠 **4** 列」→「勤怠 **6** 列」（列挙されている項目数は 6 で、数え方の誤記）|
