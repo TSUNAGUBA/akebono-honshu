@@ -39,16 +39,20 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
         return rows.Select(ToDto).ToList();
     }
 
-    /// <summary>新規作成。</summary>
+    /// <summary>新規作成。同名の有効なルールがある場合は 409 (復帰導線付き)。</summary>
     public async Task<AttendanceRuleDto> CreateAsync(
         AttendanceRuleWriteRequest req, Guid actorId, CancellationToken ct = default)
     {
         Validate(req);
 
+        var name = req.Name.Trim();
+        // 部分 UNIQUE 索引に抵触する前に弾く。新規行は未採番のため除外対象なし (Guid.Empty)。
+        await EnsureNoActiveDuplicateNameAsync(name, Guid.Empty, ct);
+
         var now = SystemTime.UtcNow;
         var entity = new AttendanceRule
         {
-            Name = req.Name.Trim(),
+            Name = name,
             WorkStart = req.WorkStart.Trim(),
             WorkEnd = req.WorkEnd.Trim(),
             BreakMinutes = req.BreakMinutes,
@@ -79,7 +83,10 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
         return ToDto(entity);
     }
 
-    /// <summary>部分更新。未指定 (null) のフィールドは現在値を保持する。Id 不在は null 返却。</summary>
+    /// <summary>
+    /// 部分更新。未指定 (null) のフィールドは現在値を保持する。Id 不在は null 返却。
+    /// 同名の有効なルールがある場合は 409 (自分自身は除外。作成・復元と同じガード)。
+    /// </summary>
     public async Task<AttendanceRuleDto?> UpdateAsync(
         Guid id, AttendanceRulePatchRequest req, Guid actorId, CancellationToken ct = default)
     {
@@ -103,11 +110,15 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
             req.IsActive ?? entity.IsActive);
         Validate(merged);
 
+        var name = merged.Name.Trim();
+        // 名称が変わらない更新でも検査してよい (自分自身は excludeId で除外するため常に通る)。
+        await EnsureNoActiveDuplicateNameAsync(name, entity.Id, ct);
+
         var now = SystemTime.UtcNow;
         // 既定にする場合は毎回他ルールを落とす (冪等。既に複数 default が存在する不整合も自己修復する)。
         if (merged.IsDefault) await ClearOtherDefaultsAsync(entity.Id, now, ct);
 
-        entity.Name = merged.Name.Trim();
+        entity.Name = name;
         entity.WorkStart = merged.WorkStart.Trim();
         entity.WorkEnd = merged.WorkEnd.Trim();
         entity.BreakMinutes = merged.BreakMinutes;
@@ -196,7 +207,9 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
     /// 未削除の同名ルールを検出して 409 を返す
     /// (部分 UNIQUE 索引 uq_attendance_rules_tenant_name = (tenant_id, name) WHERE deleted_at IS NULL
     ///  と同じ条件。<see cref="LeaveService"/> の EnsureNoActiveDuplicateNameAsync と同形)。
-    /// excludeId は自分自身 (復元対象) を重複判定から除く。
+    /// **作成・更新・復元の 3 経路すべてで使う** (同じ事象の応答品質を経路で二分させない)。
+    /// excludeId は自分自身 (更新・復元の対象) を重複判定から除く。
+    /// 新規作成は除外対象が無いため <see cref="Guid.Empty"/> を渡す (採番済み Id と一致しない)。
     /// </summary>
     private async Task EnsureNoActiveDuplicateNameAsync(string name, Guid excludeId, CancellationToken ct)
     {
@@ -204,7 +217,7 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
             r => r.DeletedAt == null && r.Name == name && r.Id != excludeId, ct);
         if (duplicated)
             throw DomainException.UniqueViolation($"勤務体系「{name}」は既に登録されています",
-                "同名の勤務体系の名称を変更するか削除してから、もう一度復元してください");
+                "別の名称を指定するか、同名の勤務体系を改名・削除してから操作をやり直してください");
     }
 
     private static AttendanceRuleDto ToDto(AttendanceRule r)

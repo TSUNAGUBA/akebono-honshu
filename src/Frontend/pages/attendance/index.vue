@@ -615,7 +615,9 @@ const requestsLoading = ref(false)
 const requestsError = ref('')
 /**
  * 一覧がページ上限で打ち切られたときの注記 (空文字なら出さない)。
- * 申請一覧は期間で絞り込めない (全期間が対象) ため、運用年数に比例していつか必ず超える。
+ * 本タブは期間を絞らずに読む (承認待ち・自分の申請とも全期間が対象) ため、
+ * 運用年数に比例していつか必ず上限を超える。API 自体は `from` / `to` で期間を絞れるので、
+ * 期間が決まっている画面 (月次カレンダーの休暇マーカー等) はそちらで要求を絞ること。
  * 黙って切り詰めず「一部のみ表示している」ことを告知する (原則4)。
  */
 const myRequestsNotice = ref('')
@@ -898,7 +900,16 @@ const askConfirm = (opts: ConfirmOptions) => {
   successMessage.value = ''
   confirmState.value = opts
 }
-const closeConfirm = () => { confirmState.value = null }
+/**
+ * 閉じる側でも `formError` をクリアする (open 側と対にする)。
+ * 入力検証のエラーはモーダル内と画面上部の帯の両方に出るため、クリアしないと
+ * 「休暇の種別を選択してください」等が、キャンセル後も存在しないフォームの警告として残り続ける。
+ * 以降の各モーダルの close も同じ理由で必ずクリアする。
+ */
+const closeConfirm = () => {
+  confirmState.value = null
+  formError.value = ''
+}
 const runConfirm = async () => {
   const state = confirmState.value
   if (!state) return
@@ -926,7 +937,10 @@ const openFixModal = (punch?: PunchDto) => {
   }
   fixModalOpen.value = true
 }
-const closeFixModal = () => { fixModalOpen.value = false }
+const closeFixModal = () => {
+  fixModalOpen.value = false
+  formError.value = ''
+}
 
 const submitFix = async () => {
   const f = fixForm.value
@@ -974,7 +988,10 @@ const openLeaveModal = async () => {
   }
   leaveModalOpen.value = true
 }
-const closeLeaveModal = () => { leaveModalOpen.value = false }
+const closeLeaveModal = () => {
+  leaveModalOpen.value = false
+  formError.value = ''
+}
 
 const submitLeave = async () => {
   const f = leaveForm.value
@@ -1008,7 +1025,10 @@ const openGrantModal = async () => {
   }
   grantModalOpen.value = true
 }
-const closeGrantModal = () => { grantModalOpen.value = false }
+const closeGrantModal = () => {
+  grantModalOpen.value = false
+  formError.value = ''
+}
 
 const submitGrant = async () => {
   const f = grantForm.value
@@ -1036,32 +1056,60 @@ const submitGrant = async () => {
 const bulkModalOpen = ref(false)
 const bulkForm = ref({ leaveTypeId: '', grantDate: todayJst(), days: 1 })
 
+/**
+ * 一括付与の対象を表す確認文言。人数は在籍中メンバー一覧 (/users) の件数を使う。
+ * 一覧を取得できていないときは人数を伏せる (確認文言に推測値を出さない)。
+ */
+const bulkTargetLabel = computed(() =>
+  members.value.length > 0 ? `在籍中の全メンバー ${members.value.length} 名` : '在籍中の全メンバー')
+
 const openBulkModal = async () => {
   formError.value = ''
   successMessage.value = ''
-  await loadLeaveTypes()
+  // 確認ダイアログに対象人数を出すため、種別と併せてメンバー一覧も読む (個別付与と同じ経路・原則3)。
+  await Promise.all([loadMembers(), loadLeaveTypes()])
   bulkForm.value = { leaveTypeId: manualGrantTypeOptions.value[0]?.id ?? '', grantDate: todayJst(), days: 1 }
   bulkModalOpen.value = true
 }
-const closeBulkModal = () => { bulkModalOpen.value = false }
+const closeBulkModal = () => {
+  bulkModalOpen.value = false
+  formError.value = ''
+}
 
-const submitBulk = async () => {
+/**
+ * 一括付与は**在籍者全員**が対象で、**付与を取り消す API は無い**。
+ * 影響範囲が同等の「周期付与を実行」と同じく確認ダイアログを挟む (取り返しの付かない操作は手前で止める)。
+ * 確認文言には対象人数と付与日数を必ず出す。
+ */
+const submitBulk = () => {
   const f = bulkForm.value
   if (!f.leaveTypeId) { formError.value = '休暇の種別を選択してください'; return }
   if (!f.grantDate) { formError.value = '付与日を入力してください'; return }
   if (!(f.days > 0)) { formError.value = '付与日数は 0 より大きい値を入力してください'; return }
-  const ok = await runWrite(async () => {
-    const res = await bulkGrantLeave({
-      leaveTypeId: f.leaveTypeId,
-      grantDate: f.grantDate,
-      days: Number(f.days),
-      target: 'all',
-    })
-    successMessage.value = `一括付与しました（付与 ${res.granted} 件 / 既存のためスキップ ${res.skipped} 件）`
-    invalidate()
-    await loadLeaveAdmin()
-  }, '一括付与に失敗しました')
-  if (ok) closeBulkModal()
+  const typeName = manualGrantTypeOptions.value.find((t) => t.id === f.leaveTypeId)?.name ?? '選択中の種別'
+  const days = Number(f.days)
+  askConfirm({
+    title: '休暇を一括付与しますか？',
+    message: `${bulkTargetLabel.value}に「${typeName}」を ${days} 日ずつ付与します（付与日 ${f.grantDate}）。`,
+    note: '一括付与を取り消す機能はありません（付与の記録は保護され、まとめて取り消せません）。既に同じ付与日の付与があるメンバーはスキップします。',
+    confirmLabel: '一括付与する',
+    tone: 'primary',
+    run: async () => {
+      const res = await bulkGrantLeave({
+        leaveTypeId: f.leaveTypeId,
+        grantDate: f.grantDate,
+        days,
+        target: 'all',
+      })
+      successMessage.value = `一括付与しました（付与 ${res.granted} 件 / 既存のためスキップ ${res.skipped} 件）`
+      invalidate()
+      await loadLeaveAdmin()
+      // 確認ダイアログは runConfirm が閉じる。入力元のモーダルは成功時のみここで閉じる
+      // (失敗時は開いたままにして入力を失わせない)。
+      closeBulkModal()
+    },
+    fallbackError: '一括付与に失敗しました',
+  })
 }
 
 /** 周期自動付与の実行。既存の付与は絶対に更新・削除せず、重複分は skipped として数える (冪等)。 */
@@ -1128,7 +1176,10 @@ const openRuleModal = (rule?: AttendanceRuleDto) => {
   }
   ruleModalOpen.value = true
 }
-const closeRuleModal = () => { ruleModalOpen.value = false }
+const closeRuleModal = () => {
+  ruleModalOpen.value = false
+  formError.value = ''
+}
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
 /** 入力検証はサーバ (§5.3) と同じ条件・同じ文言にする (どちらで弾かれても案内が変わらない)。 */
@@ -1333,7 +1384,8 @@ const currentDefaultRuleName = computed(() =>
         <div v-if="dailyError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ dailyError }}</div>
         <div v-if="dailyLoading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
-        <div v-else class="grid gap-3 lg:grid-cols-2">
+        <!-- 取得に失敗した日は集計カードを描画しない: 0 埋めの「実労働 0:00」を本物の記録と誤読させないため -->
+        <div v-else-if="!dailyError" class="grid gap-3 lg:grid-cols-2">
           <!-- 打刻タイムライン -->
           <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
             <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">打刻タイムライン</h2>
@@ -1357,10 +1409,11 @@ const currentDefaultRuleName = computed(() =>
                   >{{ fmtJstHm(p.at) }}</span>
                   <span v-if="p.superseded" class="rounded-full bg-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-600">修正前</span>
                   <span v-else-if="p.source === 'fix'" class="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700">修正反映</span>
+                  <!-- 指で押す導線のため 44px 以上のタップ領域を確保する (原則8) -->
                   <button
                     v-if="canWriteAttendance && isViewingSelf && !p.superseded"
                     type="button"
-                    class="ml-auto text-xs text-blue-600 hover:underline"
+                    class="ml-auto inline-flex min-h-[44px] items-center text-xs text-blue-600 hover:underline"
                     @click="openFixModal(p)"
                   >この打刻を修正</button>
                 </div>
@@ -1438,7 +1491,8 @@ const currentDefaultRuleName = computed(() =>
         <div v-if="weeklyError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ weeklyError }}</div>
         <div v-if="weeklyLoading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
-        <template v-else>
+        <!-- 取得に失敗した週は集計を描画しない (0 埋めを実績と誤読させない。日次と同じ扱い) -->
+        <template v-else-if="!weeklyError">
           <!-- 週合計 vs 法定 40h -->
           <section class="mb-3 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
@@ -1543,7 +1597,8 @@ const currentDefaultRuleName = computed(() =>
         <div v-if="monthlyError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ monthlyError }}</div>
         <div v-if="monthlyLoading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
-        <template v-else>
+        <!-- 取得に失敗した月はカレンダー・集計を描画しない (0 埋めを実績と誤読させない。日次と同じ扱い) -->
+        <template v-else-if="!monthlyError">
           <!-- カレンダー -->
           <section class="mb-3 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
             <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">月間カレンダー（日をクリックで日次へ）</h2>
@@ -1804,6 +1859,12 @@ const currentDefaultRuleName = computed(() =>
             <p v-if="pendingCount === 0" class="px-2 py-6 text-center text-sm text-gray-500">承認待ちの申請はありません。</p>
 
             <div v-else class="space-y-3">
+              <!-- 承認は即時反映で取り消せない。却下のみ確認ダイアログを挟む仕様のため、注記で補う -->
+              <p class="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600">
+                <span class="font-semibold">承認した申請は取り消せません。</span>
+                承認すると打刻列・休暇残数へ即時反映されます。誤って承認した打刻は、あらためて「打刻修正を申請」から直してください。
+              </p>
+
               <!-- 打刻修正 -->
               <div v-if="pendingFixes.length > 0">
                 <h3 class="mb-1.5 text-sm font-semibold text-gray-700">打刻修正（{{ pendingFixes.length }} 件）</h3>
@@ -1876,7 +1937,8 @@ const currentDefaultRuleName = computed(() =>
                       <span class="font-mono text-sm text-gray-600">{{ bizDateKey(r.date) }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ kindLabel(r.kind) }}</span>
                       <span class="font-mono text-sm text-gray-800">→ {{ fmtJstHm(r.requestedAt) }}</span>
-                      <button type="button" class="ml-auto text-xs text-blue-600 hover:underline" @click="goToDaily(r.date)">その日の勤怠を見る</button>
+                      <!-- 指で押す導線のため 44px 以上のタップ領域を確保する (原則8) -->
+                      <button type="button" class="ml-auto inline-flex min-h-[44px] items-center text-xs text-blue-600 hover:underline" @click="goToDaily(r.date)">その日の勤怠を見る</button>
                     </div>
                     <p class="mt-1 text-sm text-gray-600">理由: {{ r.reason }}</p>
                     <p class="mt-0.5 text-xs text-gray-400">
@@ -2172,12 +2234,13 @@ const currentDefaultRuleName = computed(() =>
                   <span>締め日 {{ r.closingDay === 31 ? '月末' : r.closingDay }}</span>
                   <span v-if="r.flexEnabled">フレックスあり</span>
                 </div>
-                <div class="mt-1.5 flex gap-3">
+                <!-- 破壊的操作を含む導線。指で押す前提のため 44px 以上のタップ領域を確保する (原則8) -->
+                <div class="mt-1.5 flex gap-4">
                   <template v-if="!r.deletedAt">
-                    <button type="button" class="text-xs text-blue-600 hover:underline" @click="openRuleModal(r)">編集</button>
-                    <button type="button" :disabled="writeBusy" class="text-xs text-red-600 hover:underline disabled:opacity-40" @click="confirmDeleteRule(r)">削除</button>
+                    <button type="button" class="inline-flex min-h-[44px] items-center text-xs text-blue-600 hover:underline" @click="openRuleModal(r)">編集</button>
+                    <button type="button" :disabled="writeBusy" class="inline-flex min-h-[44px] items-center text-xs text-red-600 hover:underline disabled:opacity-40" @click="confirmDeleteRule(r)">削除</button>
                   </template>
-                  <button v-else type="button" :disabled="writeBusy" class="text-xs text-green-700 hover:underline disabled:opacity-40" @click="restoreRule(r)">復元</button>
+                  <button v-else type="button" :disabled="writeBusy" class="inline-flex min-h-[44px] items-center text-xs text-green-700 hover:underline disabled:opacity-40" @click="restoreRule(r)">復元</button>
                 </div>
               </li>
             </ul>
@@ -2396,7 +2459,9 @@ const currentDefaultRuleName = computed(() =>
 
           <form class="flex-1 space-y-2.5 overflow-y-auto px-5 py-3" @submit.prevent="submitBulk">
             <div class="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              対象は「在籍中の全メンバー」です。部署・雇用区分での絞り込みは行いません。付与後に取り消したい場合は、対象メンバーの付与内容を管理者へ確認してください。
+              対象は「在籍中の全メンバー」です（部署・雇用区分での絞り込みは行いません）。
+              <span class="font-semibold">一括付与を取り消す機能はありません。</span>
+              「一括付与する」を押すと、対象人数と付与日数の確認ダイアログが出ます。
             </div>
             <div class="flex flex-col gap-1">
               <span class="text-sm font-medium">休暇の種別 <span class="text-red-500">*</span></span>

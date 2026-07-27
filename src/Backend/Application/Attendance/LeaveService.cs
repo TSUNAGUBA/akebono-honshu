@@ -352,6 +352,7 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
     /// 月次カレンダーの休暇マーカーのように「表示中の月だけ」が要る画面は、
     /// 全期間を引いてページ上限で黙って切り詰められないよう必ず範囲を指定すること。
     /// 期間の上限は <see cref="RequestRangeMaxDays"/> 日 (両端含み、超過は 422)。
+    /// 業務日付の妥当範囲を外れた境界は 422 にせず丸める (<see cref="ParseFilterDate"/>)。
     ///
     /// **キーセットページング必須** (AKB-DOC-12 §7.1、PurchaseOrderService.ListAsync と同じ規約)。
     /// status 未指定の scope=all は運用年数に比例して全履歴を返すため、非有界のままでは必ず
@@ -780,10 +781,9 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
     /// <summary>
     /// 一覧の期間絞り込み (?from / ?to) を解析する。**両方省略時は (null, null) = 全期間**
     /// (既存の呼び出しをそのまま動かすため。下位互換・原則7)。
-    /// 書式・業務日付の妥当範囲・422 の文言はタイムカードと同じ
-    /// <see cref="AttendanceService.ParseDate"/> に委ねる (原則3)。
     /// 両方指定された場合のみ from &lt;= to と <see cref="RequestRangeMaxDays"/> 日以内を強制する
     /// (タイムカード <see cref="AttendanceService.GetTimecardAsync"/> と同じ「両端含み」の数え方)。
+    /// 上限判定は**クランプ後**の日付で行う (丸めで期間は縮むだけなので、判定が緩くなることはない)。
     /// </summary>
     private static (DateOnly? From, DateOnly? To) ParseDateRange(string? from, string? to)
     {
@@ -803,11 +803,30 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
         return (fromDate, toDate);
     }
 
-    /// <summary>絞り込み日付の解析。空 (未指定) は null = 絞り込まない。</summary>
+    /// <summary>
+    /// 絞り込み日付の解析。空 (未指定) は null = 絞り込まない。
+    ///
+    /// **業務日付の妥当範囲を外れた値は 422 にせずクランプする**
+    /// (<see cref="AttendanceCalc.ClampBusinessDate"/>)。ここは「新規に作る業務日付」ではなく
+    /// 既存データの絞り込み境界であり、弾くと画面側に偽エラーが出るため
+    /// (月サマリ <c>GET /attendance/month</c> は月初日で範囲判定するので「当月 + 1 年」の月は通るのに、
+    ///  月末日の ?to だけが上限を超えて 422 になり、その月だけ休暇マーカーが取得できなくなっていた)。
+    /// 丸めても取得できるデータは変わらない (取得日は作成時に同じ範囲で検証済みのため)。
+    ///
+    /// 書式検査と 422 の文言は <see cref="AttendanceService.ParseDate"/> と同一に保つ
+    /// (同じ日付クエリでどちらに入っても案内が変わらないようにする。原則3)。
+    /// 範囲の扱いだけが異なるため委譲できず、ここで解析している。
+    /// </summary>
     private static DateOnly? ParseFilterDate(string? value, string label)
-        => string.IsNullOrWhiteSpace(value)
-            ? (DateOnly?)null
-            : AttendanceService.ParseDate(value, null, label);
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (!DateOnly.TryParseExact(value.Trim(), "yyyy-MM-dd",
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            throw DomainException.Validation($"{label} は YYYY-MM-DD 形式で指定してください",
+                "カレンダーから日付を選び直して再送信してください");
+
+        return AttendanceCalc.ClampBusinessDate(parsed, SystemTime.TodayJst);
+    }
 
     private static LeaveRequestStatus ParseStatus(string status)
         => status.Trim().ToLowerInvariant() switch

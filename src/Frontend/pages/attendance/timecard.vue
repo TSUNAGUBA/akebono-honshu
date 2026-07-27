@@ -65,7 +65,9 @@ const from = ref(todayJstPlusDays(-6))
 const to = ref(todayJst())
 
 const days = ref<DaySummary[]>([])
-const listLoading = ref(false)
+// 初期値は true。false で始めると、初回の取得が終わるまでの間だけ
+// 「この期間の打刻がありません」という偽の空状態が一瞬出る（reloadRange の finally で必ず false に戻る）。
+const listLoading = ref(true)
 const listError = ref('')
 /** 期間上限（62 日）を超えて丸めたか。true の間は警告を出す。 */
 const rangeClamped = ref(false)
@@ -310,8 +312,9 @@ onBeforeUnmount(() => {
         {{ listError }}
       </div>
 
-      <!-- サマリ -->
-      <div class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <!-- サマリ。取得に失敗しているときは描画しない (勤怠は法定記録であり、
+           0 値を本物の集計と誤読されるコストが高いため。原則4) -->
+      <div v-if="!listError" class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <div class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <div class="text-xs text-gray-500">出勤日数</div>
           <div class="mt-0.5 text-2xl font-bold text-gray-800">{{ workDays }}<span class="ml-0.5 text-sm font-normal text-gray-500">日</span></div>

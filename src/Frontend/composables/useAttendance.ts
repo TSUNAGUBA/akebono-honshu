@@ -586,14 +586,32 @@ export const useAttendance = () => {
    * `POST /attendance/punches`。成功後に state / 集計キャッシュを破棄し、`/state` から再取得する。
    * 打刻順序違反はサーバが 409（AKB-SYS-007）を返すため、呼び出し側は
    * `getApiErrorMessage(e, '打刻に失敗しました')` で案内すること。
+   *
+   * **打刻後の再取得は補助処理**として扱い、失敗しても `punch()` は成功として返す（原則4）。
+   * 打刻はサーバで確定済みの法定記録であり、ここで reject すると
+   *   1. commit 済みなのに画面が「打刻に失敗しました」と告げる
+   *   2. `invalidate` で空にしたキャッシュのまま `punchState` が 'before' へ戻り、
+   *      出勤ボタンが再活性化して二重打刻（= サーバ 409）を誘発する
+   * という実害が出る。失敗時は**サーバが返した打刻後状態 `result.state` をキャッシュへ反映**して
+   * 状態機械を進めておく（打刻列は次回の `loadState` で正しい内容に置き換わる）。
+   * 失敗自体は握りつぶさずログに残す。
    */
   const punch = async (kind: PunchKind): Promise<PunchResult> => {
     const result = await apiData<PunchResult>('/attendance/punches', {
       method: 'POST',
       body: { kind },
     })
+    // 破棄する前に現在の打刻列を控える（再取得に失敗したときの暫定表示に使う）。
+    const previousPunches = cache.value.state?.punches ?? []
     invalidate(['state', 'months', 'alerts'])
-    await loadState(true)
+    try {
+      await loadState(true)
+    } catch (e) {
+      // 状態はサーバの権威ある応答で埋める。打刻列は今回の打刻を含まない直前のスナップショットだが、
+      // 空にして「まだ打刻がありません」と見せるより実態に近い（次回の取得で解消する）。
+      cache.value.state = { state: result.state, punches: previousPunches }
+      console.error('[attendance] 打刻後の状態取得に失敗しました', e)
+    }
     return result
   }
 

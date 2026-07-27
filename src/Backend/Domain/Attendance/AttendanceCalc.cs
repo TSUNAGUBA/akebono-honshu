@@ -70,6 +70,21 @@ public static class AttendanceCalc
     public static bool IsBusinessDateInRange(DateOnly value, DateOnly today)
         => value >= MinBusinessDate && value <= today.AddYears(1);
 
+    /// <summary>
+    /// 業務日付を妥当範囲 (<see cref="MinBusinessDate"/> 〜 <paramref name="today"/> の 1 年後) へ丸める。
+    ///
+    /// **「新規に作る業務日付」ではなく、既存データの絞り込み境界** (一覧の ?from / ?to など) に使う。
+    /// 作成系は範囲外を 422 で弾く (<see cref="IsBusinessDateInRange"/>) のが正しいが、絞り込みは
+    /// 範囲外を弾くと「その月だけ一覧が 422 になる」ような画面側の偽エラーを生む。
+    /// 丸めても取得できるデータは変わらない (範囲外の日付を持つレコードは作成時に弾かれているため)。
+    /// </summary>
+    public static DateOnly ClampBusinessDate(DateOnly value, DateOnly today)
+    {
+        if (value < MinBusinessDate) return MinBusinessDate;
+        var max = today.AddYears(1);
+        return value > max ? max : value;
+    }
+
     // ---- 36 協定アラートの識別子 ----
     // HTTP エラーコードではなくアラート識別子のため AkbErrorCodes には追加しない。
 

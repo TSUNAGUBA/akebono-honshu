@@ -572,8 +572,9 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     /// 業務上ありえない日付 (0001 年等) は .NET の英語例外や非現実的な集計範囲に化けるため、
     /// <see cref="AttendanceCalc.IsBusinessDateInRange"/> の妥当範囲でも弾く。
     ///
-    /// 休暇申請一覧の期間絞り込み (<see cref="LeaveService.ListRequestsAsync"/>) からも使う。
-    /// 日付クエリの書式・妥当範囲・エラー文言を勤怠内で 1 箇所に保つため public にしている (原則3)。
+    /// 本メソッドは「新規に作成・集計する業務日付」用。範囲外は 422 で弾く。
+    /// 一方、一覧の**絞り込み**境界は弾かずに丸める (<see cref="LeaveService"/> の
+    /// フィルタ用解析)。月末が上限を 1 日超えるだけで偽エラーになるのを避けるため。
     /// </summary>
     public static DateOnly ParseDate(string? value, DateOnly? fallback, string label)
     {
