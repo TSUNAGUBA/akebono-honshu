@@ -83,7 +83,7 @@
 | テナントのライフサイクル（契約・プラン・ステータス） | プラットフォーム akebono-backoffice | `tenant` テーブル = 投影（キャッシュ）。アプリからは読取専用（DB GRANT で書込剥奪）。プロビジョニング接続までは init シードの Honshu テナント 1 件 |
 | テナント既定値 (Honshu) | 本リポジトリ db/init | 固定 UUID `00000000-0000-4000-8000-000000000001` / tenant_code `honshu` |
 | 認証 (Email/PW・UID) | Firebase Authentication | 変更なし |
-| 業務ユーザ・権限 4 カテゴリ | 本アプリ RDS `users` | 変更なし（tenant_id 列を追加） |
+| 業務ユーザ・権限 **5** カテゴリ（2026-07-27 更新: 4 + 勤怠 `attendance_permission`）| 本アプリ RDS `users` | 変更なし（tenant_id 列を追加） |
 | ユーザの所属テナント | MVP: `users.tenant_id`（RDS 先行）→ 接続後: Firebase Custom Claims `tenant_id`（bko 発行のキャッシュ） | トークンに claim があれば claim 優先、なければ RDS 値 |
 
 - **書込順序**: テナント確定（クレーム）→ `ITenantContext` → 接続オープン時に
@@ -223,7 +223,7 @@
 第二段階:
 
 - `dotnet build`（0 warning / 0 error）・`vue-tsc --noEmit`（0 error）
-- db/init 全 9 ファイル（09-updated-at-triggers.sql 追加後）を再初期化適用、
+- db/init 全 9 ファイル（09-updated-at-triggers.sql 追加後。**2026-07-27 現在は 10-attendance.sql を加えた全 10 ファイル**）を再初期化適用、
   RLS スモーク 10 チェック ALL PASSED（記録系 6 テーブルの追記専用・
   accounts_receivable VIEW 越しのフェイルクローズを追加検証）
 - 実サービス経由のページング実機検証（ローカル DB）: 4 一覧のカーソル走査が

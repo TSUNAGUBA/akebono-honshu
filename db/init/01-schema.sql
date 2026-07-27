@@ -87,7 +87,7 @@ CREATE INDEX idx_users_tenant ON users (tenant_id);
 CREATE INDEX idx_users_active ON users (is_active) WHERE deleted_at IS NULL;
 
 -- users の拡張列について (追加場所の索引):
---   §3.18 の Phase 5 全カラム (firebase_uid / email / 4 権限 / 監査列 / legacy_id) は
+--   §3.18 の Phase 5 全カラム (firebase_uid / email / 権限 4 列 / 監査列 / legacy_id) は
 --     02-masters.sql の ALTER TABLE users で追加する。
 --   勤怠 (Iteration 30) の 6 列 (attendance_permission / punch_required / attendance_rule_id /
 --     hire_date / weekly_days / weekly_hours) は 10-attendance.sql で追加する。

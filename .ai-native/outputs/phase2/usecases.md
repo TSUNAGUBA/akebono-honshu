@@ -20,7 +20,7 @@
 
 既存17マスタ + 追加1マスタ:
 - **既存17件:** size, brand, function, country, supplier, department, product_type, product_season, product_group, color, material, material_classification, warehouse, delivery_destination, document_template_purchase, document_template_confirmation, document_text_purchase
-- **追加1件:** `user`（ユーザ）— 既存「利用者マスタメンテナンス」画面で AS-IS 確認済、4権限カテゴリ × レベル分け（詳細: `domain-context/industry/honshu-master-schema.md#7`）
+- **追加1件:** `user`（ユーザ）— 既存「利用者マスタメンテナンス」画面で AS-IS 確認済、4権限カテゴリ × レベル分け（詳細: `domain-context/industry/honshu-master-schema.md#7`）。**2026-07-27 追記: 実装では勤怠権限 `attendance_permission` を 5 つ目のカテゴリとして追加済み**（Iteration 30、akebono-office からの勤怠移植）
 
 **既存マスタの兼用/参照（追加マスタは作らない）:**
 - `supplier` ← **工場（factory）** も一旦兼用（MVP 暫定、supplier_type で区別想定）
@@ -270,8 +270,8 @@
 | 項目 | 状態 |
 |------|------|
 | ログイン方式（ID/パスワード? SSO?） | Phase 3 / Phase 4 で確定 |
-| 権限分離 | **AS-IS で確認済**。既存ユーザマスタに4権限カテゴリ × レベル分けが実装済（品番台帳: 4レベル / 発注書作成: 3レベル / 発注情報: 2レベル / 工程実績: 2レベル）。MVP は踏襲。詳細: `domain-context/industry/honshu-master-schema.md#7` |
-| 工程実績管理権限 | **DB カラムとして保持、UI には出さない**（MVP 対象外機能だが将来拡張のためフィールドは確保） |
+| 権限分離 | **AS-IS で確認済**。既存ユーザマスタに4権限カテゴリ × レベル分けが実装済（品番台帳: 4レベル / 発注書作成: 3レベル / 発注情報: 2レベル / 工程実績: 2レベル）。MVP は踏襲。**2026-07-27 追記: 実装は AS-IS の 4 カテゴリ + 勤怠（3レベル）の計 5 カテゴリ**（Iteration 30）。詳細: `domain-context/industry/honshu-master-schema.md#7` |
+| 工程実績管理権限 | **DB カラムとして保持、UI には出さない**（MVP 対象外機能だが将来拡張のためフィールドは確保）。**2026-07-27 訂正: 実装では「オーナー権限」として利用者マスタ管理・勤怠管理系の判定に使用しており、`/masters/users` で UI 露出済み** |
 | 担当属性 | **AS-IS で確認済**。企画担当 / 営業担当 のチェック属性が存在 |
 | 監査ログ | **主要トランザクション（品番・発注・マスタ）のみ記録** で確定。スポンサー仮説「証跡」と整合、コストバランス重視 |
 

@@ -21,7 +21,8 @@ interface AkebonoUser {
   // マルチテナント (AKB-DOC-12)。/auth/sync 応答から取得し、useApi が X-Tenant-Id ヘッダーに使う。
   tenantId: string
   tenantCode: string
-  // C-02 4 権限カテゴリ (Phase 5 §3.18)
+  // C-02 権限カテゴリ (Phase 5 §3.18)。勤怠 (attendancePermission) を加えて現在 5 カテゴリ。
+  // いずれも非単調スケールのため、書込判定は === 1 で行う (>= 1 は「参照のみ」に書込を許す)。
   productLedgerPermission: number       // 0=なし, 1=更新可能, 2=参照のみ, 3=参照のみ制限
   purchaseOrderCreatePermission: number // 0=なし, 1=更新可能, 2=参照のみ
   purchaseOrderInfoPermission: number   // 0=なし, 1=あり

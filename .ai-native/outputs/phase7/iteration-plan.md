@@ -169,6 +169,7 @@
 - ダミー認証 (`DummyTokenService` HMAC) は維持、Iteration 4 で Firebase Auth に置換
 - 監査ログは Service レベル `audit.LogAsync(entity_type.action 形式)` で記録
 - マスタの 4 権限カテゴリのうち実装したのは品番台帳のみ、他 3 つは Iteration 2/3 で実需に応じて追加
+  （**2026-07-27 追記:** その後 Iteration 30 で 5 つ目の勤怠権限 `attendance_permission` を追加し、権限カテゴリは計 5 件になった）
 
 **Iteration 2 着手前の整備事項 (なし):**
 - Iteration 1 終了時点で Iteration 2 (商品マスタ) 着手の障壁はなし。`product_families` / `products` の FK 参照先 (brands / suppliers / countries / colors / sizes / materials 等) は全て投入済み

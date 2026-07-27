@@ -4,12 +4,24 @@
 
 | ファイル | 最終更新 | 概要 | 行数 |
 |---------|---------|------|---|
-| architecture.md | 2026-05-19 | アーキテクチャ設計 (デプロイ構成 / レイヤー / 5シナリオ ドキュメントトレース / 横断的関心事) | 460 |
-| data-design.md | 2026-05-19 | データ設計 (18マスタ + 商品4 + 発注3 + 監査1 = 26テーブル, 正規化, 機密度, ボリューム見積) | 656 |
-| api-design.md | 2026-05-19 | API 設計 (21機能 × REST エンドポイント, 共通規約, 10主要フロー検証) | 942 |
-| screen-design.md | 2026-05-19 | 画面設計 (サイトマップ + 27画面 + 共通レイアウト + レスポンシブ + アクセシビリティ) | (本ファイル作成済) |
+| architecture.md | 2026-07-27 | アーキテクチャ設計 (デプロイ構成 / レイヤー / 5シナリオ ドキュメントトレース / 横断的関心事 / **5 権限ポリシー**) | 489 |
+| data-design.md | 2026-07-27 | データ設計 (18マスタ + 商品4 + 発注3 + 監査1 + **勤怠6** = **32テーブル**, 正規化, 機密度, ボリューム見積) | 921 |
+| api-design.md | 2026-07-27 | API 設計 (21機能 × REST エンドポイント + **勤怠 27 エンドポイント (§2.7)**, 共通規約, 10主要フロー検証) | 1428 |
+| screen-design.md | 2026-07-27 | 画面設計 (サイトマップ + **29画面** + 共通レイアウト + レスポンシブ + アクセシビリティ) | 873 |
 | legacy-field-parity.md | 2026-06-23 | 旧システム(/refference 189列等) ↔ 現画面 項目パリティ分析。欠落項目の棚卸しと Phase A〜D 段階導入計画。autocomplete化・副担当者・為替レート追加を記録 | (本ファイル作成済) |
 | legacy-field-spec.md | 2026-06-23 | 旧システム完全項目仕様（オペレーター提供キャプチャ由来）。商品マスタ/発注(国内・海外)の全項目・マスタ確定値の実装 SoT。Phase A〜D に確定値を付与 | (本ファイル作成済) |
+
+> **2026-07-27 集計更新（Iteration 30: 勤怠管理・タイムカードの移植）:**
+>
+> | 集計 | 更新前 | 更新後 | 内訳 |
+> |---|---|---|---|
+> | テーブル数 | 26 | **32** | 18マスタ + 商品4 + 発注3 + 監査1 + **勤怠6**（`attendance_rules` / `punch_records` / `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`。`data-design.md §14`）|
+> | 画面数 | 27 | **29** | 初版 27 + **勤怠 2**（`/attendance`（8 タブ）/ `/attendance/timecard`。`screen-design.md §1.2`）|
+> | 権限カテゴリ | 4 | **5** | 初版 4 + **勤怠 `attendance_permission`**（`data-design.md §3.18`）|
+> | 勤怠 API | – | **27 本** | `api-design.md §2.7`（#1〜#14 打刻・集計・修正申請・勤怠ルール / #15〜#27 休暇）|
+>
+> 勤怠 6 テーブルは `users` への列追加（勤怠列 6 本）を伴う。DDL の SoT は `db/init/10-attendance.sql`。
+> 生産管理・販売管理等の拡張モジュールの集計は `*-production.md` 側で別管理（本表の対象外）。
 
 ## Phase 状態
 
@@ -18,7 +30,7 @@
 - **ゲート判定:** 7条件すべて PASS (オペレーターレビュー反映済)
 - **次フェーズ:** Phase 6 (プロトタイプベースのフィードバック)
   - サイトマップ作成 ✅ (screen §1)
-  - 画面ごとの機能定義 ✅ (screen §3, 27画面)
+  - 画面ごとの機能定義 ✅ (screen §3, **29画面**。初版 27 + 勤怠 2)
   - I/F 設計 6 視点チェック ✅ (4成果物の各 §で実施)
   - データ設計正規化 ✅ (data §11, 非正規化は根拠記録)
   - API 設計に癒着なし ✅ (api §4)
@@ -83,4 +95,4 @@
 
 ## 主要キーワード
 
-Phase 5 基本設計, 27画面, 18マスタ + 商品4 + 発注3 + 監査1 = 26テーブル, 21機能 REST エンドポイント, サイトマップ, Vertical Slice, 軽量レイヤード, EF Core 8 per-request Scoped, Nuxt 3 SPA, TailwindCSS, Reka UI Headless, lucide-icons, Pinia (UI/auth), Composable (ローカル状態), Firebase Auth + RDS users SoT 分離, Custom Claims キャッシュ, Reconciler 日次, KMS Storage Encryption, 仕入単価マスク監査, S3 Pre-signed URL 画像 5MB×5枚, RFC 7807 Problem Details, AUTH-NNN/PROD-NNN/ORDER-NNN/PRICE-NNN, OpenAPI 3.0 + Swashbuckle, openapi-typescript 型生成, Idempotency-Key 採番系冪等性, /api/v1/ URL バージョニング, マスタ CRUD ジェネリック (IMaster), Step ウィザード P-01〜P-03, P-04 カードビュー ARIA tablist, O-03 デフォルトテーブル, 発注スナップショット (customer_name/sku/product_name/unit_price), 改訂枝番 Snnnn-NN, 月次パーティション audit_logs, S3 Glacier IR 3年, レスポンシブ (sm カード固定/md Sheet/lg サイドナビ), アクセシビリティ WCAG AA, 5シナリオ ドキュメントトレース (A〜E), 10主要フロー API 検証 (A〜J)
+Phase 5 基本設計, 29画面 (初版27 + 勤怠2), 18マスタ + 商品4 + 発注3 + 監査1 + 勤怠6 = 32テーブル, 21機能 REST エンドポイント + 勤怠27エンドポイント, 5権限カテゴリ (初版4 + 勤怠), サイトマップ, Vertical Slice, 軽量レイヤード, EF Core 8 per-request Scoped, Nuxt 3 SPA, TailwindCSS, Reka UI Headless, lucide-icons, Pinia (UI/auth), Composable (ローカル状態), Firebase Auth + RDS users SoT 分離, Custom Claims キャッシュ, Reconciler 日次, KMS Storage Encryption, 仕入単価マスク監査, S3 Pre-signed URL 画像 5MB×5枚, RFC 7807 Problem Details, AUTH-NNN/PROD-NNN/ORDER-NNN/PRICE-NNN, OpenAPI 3.0 + Swashbuckle, openapi-typescript 型生成, Idempotency-Key 採番系冪等性, /api/v1/ URL バージョニング, マスタ CRUD ジェネリック (IMaster), Step ウィザード P-01〜P-03, P-04 カードビュー ARIA tablist, O-03 デフォルトテーブル, 発注スナップショット (customer_name/sku/product_name/unit_price), 改訂枝番 Snnnn-NN, 月次パーティション audit_logs, S3 Glacier IR 3年, レスポンシブ (sm カード固定/md Sheet/lg サイドナビ), アクセシビリティ WCAG AA, 5シナリオ ドキュメントトレース (A〜E), 10主要フロー API 検証 (A〜J)

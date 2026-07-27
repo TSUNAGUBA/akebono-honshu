@@ -326,14 +326,16 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 
 ## 12. 認可割当（監査C-1/Major-1反映・D-prod-7確定、既存実在トークン・既存ヘルパー再利用）
 
-> **権限値の非単調エンコード注意（監査Major-1反映、最重要）:** RDS権限列は単調増加ではない。`product_ledger_permission`: 0=なし/1=更新可能/2=参照のみ/3=参照のみ(制限)。`purchase_order_create_permission`: 0=なし/1=更新可能/2=参照のみ。**「値が大きい＝高権限」ではない**ため `≥` で read/write を導出してはならない。**本増分は判定ロジックを新発明せず既存実装を再利用する**: write 系は既存 `CheckMasterEditAsync`（`ProductLedgerPermission >= 1` を要求、現行MVPの2値簡素化＝Iter1知見#7、ラベル"更新可能"）／`CheckOrderEditAsync`（`PurchaseOrderCreatePermission >= 1`）をそのまま使う。read 系は既存の参照系エンドポイント同様、認証済アクティブユーザに開放（フロントで編集UIを権限制御）。段階Cで Custom Claims 化する際の write/read 厳密導出（1=更新可能 vs 2=参照のみ の解釈の精緻化）は**既存と歩調を合わせて一括で実施**する（本増分単独では既存の2値運用を踏襲し、独自の値解釈を持ち込まない）。
+> **権限値の非単調エンコード注意（監査Major-1反映、最重要）:** RDS権限列は単調増加ではない。`product_ledger_permission`: 0=なし/1=更新可能/2=参照のみ/3=参照のみ(制限)。`purchase_order_create_permission`: 0=なし/1=更新可能/2=参照のみ。**`attendance_permission`（勤怠、Iteration 30 で追加した 5 つ目のカテゴリ）: 0=なし/1=更新可能/2=参照のみ — 既存カテゴリと同じ非単調スケール。**「値が大きい＝高権限」ではない**ため `≥` で read/write を導出してはならない（勤怠権限も同様。`>= 1` と書くと「参照のみ(2)」に書込を許すバグになる）。**本増分は判定ロジックを新発明せず既存実装を再利用する**: write 系は既存 `CheckMasterEditAsync`（`product_ledger_permission`）／`CheckOrderEditAsync`（`purchase_order_create_permission`）をそのまま使う。read 系は既存の参照系エンドポイント同様、認証済アクティブユーザに開放（フロントで編集UIを権限制御）。段階Cで Custom Claims 化する際の write/read 厳密導出（1=更新可能 vs 2=参照のみ の解釈の精緻化）は**既存と歩調を合わせて一括で実施**する（本増分単独では既存の2値運用を踏襲し、独自の値解釈を持ち込まない）。
+>
+> **2026-07-27 訂正（実装との乖離解消）:** 本注記は当初 write gate を「`ProductLedgerPermission >= 1` を要求（現行MVPの2値簡素化＝Iter1知見#7）」「`PurchaseOrderCreatePermission >= 1`」と記述していたが、**実装は既に `== 1`（更新可能）のみを許可する形へ是正済み**（`src/Backend/Presentation/Endpoints/AuthEndpoints.cs`。旧 `>= 1` は「参照のみ(2/3)」に誤って書込を許していた）。本注記が警告していた非単調エンコード問題そのものであるため、記述を実装に合わせて訂正する。**5 つ目の勤怠権限にも同じ規則が適用される**（write = `CheckAttendanceWriteAsync` が `attendance_permission == 1`、read = `CheckAttendanceReadAsync` が `1 または 2`）。なお勤怠の**管理系**（全員のタイムカード・承認/却下・休暇付与・勤怠ルール設定）は勤怠権限では判定せず、**オーナー権限 `process_record_permission >= 1`**（`CheckAttendanceAdminAsync`）に集約する。`process_record_permission` は 0/1 の 2 値なので `>= 1` で正しい（非単調ではない）。
 
 | 機能 | 認可（既存トークン/ヘルパー） |
 |---|---|
 | BOM 参照（B-02, GET materials/requirements） | 認証済アクティブユーザ（既存read系と同等）＝`product:read` 相当 |
-| BOM 更新（B-01, PUT materials） | 既存 `CheckMasterEditAsync`（`product_ledger_permission >= 1`）を再利用＝`product:write` 相当 |
+| BOM 更新（B-01, PUT materials） | 既存 `CheckMasterEditAsync`（`product_ledger_permission == 1`。2026-07-27 訂正: 旧記載 `>= 1`）を再利用＝`product:write` 相当 |
 | 生産指示 参照（PI-02/03 GET, /excel） | 認証済（既存read系と同等）＝`purchase_order:read` 相当 |
-| 生産指示 更新（PI-01/03 POST/PATCH/issue/complete/cancel） | 既存 `CheckOrderEditAsync`（`purchase_order_create_permission >= 1`）を再利用＝`purchase_order:write` 相当 |
+| 生産指示 更新（PI-01/03 POST/PATCH/issue/complete/cancel） | 既存 `CheckOrderEditAsync`（`purchase_order_create_permission == 1`。2026-07-27 訂正: 旧記載 `>= 1`）を再利用＝`purchase_order:write` 相当 |
 | 素材発注 参照（金額なし: MO-02一覧マスク, prepare） | 認証済＝`purchase_order:read` 相当 |
 | **素材発注 金額開示（GET 詳細/一覧 ?include_amount, /excel）** | 上記 ＋ `price:read`（既存仕入単価マスクと同方式、Custom Claims。段階Bでの price 強制は既存 api-design.md §2.5 の price 運用に追従）。`MaterialPrice.View` 監査（§6 ブロッキング） |
 | **素材発注 更新（単価設定含む: MO-01/03）** | `CheckOrderEditAsync`（write）＋ `price:write` |
@@ -350,4 +352,5 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | 2026-06-22 | 初版（5テーブル） |
 | 2026-06-22 v2 | 独立レビュー1周目反映: 明細 is_deleted 非保持を明記し未/済クエリ修正（C-1）/ 認可を既存実在トークンに是正＋§12新設（監査C-1）/ 素材単価のprice権限AND・デフォルトマスク・MaterialPrice.Viewブロッキング監査（監査C-2/M-4）/ 移行はBOM自動生成せず誤発注防止（監査C-3）/ 採番をadvisory lock+リトライ・複数発注は独立Tx（監査C-4/M-1）/ BOM↔3FK疎結合化・差分upsert・単一Tx（監査M-3）/ ロス率を任意DEFAULT0でMVP基本式統一（M-1）/ 出力履歴はaudit_logs集約を明記（M-2）/ subtotal精度根拠（Mi-1）/ NULL単価subtotal=0意味論＋注記（Mi-2）/ CHECK括弧明示（Mi-3）/ ERDにlast_exported_at（Ni-1） |
 | 2026-06-22 v3 | 独立レビュー2周目反映: §12 権限値の非単調エンコード是正＝既存 CheckMasterEditAsync/CheckOrderEditAsync 再利用（SA Major-1）/ PS-01生産バッジ権限を purchase_order:read に整合（SA Major-2）/ MaterialPrice.View を既存 data-design.md §6.1/§9 へ追記＋新設理由（CR Major-1）/ ブロッキング監査の読取系=明示サービス層INSERT＋2sタイムアウト＋AUDIT-001（SA Major-3）/ idx_mo_active 廃止＋§7.2 想定実行計画（CR Major-2）/ 採番リトライ上限 PINST-005/MORD-004（SA Minor-3）/ product_family_id NULL ロールアップ仕様（CR Minor-2）/ 採番Tx最小化・EC2単一実体注記（SA Minor-1） |
+| 2026-07-27 | §12 権限値の非単調エンコード注意に **5 つ目の権限カテゴリ `attendance_permission`（0=なし/1=更新可能/2=参照のみ、同じ非単調スケール）を追加**。あわせて write gate の記述を実装に合わせて `>= 1` → `== 1` へ訂正（`CheckMasterEditAsync` / `CheckOrderEditAsync`）。勤怠の管理系はオーナー権限 `process_record_permission >= 1`（2 値、非単調ではない）に集約する旨を明記 |
 | 2026-06-22 v4 | 独立レビュー3周目（収束確認）反映: §5 採番の実行基盤表記を中立化（「App Runner複数インスタンス」→「実行基盤のインスタンス数に依らず／本番EC2単一・将来複数とも直列化」、CR Nit-1/SA INFO-1）。3周目で CR=Crit0/Maj0/Min0、SA=リリースOK Crit0/Maj0/Min0 を確認、本修正で唯一の残差解消＝収束 |

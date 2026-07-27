@@ -117,7 +117,7 @@
 | **セッション管理** | **8 時間アイドルタイムアウトはフロント側で実装**（最終操作時刻を localStorage に記録、超過時に `signOut()`）| SEC-05 整合。Firebase ID Token は 1 時間自動更新だが、業務上のアイドル切断はアプリ層で制御 |
 | **バックエンド検証** | **`Microsoft.AspNetCore.Authentication.JwtBearer` + Firebase JWKS** + **FirebaseAdmin (.NET) SDK** | App Runner で受信した `Authorization` ヘッダの ID Token を Firebase の公開鍵（JWKS エンドポイント）で署名検証 → UID 取得 → Custom Claims から権限取得 |
 | **権限管理（SoT）** | **RDS `users` テーブルが業務情報・権限ロールの SoT**、Firebase Auth は ID/Email/認証情報の SoT。**Custom Claims は権限のキャッシュ**（RDS で権限変更時に Firebase Admin SDK で `setCustomUserClaims()` を呼び再同期） | データフロー整合性（CLAUDE.md 原則6）: RDS = SoT、Firebase Custom Claims = キャッシュ。SoT 側書込先行、キャッシュ後追い |
-| **認可** | **ASP.NET Core Authorization Policies + Custom Claims** | 4 権限カテゴリ × レベル（C-02）をポリシーで宣言、Custom Claims の `role` / `permissions[]` を評価。SEC-11 = サーバサイドで全 API 検証 |
+| **認可** | **ASP.NET Core Authorization Policies + Custom Claims** | **5** 権限カテゴリ × レベル（C-02。2026-07-27 更新: 初版 4 + 勤怠 `attendance_permission`）をポリシーで宣言、Custom Claims の `role` / `permissions[]` を評価。SEC-11 = サーバサイドで全 API 検証 |
 | **削除済ユーザ（AUTH-003 / SEC-12）** | Firebase Auth で `disabled=true` に設定 + RDS `users.is_active=false` を同期。Firebase 側で disabled なユーザは ID Token 発行不可、既存 Token も次回検証で `auth/user-disabled` で拒否 | 両方同期する手順を Phase 5 で文書化（SoT は RDS、削除操作は RDS 先行 → Firebase 反映の順序）|
 | **ブルートフォース対策（SEC-06）** | Firebase Auth 標準のレートリミット（同一 IP / 同一アカウントへの過度な試行を自動拒否）+ Firebase Auth の不正検知 | SEC-06 整合。MaxFailedAccessAttempts 等のしきい値設定は Firebase Console / Identity Platform 設定で実施 |
 | **シークレット鍵管理** | Firebase Admin SDK のサービスアカウント JSON は AWS Secrets Manager に格納、App Runner サービスロールから取得 | ハードコード回避、ローテーション運用 |
@@ -150,7 +150,7 @@
 | パスワードハッシュ（SEC-04）| NFR §2 | Firebase Authentication 標準（scrypt、Google が鍵管理）| ✅ |
 | 監査ログ改竄防止（SEC-17）| NFR §2 | PostgreSQL の append-only テーブル + ロール権限で UPDATE/DELETE 拒否、3年経過分は S3 Object Lock で不変化 | ✅ |
 | 業務時間 99% SLA / RTO 4h / RPO 24h | NFR §5 | App Runner SLA 99.95%、RDS Multi-AZ で自動フェイルオーバ、PITR で 24h 以内復旧、Firebase Auth は Google 標準 SLA 99.95% | ✅ |
-| 仕入単価=中-高機密度（暗号化）| NFR §6.2 | **A 案採用**: RDS Storage Encryption（KMS）+ TLS + 4権限アクセス制御 + 監査ログ。Phase 5 で再評価 | ⚠️ |
+| 仕入単価=中-高機密度（暗号化）| NFR §6.2 | **A 案採用**: RDS Storage Encryption（KMS）+ TLS + 5権限アクセス制御（2026-07-27 更新: 4 → 5）+ 監査ログ。Phase 5 で再評価 | ⚠️ |
 | 営業秘密の監査（不競法）| NFR §6.3 | アクセス制御 + 監査ログ + X-Ray でアクセス追跡 | ✅ |
 | データ国内保管 | NFR §4.2 | **業務データは AWS Tokyo（`ap-northeast-1`）に保管**。**Firebase Hosting の静的アセット配信は CDN（業務データを含まない）**、**Firebase Authentication のユーザ識別情報（UID/Email）は Google グローバル配置**となるため部分矛盾、**オペレーター判断で許容**（後述 §8 R-13）| ⚠️ |
 
@@ -164,12 +164,20 @@
 
 | データ種別 | 機密度 | 配置 | 暗号化 | アクセス制御 |
 |---|---|---|---|---|
-| 仕入単価 | 中-高 | RDS PostgreSQL (AWS Tokyo) | KMS 保存時暗号化 + TLS 1.2+ 通信時 | 4 権限ポリシー + 監査ログ（Phase 5 で再評価） |
-| 商品マスタ・発注書 | 中 | RDS PostgreSQL (AWS Tokyo) | KMS + TLS | 4 権限ポリシー + 監査ログ |
-| 取引先・仕入先 | 中 | RDS PostgreSQL (AWS Tokyo) | KMS + TLS | 4 権限ポリシー |
+| 仕入単価 | 中-高 | RDS PostgreSQL (AWS Tokyo) | KMS 保存時暗号化 + TLS 1.2+ 通信時 | 5 権限ポリシー + 監査ログ（Phase 5 で再評価） |
+| 商品マスタ・発注書 | 中 | RDS PostgreSQL (AWS Tokyo) | KMS + TLS | 5 権限ポリシー + 監査ログ |
+| 取引先・仕入先 | 中 | RDS PostgreSQL (AWS Tokyo) | KMS + TLS | 5 権限ポリシー |
 | **ユーザ業務情報・権限（SoT）** | 軽微 | **RDS PostgreSQL (AWS Tokyo)** | KMS + TLS | Firebase UID で紐付け、業務情報・権限ロールはここに格納 |
 | **ユーザ認証情報（SoT: UID/Email/PW ハッシュ）** | 軽微 | **Firebase Authentication（Google グローバル）** | Firebase 標準（保存時・通信時とも暗号化、scrypt）| Firebase IAM + サービスアカウント |
 | 商品画像 | 低-中 | S3 (AWS Tokyo) | SSE-S3（標準有効）+ Pre-signed URL 時限アクセス | Bucket Policy + IAM Role |
+
+> **2026-07-27 追記（権限カテゴリは 4 → 5）:** 本ドキュメントの「4 権限」表記は Iteration 30（勤怠管理・
+> タイムカードの akebono-office からの移植）で **5 権限**へ更新した。5 カテゴリは
+> `product_ledger_permission` / `purchase_order_create_permission` / `purchase_order_info_permission` /
+> `process_record_permission`（オーナー権限）/ **`attendance_permission`（勤怠、新規）**。
+> **品番台帳・発注書作成・勤怠は非単調エンコード**（`0=なし / 1=更新可能 / 2=参照のみ`）のため、
+> 書込判定は `>= 1` ではなく `== 1` で行う。詳細は
+> `.ai-native/outputs/phase3/functional-requirements.md §4.1` / `.ai-native/outputs/phase5/architecture.md §5.1`。
 | 監査ログ | 中 | RDS → S3 Glacier IR (AWS Tokyo) | KMS + S3 Object Lock（3年アーカイブは不変化）| IAM + 改竄防止設計 |
 | シークレット | 高 | AWS Secrets Manager | KMS（CMK） | Managed IAM Role 限定 |
 | Firebase サービスアカウント鍵 | 高 | AWS Secrets Manager（または GCP Secret Manager との二重管理） | KMS（CMK） | App Runner サービスロール限定 |
@@ -225,7 +233,7 @@
 | R-3 | 並行稼働期間の二重入力負荷 | 高 | MIG-6 でオペレーターと合意。CSV インポートで業務効率化、並行期間を 1-2 ヶ月に短縮 |
 | R-4 | EF Core の N+1 クエリ問題（CLAUDE.md） | 中 | `Include` / `AsSplitQuery` のガイドラインを Phase 5 で文書化、Code Review チェック項目に追加、X-Ray トレースで可視化 |
 | R-5 | Nuxt SPA モードのバンドルサイズ肥大 | 低 | コード分割 + 動的 import で初期表示 500ms 維持、CloudFront キャッシュ活用 |
-| R-6 | 4 権限ポリシーの実装漏れ（SEC-11） | 高 | 全 API エンドポイントに `[Authorize]` 必須化を CI Lint で強制、テストカバレッジで網羅性検証 |
+| R-6 | 5 権限ポリシーの実装漏れ（SEC-11。2026-07-27 更新: 4 → 5）| 高 | 全 API エンドポイントに `[Authorize]` 必須化を CI Lint で強制、テストカバレッジで網羅性検証 |
 | R-7 | 監査ログ INSERT 専用の運用ミス | 中 | PostgreSQL ロール権限で UPDATE/DELETE を REVOKE、Migration 適用前に Code Review で確認 |
 | R-8 | RDS / App Runner の **メンテナンスウィンドウ通知**見逃し → 予期せぬ再起動 | 中 | SNS → メール/Slack 通知、計画停止ウィンドウを業務時間外（土日深夜）に固定 |
 | R-9 | App Runner の **オートスケール上限**設定誤り → 1-2名利用で過剰課金 | 中 | min=1 / max=2 で固定、CloudWatch 課金アラート設定（月額上限超過で通知）|

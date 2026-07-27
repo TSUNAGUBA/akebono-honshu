@@ -992,6 +992,282 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 ---
 
+### 2.7 勤怠（勤怠管理・タイムカード、Iteration 30）
+
+> **移植元:** **akebono-office** の勤怠管理・タイムカード機能。打刻・勤怠集計（労基法 32/34/37 条）・
+> 36 協定アラート（労基法 36 条）・打刻修正申請・休暇（労基法 39 条）を honshu へ移植した。
+> **実装 SoT:** `src/Backend/Presentation/Endpoints/AttendanceEndpoints.cs`（#1〜#14）/
+> `AttendanceLeaveEndpoints.cs`（#15〜#27）/ `src/Backend/Application/Attendance/`（`AttendanceDtos.cs` /
+> `LeaveDtos.cs` / `AttendanceService.cs` / `AttendanceRuleService.cs` / `LeaveService.cs`）/
+> `src/Backend/Domain/Attendance/`（`AttendanceCalc.cs` / `LeaveCalc.cs`）。
+> テーブル定義は `data-design.md §14`、画面は `screen-design.md §3.14 / §3.15` を参照。
+
+#### 2.7.0 共通規約（本節の前提）
+
+**ベースパス:** `/api/maker/v1/attendance`（休暇系は `/api/maker/v1/attendance/leave`）。
+
+> **§1.1 との差分（実装事実）:** 本節のパスは実装のとおり `/api/maker/v1/` プレフィックスで記載している。
+> プラットフォーム統合改修でサービス区分（`maker`）が URL に入ったため、§1.1 の初版表記 `/api/v1/` とは
+> 実際のプレフィックスが異なる（`/api/maker/v1/masters/...` 等、既存エンドポイントも同様）。
+
+- レスポンス封筒は `ApiEnvelope.Ok` / `Created` / `Error`。JSON は camelCase、enum は **camelCase 文字列**
+  （`in` / `breakStart` / `pending` / `approved` 等）。
+- 時間量はすべて **int の「分」**。業務日付は `YYYY-MM-DD`（JST の日付）、時刻は **UTC の ISO 8601**
+  （表示・深夜帯判定はフロント/ドメイン層で JST へ変換する。`data-design.md §14.0` 参照）。
+- ID はすべて `UUID`。
+
+**認可の考え方:**
+
+| 区分 | 要求する権限 | 実装ヘルパー（`AuthEndpoints`）|
+|---|---|---|
+| 書込（打刻・打刻修正申請・休暇申請）| `users.attendance_permission == 1`（更新可能）| `CheckAttendanceWriteAsync` |
+| 参照（自分の勤怠・集計・一覧・勤怠ルール/休暇種別の参照）| `attendance_permission` が **1 または 2**（0 は不可）| `CheckAttendanceReadAsync` |
+| 管理（全員のタイムカード・承認/却下・休暇付与・勤怠ルール/休暇種別の設定・`scope=all`）| **オーナー** `users.process_record_permission >= 1` | `CheckAttendanceAdminAsync` |
+
+- **`attendance_permission` は既存 4 権限と同じ非単調スケール**（0=なし / 1=更新可能 / 2=参照のみ）。
+  **書込判定は必ず `== 1`**（`>= 1` は「参照のみ(2)」に書込を許してしまうバグ）。
+- 管理系は勤怠専用の権限列を増やさず、既存の**オーナー権限に集約**した
+  （office の admin 相当。office の hr 中間ロールは honshu に無いため作らない = 権限を緩めない方向で統合）。
+- **他人の勤怠の参照はオーナー限定。** `userId` クエリ省略時は常に自分。自分以外を指定した場合はオーナーを要求し、
+  不足なら 403 `AKB-AUTH-010`「他の利用者の勤怠を参照する権限がありません」を返す
+  （`AttendanceEndpoints.ResolveTargetAsync` / `AttendanceLeaveEndpoints.EnsureCanReadOtherAsync`）。
+- 打刻（#1）はさらに **本人が `users.punch_required = true`** であることを要求する（役員・外注等は打刻対象外）。
+
+**エラーコード（新規採番なし。既存 `AkbErrorCodes` から選択）:**
+
+| 場面 | code | HTTP |
+|---|---|---|
+| 入力検証（`kind` 不正・`month` / `date` 形式・理由未入力・期間超過・日数不正 等）| `AKB-SYS-002`（`SysValidation`）| 422 |
+| 打刻順序違反（状態機械）・処理済み申請への再操作・名称重複・同日重複申請 | `AKB-SYS-007`（`SysUniqueViolation`）| 409 |
+| 権限不足（勤怠権限・オーナー権限・他人の勤怠参照）・打刻対象外 | `AKB-AUTH-010`（`AuthInsufficientPermission`）| 403 |
+| 無効ユーザ / 業務ユーザ未紐付 | `AKB-AUTH-005`（`AuthAccountInactive`）| 403 |
+| 未認証 | `AKB-AUTH-001`（`AuthTokenMissing`）| 401 |
+| 対象が見つからない（越境含む存在秘匿、メッセージは一律「指定されたリソースが見つかりません」）| `AKB-TENANT-010`（`TenantResourceConcealed`）| 404 |
+
+> **`AKB-ATT-*` は HTTP エラーコードではない。** 36 協定アラート（#5）の `code`
+> （`AKB-ATT-A45` / `A45W` / `A100` / `A80` / `A6C` / `A6CW`）は
+> **画面に出す業務アラートの識別子**であり、エラー封筒の `code` でもエラーコード台帳（Phase 3 §10 /
+> `AkbErrorCodes`）の一部でもない。**`AkbErrorCodes` には追加しない**（定数は `AttendanceCalc` 内に置く）。
+> アラートを返す API 自体は 200 で成功する。
+
+#### 2.7.1 打刻・集計（#1〜#6）
+
+| # | メソッド | パス | 用途 | 認可 |
+|---|---|---|---|---|
+| 1 | `POST` | `/api/maker/v1/attendance/punches` | 打刻（対象は常に本人）| 勤怠 `==1` かつ `punch_required` |
+| 2 | `GET` | `/api/maker/v1/attendance/state` | 当日の打刻状態（打刻ウィジェット用）| 勤怠 1 or 2 |
+| 3 | `GET` | `/api/maker/v1/attendance/day` | 日次サマリ | 勤怠 1 or 2（他人はオーナー）|
+| 4 | `GET` | `/api/maker/v1/attendance/month` | 月次サマリ | 同上 |
+| 5 | `GET` | `/api/maker/v1/attendance/alerts` | 36 協定アラート（直近 6 ヶ月）| 同上 |
+| 6 | `GET` | `/api/maker/v1/attendance/timecard` | 全員のタイムカード | **オーナー** |
+
+| # | リクエスト | レスポンス | 主なエラー |
+|---|---|---|---|
+| 1 | body `{ "kind": "in" \| "out" \| "breakStart" \| "breakEnd" }`（大小文字非依存）。日付・時刻はサーバ採番（`date` = JST 当日 / `at` = UTC now）| **201** `PunchResultDto { id, state }`（`state` は**打刻後**の状態）。`Location: /api/maker/v1/attendance/state` | 422 `AKB-SYS-002`「打刻種別は in / out / breakStart / breakEnd のいずれかを指定してください」/ 403 `AKB-AUTH-010`「打刻対象の利用者ではありません」/ 409 `AKB-SYS-007`「現在の状態では「{出勤\|退勤\|休憩開始\|休憩終了}」はできません」/ 404 `AKB-TENANT-010` |
+| 2 | — | **200** `PunchStateDto { state, punches: PunchDto[] }`。`punches` は**生打刻列**（置換解決前、`at`→`createdAt` 昇順）| 403（勤怠権限なし）|
+| 3 | `?userId&date&raw`。`date` 既定 = **JST の今日**。`raw` は `1` / `true` / `yes` で真 | **200** `DaySummaryDto`。`raw` 真のとき `rawPunches` を同梱（偽のときは `null`。フィールド自体は省略されない）| 422「date は YYYY-MM-DD 形式で指定してください」/ 403（他人参照）/ 404 |
+| 4 | `?userId&month`。`month=YYYY-MM`、既定 = **JST の当月** | **200** `MonthSummaryDto { days[], total, workDays }` | 422「month は YYYY-MM 形式で指定してください」/ 403 / 404 |
+| 5 | `?userId&endMonth`。`endMonth=YYYY-MM`、既定 = 当月。`endMonth` を最終月とする直近 6 ヶ月を判定 | **200** `Article36AlertDto[]`（0 件なら空配列 = アラートなし）| 422「endMonth は YYYY-MM 形式で指定してください」/ 403 / 404 |
+| 6 | `?from&to&q`。既定 `from` = **当月 1 日**、`to` = **今日**（JST）。`q` = 表示名の部分一致 | **200** `TimecardRowDto[]`。**日付降順 → 氏名昇順**（`StringComparison.Ordinal` で決定的に）| 422「from / to は YYYY-MM-DD 形式で指定してください」/ 422「期間の開始日は終了日以前にしてください」/ 422「期間は最大 62 日までです」/ 403（非オーナー）|
+
+**計算上の重要事項:**
+- **`GET /day` も月次経由で算出する。** 月 60 時間超の残業バケット（`over60Ot`）は月内累計に依存するため、
+  単日だけ計算すると常に 0 になる。実装は対象月を丸ごと集計してから該当日を射影する。
+- `GET /timecard` の期間上限は **バックエンド定数 `AttendanceService.TimecardRangeMaxDays = 62` が SoT**。
+  フロント（`composables/useAttendance.ts`）は同値の定数を本定数への参照コメント付きで持つ。
+  判定式は `from + 62 日 < to` を超過とするため、**`to == from + 62 日`（両端を含めて 63 日）までは受け付ける**
+  （メッセージ文言「最大 62 日」との 1 日のずれは実装の現状。フロントは 62 日でクランプする）。
+- `TimecardRowDto` の `inAt` = 有効打刻の**最初の In**、`outAt` = **最後の Out**。
+  有効打刻が 0 件の日は行を出さない。対象は `is_active` かつ未削除の利用者のみ。
+
+#### 2.7.2 打刻修正申請（#7〜#9）
+
+| # | メソッド | パス | 用途 | 認可 |
+|---|---|---|---|---|
+| 7 | `POST` | `/api/maker/v1/attendance/fix-requests` | 修正申請（対象は常に本人）| 勤怠 `==1` |
+| 8 | `GET` | `/api/maker/v1/attendance/fix-requests` | 申請一覧 | 勤怠 1 or 2 / `scope=all` は**オーナー** |
+| 9 | `POST` | `/api/maker/v1/attendance/fix-requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
+
+| # | リクエスト | レスポンス | 主なエラー |
+|---|---|---|---|
+| 7 | body `FixRequestCreateRequest { date, kind, requestedAt, reason }`。`date` は必須（既定なし）。`requestedAt` は**タイムゾーン付き**文字列（例 `2026-07-27T09:00:00+09:00`）でフロントが送り、サーバが UTC 化して保存 | **201** `IdResultDto { id }`。`Location: .../fix-requests/{id}` | 422「date を指定してください」/「date は YYYY-MM-DD 形式で指定してください」/「打刻種別は …」/「修正後の時刻は YYYY-MM-DDTHH:mm:ss+09:00 形式（タイムゾーン付き）で指定してください」/「修正理由を入力してください（客観的記録の担保）」/「修正理由は 512 文字以内で入力してください」|
+| 8 | `?status&scope`。`status` = `pending` / `approved` / `rejected`（省略 = 絞り込みなし）。`scope=all` で全員分 | **200** `FixRequestDto[]`。**`createdAt` 降順 → `id` 降順**。申請者・処理者の氏名は削除済ユーザでも解決して返す（監査表示のため）| 422「status は pending / approved / rejected のいずれかを指定してください」/ 403（`scope=all` を非オーナーが指定）|
+| 9 | body `FixDecisionRequest { action: "approved" \| "rejected" }` | **200** `IdResultDto { id }` | 422「action は approved / rejected を指定してください」/ 404 `AKB-TENANT-010` / 409 `AKB-SYS-007`「この申請は処理済みです」|
+
+> **承認処理（トランザクション、記録系保護）:**
+> `BeginTransaction` → `SELECT ... FROM attendance_fix_requests WHERE id = {0} FOR UPDATE`（パラメータ化）→
+> 申請を再読込して `status != Pending` なら 409 → **`punch_records` に修正打刻を追記**
+> （`source=Fix`, `at=requestedAt`, `fixedFrom=` 置換対象の有効打刻の `at`, `fixReason`, `approvedByUserId`）→
+> 申請の `status` / `decidedByUserId` を更新 → Commit。
+> **元打刻は削除も更新もしない**（`data-design.md §14.2`）。409 判定を必ずトランザクション内で行うことで二重承認を防ぐ。
+> 却下時は打刻を追記しない。
+
+#### 2.7.3 勤怠ルール（勤務体系マスタ、#10〜#14）
+
+| # | メソッド | パス | 用途 | 認可 |
+|---|---|---|---|---|
+| 10 | `GET` | `/api/maker/v1/attendance/rules` | 一覧（`?includeInactive`、既定 false）| 勤怠 1 or 2 |
+| 11 | `POST` | `/api/maker/v1/attendance/rules` | 新規作成 | **オーナー** |
+| 12 | `PATCH` | `/api/maker/v1/attendance/rules/{id:guid}` | **部分更新** | **オーナー** |
+| 13 | `DELETE` | `/api/maker/v1/attendance/rules/{id:guid}` | 論理削除 | **オーナー** |
+| 14 | `POST` | `/api/maker/v1/attendance/rules/{id:guid}/restore` | 論理削除の取消 | **オーナー** |
+
+| # | リクエスト | レスポンス | 主なエラー |
+|---|---|---|---|
+| 10 | `?includeInactive=true` で無効・論理削除済も返す（復元 UI 用）| **200** `AttendanceRuleDto[]`（`name` 昇順 → `id` 昇順）| 403 |
+| 11 | body `AttendanceRuleWriteRequest`（全項目必須）| **201** `AttendanceRuleDto`。`Location: .../rules/{id}` | 422（下記検証一覧）|
+| 12 | body `AttendanceRulePatchRequest`（**全項目 nullable。`null` = 未指定 = 現在値を保持**）| **200** `AttendanceRuleDto` | 422（マージ後の値に対して同じ検証）/ 404 |
+| 13 | — | **204 No Content** | 404 |
+| 14 | — | **204 No Content** | 404 |
+
+**入力検証（すべて 422 `AKB-SYS-002`、上から順に評価して最初の違反を返す）:**
+
+| 条件 | メッセージ |
+|---|---|
+| `name` が空 | 「名称を入力してください」|
+| `name` が 128 文字超 | 「名称は 128 文字以内で入力してください」|
+| `workStart` / `workEnd` が `HH:mm` 形式でない | 「始業・終業は HH:mm 形式で入力してください」|
+| `workStart >= workEnd`（序数比較。**同時刻も不可**）| 「終業は始業より後の時刻にしてください」|
+| `breakMinutes` が 0〜240 外 | 「休憩時間は 0〜240 分で入力してください」|
+| `closingDay` が 1〜31 外 | 「締め日は 1〜31 で入力してください（31 = 月末）」|
+| `legalHolidayWeekday` が 0〜6 外 | 「法定休日の曜日は 0〜6（0 = 日曜）で入力してください」|
+| `flexSettlementMonths` が 1〜3 外 | 「フレックスの清算期間は 1〜3 ヶ月で入力してください」|
+| `flexEnabled` かつコアタイムが `HH:mm` でない | 「コアタイムは HH:mm 形式で入力してください」|
+| `flexEnabled` かつ `flexCoreStart >= flexCoreEnd` | 「コアタイムの終了は開始より後の時刻にしてください」|
+
+> **設計上の注意:**
+> - **`isDefault=true` で保存すると、同一テナントの他ルールの `isDefault` が同一 `SaveChanges` 内で false に落ちる**
+>   （中間状態を作らない排他制御。既に複数 default が存在する不整合も自己修復する）。
+> - PATCH は**部分更新**。`null` のフィールドは更新しない（CLAUDE.md の Zod `.partial()` による既定値上書き障害と
+>   同じ轍を踏まないため、書込用と別 record を用意している）。検証はマージ後の値に対して行うので、
+>   「始業だけ更新して終業との前後関係が壊れる」ようなケースも 422 で弾ける。
+>   なお `flexCoreStart` / `flexCoreEnd` は本 I/F では `null` でクリアできない（未指定と区別できないため。空文字を送るとクリアされる）。
+> - 論理削除（#13）は `deletedAt` を立てると同時に **`isDefault` を false に落とす**（削除済ルールが既定として
+>   解決に参加しないようにするため）。復元（#14）では `isDefault` を戻さない（明示的に再設定する運用）。
+
+#### 2.7.4 休暇（#15〜#27）
+
+| # | メソッド | パス | 用途 | 認可 |
+|---|---|---|---|---|
+| 15 | `GET` | `/api/maker/v1/attendance/leave/types` | 休暇種別 一覧（`?includeInactive`）| 勤怠 1 or 2 |
+| 16 | `POST` | `/api/maker/v1/attendance/leave/types` | 休暇種別 作成 | **オーナー** |
+| 17 | `PATCH` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 部分更新 | **オーナー** |
+| 18 | `DELETE` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 論理削除 | **オーナー** |
+| 19 | `POST` | `/api/maker/v1/attendance/leave/types/{id:guid}/restore` | 休暇種別 復元 | **オーナー** |
+| 20 | `GET` | `/api/maker/v1/attendance/leave/summary` | 残数・年 5 日義務・履歴 | 勤怠 1 or 2（他人はオーナー）|
+| 21 | `GET` | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 | 勤怠 1 or 2 / `scope=all` は**オーナー** |
+| 22 | `POST` | `/api/maker/v1/attendance/leave/requests` | 休暇申請（対象は常に本人）| 勤怠 `==1` |
+| 23 | `POST` | `/api/maker/v1/attendance/leave/requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
+| 24 | `POST` | `/api/maker/v1/attendance/leave/grants` | 個別付与 | **オーナー** |
+| 25 | `POST` | `/api/maker/v1/attendance/leave/grants/bulk` | 一括付与 | **オーナー** |
+| 26 | `POST` | `/api/maker/v1/attendance/leave/periodic-grants/run` | 周期自動付与の実行 | **オーナー** |
+| 27 | `GET` | `/api/maker/v1/attendance/leave/admin/summary` | 休暇管理一覧（メンバー × 種別）| **オーナー** |
+
+| # | リクエスト | レスポンス | 主なエラー |
+|---|---|---|---|
+| 15 | `?includeInactive=true` で無効・論理削除済も返す | **200** `LeaveTypeDto[]`（`displayOrder` 昇順 → `name` 昇順）| 403 |
+| 16 | body `LeaveTypeWriteRequest { name, grantMethod, expiryMonths, description, displayOrder=1, isActive=true }`。**`isStatutory` は受け取らない**（改竄防止）| **201** `LeaveTypeDto` | 422「名称を入力してください」/「名称は 64 文字以内で入力してください」/「有効期間は 1〜120 ヶ月で指定してください（無期限にする場合は未指定）」/「表示順は 0 以上で指定してください」/ 409「休暇種別「{名称}」は既に登録されています」|
+| 17 | body `LeaveTypePatchRequest`（**`null` = 未指定 = 現在値を保持**。無期限へ戻す場合のみ `clearExpiryMonths=true`）| **200** `LeaveTypeDto` | 409「法定有給の種別は変更できません」/ 422（#16 と同じ検証）/ 409 名称重複 / 404 |
+| 18 | — | **204 No Content**（付与・申請の実績は残す）| 409「法定有給の種別は削除できません」/ 404 |
+| 19 | — | **204 No Content** | 409 名称重複（同名の未削除種別が存在する場合）/ 404 |
+| 20 | `?userId`（省略 = 自分）| **200** `LeaveSummaryDto` | 403「他の利用者の勤怠を参照する権限がありません」|
+| 21 | `?scope&status`。`scope=all` で全員分、`status` = `pending` / `approved` / `rejected` | **200** `LeaveRequestDto[]`（`createdAt` 降順）| 422「状態は pending / approved / rejected のいずれかを指定してください」/ 403 |
+| 22 | body `LeaveRequestWriteRequest { leaveTypeId, date, unit="full", reason? }`（`userId` は受け取らない）| **201** `LeaveIdDto { id }` | 422「休暇種別が存在しません」/「理由は 255 文字以内で入力してください」/ 409「同じ日付の休暇申請が既にあります」|
+| 23 | body `LeaveDecisionRequest { action: "approved" \| "rejected" }` | **200** `LeaveIdDto { id }` | 422「操作は approved / rejected のいずれかを指定してください」/ 409「この申請は処理済みです」/ 404 |
+| 24 | body `LeaveGrantWriteRequest { userId, leaveTypeId, grantDate, days }` | **201** `LeaveGrantResultDto { id, skipped }`。**既存があれば既存レコードの `id` と `skipped=1`** を返す（201 のまま）| 422「付与日数は正の数で指定してください」/「休暇種別が存在しません」/「周期自動付与の種別は手動付与できません」/「利用者が存在しません」|
+| 25 | body `LeaveBulkGrantRequest { leaveTypeId, days, target:"all", grantDate? }`。`grantDate` 省略時は **JST の当日** | **200** `LeaveGrantBulkResultDto { granted, skipped }` | 422「一括付与の対象は all のみ指定できます」/ 上記 #24 と同じ検証 |
+| 26 | — | **200** `LeaveGrantBulkResultDto { granted, skipped }` | **業務エラーを投げない**（対象種別・対象者が無ければ `{0, 0}` を返す。原則4 グレースフルデグラデーション）|
+| 27 | — | **200** `LeaveAdminRowDto[]`（利用者の `employeeNo` 昇順 × 種別の `displayOrder` 昇順。付与も取得も 0 の組合せは行を出さない）| 403 |
+
+> **休暇の設計上の注意:**
+> - **法定有給（`isStatutory=true`）の種別は作成・編集・論理削除を禁止**（409 `AKB-SYS-007`）。
+>   初期シードの 1 件のみ存在し、`PATCH` / `POST` は `isStatutory` を**受け取らない**ため API 経由で昇格もできない。
+> - **付与（#24 / #25 / #26）は冪等。** 同一 `(userId, leaveTypeId, grantDate)` が既にあれば**挿入せず `skipped` に数える**。
+>   既存の付与を更新・削除しない（`data-design.md §14.5` の UNIQUE 制約が最終防壁）。
+>   周期自動付与は何度実行しても既存の付与日数・消化履歴が変わらない。
+> - 一括付与の対象指定は **`target: "all"`（在籍中の全ユーザ）のみ**。office の雇用区分/部署指定は honshu に
+>   該当属性が無いため移植対象外。
+> - `GrantMethod == Periodic` の種別は手動付与（#24 / #25）の対象外（422）。
+> - 残数は付与と Approved の申請から **FIFO 引当で毎回導出**する（`LeaveCalc`）。残数列は持たない。
+>   法定有給の残数には繰越上限 40 日を適用する。
+> - 同一日付の重複申請判定は `(userId, date)` のみで行う（種別は問わない）。**却下済みは再申請をブロックしない。**
+
+#### 2.7.5 主要 DTO
+
+```
+PunchDto            { id, kind, at, source, fixedFrom, fixReason, approvedByUserId }
+PunchResultDto      { id, state }
+PunchStateDto       { state, punches: PunchDto[] }
+BucketsDto          { scheduled, statutoryOt, nonStatutoryOt, over60Ot, night, legalHoliday }   // 分
+DaySummaryDto       { date, workMinutes, breakMinutes, nightMinutes, buckets, breakShortage,
+                      punches: PunchDto[], rawPunches: PunchDto[]? }
+MonthSummaryDto     { days: DaySummaryDto[], total: BucketsDto, workDays }
+Article36AlertDto   { level: "warn" | "crit", code: "AKB-ATT-*", message }
+TimecardRowDto      { userId, userName, date, inAt, outAt, workMinutes, breakMinutes }
+FixRequestDto       { id, userId, userName, date, kind, requestedAt, reason, status,
+                      decidedByUserId, decidedByUserName, createdAt }
+AttendanceRuleDto   { id, name, workStart, workEnd, breakMinutes, flexEnabled, flexCoreStart,
+                      flexCoreEnd, flexSettlementMonths, closingDay, legalHolidayWeekday,
+                      isDefault, isActive, deletedAt }
+LeaveTypeDto        { id, name, grantMethod, expiryMonths, isStatutory, description,
+                      displayOrder, isActive, deletedAt }
+LeaveSummaryDto     { paidRemaining, paidUsedThisFiscalYear,
+                      nextExpire: { date, days } | null,
+                      byType:    [ { leaveTypeId, leaveTypeName, isStatutory, granted, taken,
+                                     remaining, nextExpireDate } ],
+                      obligation: { applicable, grantDate, deadline, requiredDays, takenDays,
+                                    daysLeft, achieved, warn },
+                      history:   [ { date, kind: "grant"|"take", leaveTypeId, leaveTypeName,
+                                     detail, status, days } ] }
+LeaveRequestDto     { id, userId, userName, leaveTypeId, leaveTypeName, date, unit, status,
+                      reason, decidedByUserId, decidedByUserName, createdAt }
+LeaveAdminRowDto    { userId, userName, leaveTypeId, leaveTypeName, granted, taken, remaining,
+                      lastGrantDate }
+LeaveGrantResultDto { id, skipped }        LeaveGrantBulkResultDto { granted, skipped }
+```
+
+- enum の JSON 値: `kind` = `in` / `out` / `breakStart` / `breakEnd`、`source` = `web` / `mobile` / `fix`、
+  `state` = `before` / `working` / `breaking` / `done`、`status` = `pending` / `approved` / `rejected`、
+  `unit` = `full` / `half`、`grantMethod` = `periodic` / `manual`。
+- `LeaveSummaryDto.history[].days` は符号や「—」を含むため**表示専用の文字列**で返す（数値ではない）。
+
+#### 2.7.6 監査ログ（§1.7 の対象に追加）
+
+主処理の commit 後に `IAuditLogger.LogAsync` を呼ぶ（記録失敗は主要フローを止めない）。参照系は記録しない。
+
+`Punch.Create` / `AttendanceFixRequest.Create` / `AttendanceFixRequest.Approve` / `AttendanceFixRequest.Reject` /
+`AttendanceRule.Create` / `.Update` / `.Delete` / `.Restore` /
+`LeaveType.Create` / `.Update` / `.Delete` / `.Restore` /
+`LeaveRequest.Create` / `.Approve` / `.Reject` /
+`LeaveGrant.Create` / `.BulkCreate` / `.PeriodicRun`
+
+`entityType` は `PunchRecord` / `AttendanceFixRequest` / `AttendanceRule` / `LeaveType` / `LeaveRequest` / `LeaveGrant`。
+
+#### 2.7.7 認証エンドポイントへの影響（§2.1 の追補）
+
+`POST /auth/sync` / `GET /auth/me` のレスポンスに **`attendancePermission`（既定 1）** と
+**`punchRequired`（既定 true）** を**末尾追加**した（下位互換。`src/Backend/Application/Auth/LoginDtos.cs`）。
+フロントはこれらから `canPunch = attendancePermission === 1 && punchRequired` /
+`canUseAttendance = attendancePermission === 1 || attendancePermission === 2` を導出する。
+
+#### 2.7.8 移植の除外スコープと未検証事項
+
+**除外スコープ（honshu に対応機能が無い / 別基盤依存のため移植しない）:**
+
+| 除外した office の機能 | 理由 |
+|---|---|
+| 祝日マスタ・営業日計算 | 翌営業日計算専用であり、honshu には翌営業日計算を使う機能が無い。日次集計の法定休日判定は**曜日**で行うため不要（外部 HTTP 依存も増やさない）|
+| AI 参照範囲・チャットボット・日報連携・通知・エスカレーション | honshu に対応機能が無い |
+| 権限ルールマトリクスエンジン（subjectKind × resource × field の allow/deny）| honshu の 4+1 権限カテゴリ方式に置換（§2.7.0 の認可の考え方）|
+| 雇用区分（`employment_type`）| 勤怠ルールは「既定ルール方式」、有給付与は週所定日数・時間（`users.weekly_days` / `weekly_hours`）で判定するため不要 |
+
+**未検証事項:**
+- 本改修を行った環境では **.NET SDK を取得できず、バックエンドをローカルでコンパイル検証できていない**。
+- `docs/api/openapi.json` は**未再生成**。CI の `regen-openapi` ワークフロー（main 向け PR で自動再生成し、
+  生成物を head ブランチへ自動コミットする）に委ねる。本節と OpenAPI の突合はその再生成後に行うこと。
+
+---
+
 ## 3. OpenAPI 3.0 雛形
 
 > 完全な OpenAPI YAML は Phase 5 後半のプロトタイプ実装時に生成（Swashbuckle.AspNetCore で自動生成）。本ドキュメントでは構造例のみ示す。
@@ -1149,3 +1425,4 @@ paths:
 | 日付 | 内容 |
 |---|---|
 | 2026-05-19 | 初版作成（21機能 × 全エンドポイント定義、A〜J 10 主要フロー検証完了）|
+| 2026-07-27 | Iteration 30: §2.7 勤怠（勤怠管理・タイムカード）を追加。実装済みエンドポイント 27 本（打刻・集計 6 / 打刻修正申請 3 / 勤怠ルール 5 / 休暇 13）、認可の考え方（勤怠権限 0/1/2 + オーナー集約 + 他人参照ガード）、`AKB-ATT-*` がアラート識別子でエラーコードではない旨、主要 DTO、監査ログ action、§2.1 への `attendancePermission` / `punchRequired` 追加を記載（akebono-office からの移植）|

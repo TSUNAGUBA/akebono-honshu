@@ -249,7 +249,7 @@ GitHub の **Actions** タブから手動実行します。
 
 ### 6-1. DB 初期化
 `Actions → DB Init / Migrate (RDS) → Run workflow` → `action` で **`init`** を選択 → Run。
-- 空 DB に `db/init/*.sql`（01..09。06 はリアルなデモ業務データ、07 は業務拡張モジュール、08 はテナント分離 RLS + アプリロール akebono_app、09 は updated_at トリガ汎用配線）を番号順に投入し、現行マイグレーションを baseline 記録します。`APP_DB_PASSWORD` secret が未設定だとエラー終了します（手順 5 参照）。
+- 空 DB に `db/init/*.sql`（01..10。06 はリアルなデモ業務データ、07 は業務拡張モジュール、08 はテナント分離 RLS + アプリロール akebono_app、09 は updated_at トリガ汎用配線、**10 は勤怠 6 テーブル + `users` への勤怠列追加（Iteration 30）**）を番号順に投入し、現行マイグレーションを baseline 記録します。`APP_DB_PASSWORD` secret が未設定だとエラー終了します（手順 5 参照）。
 - 緑（成功）になったら次へ。
 
 ### 6-2. Backend デプロイ
@@ -261,6 +261,8 @@ GitHub の **Actions** タブから手動実行します。
 EC2 に SSH し、手順 4-2 でコピーした **Firebase UID** を使って実行（`<MIGRATOR_PW>` / `<FIREBASE_UID>` を置換）:
 
 > `owner` 行には **init で既に全 4 権限が付与済み**です（`db/init/02-masters.sql`）。
+> **2026-07-27 追記:** 5 つ目の勤怠権限 `attendance_permission` は `db/init/10-attendance.sql` の
+> 列追加時の `DEFAULT 1`（更新可能）で全ユーザに付与されます（`owner` も同様）。10 まで投入していれば追加操作は不要です。
 > ここでの主目的は **Firebase UID の紐付け** と **監査ログの追記専用化** です。
 
 EC2 上で、パスワードを `read -s` で入力（履歴・docker 引数に残りません）してから 2 つを実行します

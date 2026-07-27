@@ -107,7 +107,9 @@ public static class AuthEndpoints
 
     /// <summary>
     /// マスタ編集系操作 (M-01/M-02 Create/Update/Delete/Restore) に必要な権限チェック。
-    /// product_ledger_permission >= 1 を要求 (Phase 5 §3.18 + C-02 4 権限カテゴリの 1 つ)。
+    /// product_ledger_permission == 1 (更新可能) を要求 (Phase 5 §3.18 + C-02 権限カテゴリの 1 つ)。
+    /// 権限スケールは非単調 (0=なし, 1=更新可能, 2=参照のみ, 3=参照のみ制限) のため、
+    /// 書込判定に >= 1 を使うと「参照のみ」に書込を許すバグになる。
     /// 401 (未認証) / 403 (権限不足) / 成功時は actorId を返す。
     /// </summary>
     internal static async Task<MasterEditAuth> CheckMasterEditAsync(
@@ -135,7 +137,8 @@ public static class AuthEndpoints
 
     /// <summary>
     /// 発注書編集系操作 (O-01/O-04/O-05/O-06) に必要な権限チェック。
-    /// purchase_order_create_permission >= 1 を要求 (Phase 5 §3.18 + C-02)。
+    /// purchase_order_create_permission == 1 (更新可能) を要求 (Phase 5 §3.18 + C-02)。
+    /// 権限スケールは非単調のため、書込判定に >= 1 を使うと「参照のみ」に書込を許すバグになる。
     /// </summary>
     internal static async Task<MasterEditAuth> CheckOrderEditAsync(
         HttpContext http,

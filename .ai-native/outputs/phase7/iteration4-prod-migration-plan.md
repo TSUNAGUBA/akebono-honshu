@@ -181,7 +181,7 @@ flowchart LR
 - [x] Firebase project ID (dev / prod 2 つ) → dev 兼用 `akebono-honshu` を採用、prod は段階 C で別途作成
 - [x] Web app config の `apiKey` / `authDomain` / `projectId` → `nuxt.config.ts:runtimeConfig.public.firebase` に既定値として埋込み、本番は `NUXT_PUBLIC_FIREBASE_*` で上書き
 - [x] Service Account 鍵 (JSON、秘密) → オペレーターがリポジトリ外に保管。段階 C 以降で使用
-- [x] テストユーザの Email / 仮パスワード / 想定権限 → `owner@akebono.example` (owner 行 = 全 4 権限) を Firebase UID 紐付け済
+- [x] テストユーザの Email / 仮パスワード / 想定権限 → `owner@akebono.example` (owner 行 = 全 4 権限。**2026-07-27 追記: Iteration 30 で 5 つ目の勤怠権限 `attendance_permission` が `DEFAULT 1` で全ユーザに付与され、owner も計 5 権限保有**) を Firebase UID 紐付け済
 
 ---
 
