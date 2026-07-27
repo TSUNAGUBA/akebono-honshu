@@ -851,16 +851,24 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 `is_statutory=true`, `description='労働基準法 39 条の年次有給休暇 (時効 2 年)'`, `display_order=1`。
 `NOT EXISTS` ガード付き INSERT のため、再実行しても既存行を更新・削除しない。
 
-> **ガードの判定列は `is_statutory`（2026-07-27 訂正、第 11 イテレーション監査、原則2）:**
-> 当初のガードは `name = '有給休暇' AND deleted_at IS NULL` だったが、**判定列がどちらも可変**のため
-> 冪等性が破れていた（実機で再現確認済み）。統制有給を DB 直操作で論理削除した後、あるいは改名した後に
-> 再実行すると、**別 id の 2 行目が入る**。`db/migration/README.md` は「全処理が冪等なので再実行しても安全」
-> と明記して psql / pgAdmin からの直接実行を推奨しているため、この経路は現実に踏まれ得る。
-> 2 行になると既存 `leave_grants.leave_type_id` が旧 id を指したまま新 id が有効になり**有給残数が分裂**し、
-> さらに部分 UNIQUE 索引 `uq_leave_types_tenant_name` により**復元（`LeaveService.RestoreTypeAsync`）も 409 で塞がれる**。
-> **不変フラグである `is_statutory` のみ**を判定に使う形へ変更した（`deleted_at` は条件に含めない
-> = 論理削除済みでも再投入しない）。init / migration の両ファイルを同時に修正済み。
-> なお **API 経由では再現しない**（`EnsureNotStatutory` が統制有給の作成・更新・論理削除を 409 で弾くため）。
+> **ガードは 2 条件の OR（2026-07-27 訂正、第 11・第 12 イテレーション、原則2）:**
+> ```sql
+> WHERE NOT EXISTS (
+>     SELECT 1 FROM leave_types
+>      WHERE tenant_id = t.tenant_id
+>        AND (is_statutory OR (name = '有給休暇' AND deleted_at IS NULL))
+> )
+> ```
+> **どちらか片方だけでは冪等性が破れる**（両方とも実機で再現確認済み）。
+>
+> | 条件 | 無いとどうなるか |
+> |---|---|
+> | `is_statutory`（不変列）| 当初のガードは `name = '有給休暇' AND deleted_at IS NULL` のみで、**判定列がどちらも可変**だった。統制有給を DB 直操作で論理削除した後、あるいは改名した後に再実行すると**別 id の 2 行目が入る**。既存 `leave_grants.leave_type_id` が旧 id を指したまま新 id が有効になり**有給残数が分裂**し、さらに部分 UNIQUE 索引 `uq_leave_types_tenant_name` により**復元（`LeaveService.RestoreTypeAsync`）も 409 で塞がれる** |
+> | `name = '有給休暇' AND deleted_at IS NULL` | 第 11 イテレーションで `is_statutory` 単独ガードにしたところ、**「統制行が無く、かつ同名の非統制行が有効で存在する」テナントで INSERT が部分 UNIQUE 索引に抵触し、スクリプトが中断する**。シードは GRANT・RLS 配線・トリガ配線より**前**にあるため、中断は後続節を丸ごと未実行にする。後から追加したテナントには統制行が無く、`LeaveService.ValidateTypeName` は空文字と 64 文字超しか弾かない（`'有給休暇'` を予約していない）ため、管理者が同名を作る経路は実在する |
+>
+> `db/migration/README.md` は「全処理が冪等なので再実行しても安全」と明記して psql / pgAdmin からの
+> 直接実行を推奨しているため、いずれの経路も現実に踏まれ得る。init / migration の両ファイルを同時に修正済み。
+> なお **統制有給の作成・更新・論理削除は API 経由では起きない**（`EnsureNotStatutory` が 409 で弾く）。
 
 ### 14.5 `leave_grants` — 休暇の付与（個別 / 一括 / 周期自動）
 
@@ -935,3 +943,4 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 | 2026-07-27 | Iteration 30: 勤怠 6 テーブル（`attendance_rules` / `punch_records` / `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）を §14 に追加。§3.18 `users` に勤怠列 6 本（`attendance_permission` / `punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追記、§2 ERD 概観に勤怠エンティティ群を追加（akebono-office からの移植）|
 | 2026-07-27 | **第 9 イテレーション修正コミット `bd1a96e` を §3.18 へ反映（原則5）:** `users` の勤怠 4 列（`attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）について「入力 UI が無く `PATCH /users/{id}` の全項目上書きで既定値へ巻き戻る」と**解消済みの BLOCKER を未解決として宣言し続けていた**記述を、`4c6981e` で解消済み（利用者フォームへの 4 項目追加 ＋ `UserPatchRequest` による部分更新化）へ訂正。`screen-design.md §3.12` / `api-design.md §2.7.9` と食い違ったまま放置すると、存在しない給与・法定関連の重大欠陥を SoT が宣言し、完了済み改修の再着手を誘導するため |
 | 2026-07-27 | **第 11 イテレーション監査の指摘対応（原則2 / 原則5）:** §14.4 `leave_types` のシードガードを `name` + `deleted_at`（可変）から **`is_statutory`（不変）** 基準へ変更。旧ガードは統制有給を DB 直操作で論理削除・改名した後の再実行で **2 行目を作り**、`leave_grants` が旧 id を指したまま有給残数が分裂し、部分 UNIQUE 索引により復元も 409 で塞がれた（実機で再現確認）。`db/init/10-attendance.sql` / `db/migration/iter30-attendance.sql` を同時修正し、**両経路の `pg_dump -s` 一致（7,026 行）とシード内容一致を再検証済み** |
+| 2026-07-27 | **第 12 イテレーション: 第 11 イテレーションの修正が開けた穴を塞いだ（原則2）。** `leave_types` のシードガードを `is_statutory` 単独 → **`is_statutory OR (name = '有給休暇' AND deleted_at IS NULL)` の 2 条件 OR** へ。単独ガードは「統制行が無く、同名の非統制行が有効で存在する」テナントで**部分 UNIQUE 索引違反によりスクリプトが中断**し、シードより後段の GRANT・RLS 配線・トリガ配線が丸ごと未実行になる（実機で再現）。3 シナリオ（同名非統制行が有効 / 統制行を論理削除 / 改名）すべてで exit 0・1 行維持を確認し、両経路の `pg_dump -s` 一致（7,026 行）も再検証 |
