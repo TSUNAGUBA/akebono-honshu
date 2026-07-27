@@ -19,7 +19,7 @@
 -- ■ 記録系の保護 (CLAUDE.md 原則 2)
 --   punch_records は **追記のみ**。訂正は打刻修正申請の承認による論理置換
 --   (source=2(Fix) の行を追記し fixed_from に旧打刻の at を入れる) で行い、元打刻は削除しない。
---   そのため updated_at 列を持たず、アプリロールから UPDATE/DELETE を剥奪する (§4)。
+--   そのため updated_at 列を持たず、アプリロールから UPDATE/DELETE を剥奪する (§3)。
 
 SET TIMEZONE = 'UTC';
 

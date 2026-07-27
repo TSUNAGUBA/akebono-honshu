@@ -136,7 +136,7 @@ require_app_db_password() {
 
 
 run_init_files() {
-  # db/init の全スキーマ・シードファイルを番号順に適用 (01-schema..09-updated-at-triggers..)。
+  # db/init の全スキーマ・シードファイルを番号順に適用 (01-schema..10-attendance、以降追加分も含む)。
   # ハードコードせず glob することで、新規 init ファイル追加時の付け忘れを防ぐ
   # (原則1: 手動メンテを残さない。schema_migration_files と同じ find|sort パターン)。
   while IFS= read -r f; do

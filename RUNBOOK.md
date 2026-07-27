@@ -198,7 +198,7 @@ docker compose ps
 docker compose exec postgres psql -U akebono_honshu -d akebono_honshu -c "SELECT id, login_id, display_name FROM users;"
 ```
 
-`./db/init/01-schema.sql` が docker-compose の初期化スクリプトとして自動投入され、ロール + DB + Seed が一度に揃います。
+`docker-compose.yml` は `./db/init` を**ディレクトリごと** `/docker-entrypoint-initdb.d` にマウントするため、`01-schema.sql` だけでなく **`01`〜`10` の全ファイルが番号順に自動投入され**、ロール + DB + Seed + 勤怠テーブルまでが一度に揃います（初期化は**初回のみ**＝空ボリュームのときだけ実行されます）。
 
 #### 選択肢 C: AWS RDS PostgreSQL を使う (Iter 4 本番移行 段階 A)
 

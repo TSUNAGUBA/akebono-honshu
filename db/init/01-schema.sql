@@ -34,6 +34,10 @@ END $$ LANGUAGE plpgsql;
 
 -- 各テーブルへのトリガ配線は 09-updated-at-triggers.sql で一括実施
 -- (information_schema 走査により updated_at 列を持つ全 BASE TABLE を自動カバー)。
+-- ただし自動カバーの対象は **09 より前に実行されるファイルで作られたテーブル** に限る。
+-- 09 より後に実行されるファイル (10-attendance.sql 等) で作られるテーブルは、09 の走査時点では
+-- まだ存在しないため対象外。その場合は自ファイル内で set_updated_at() の BEFORE UPDATE トリガを
+-- 配線すること (実装例: 10-attendance.sql §5)。
 
 -- ─────────────────────────────────────────────────
 -- tenant — テナントレジストリ (ローカル投影)
