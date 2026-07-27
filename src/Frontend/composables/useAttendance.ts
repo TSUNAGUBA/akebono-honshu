@@ -52,7 +52,7 @@ export type DecisionAction = 'approved' | 'rejected'
  * （`attendancePermission = 0` は勤怠機能の利用を明示的に禁じた状態で、管理操作も 403 になる）。
  */
 
-/** 申請一覧のスコープ。'all'（全員）はオーナーのみ。 */
+/** 申請一覧のスコープ。'all'（全員）は勤怠参照権限 AND オーナー。 */
 export type RequestScope = 'self' | 'all'
 
 export interface PunchDto {
@@ -629,7 +629,7 @@ export const useAttendance = () => {
   /**
    * `GET /attendance/month`。
    * `userId` 省略（undefined / 空文字）で自分、`month` 省略で当月（JST）。
-   * 他人を指定できるのはオーナーのみ（サーバが 403 を返す）。
+   * 他人を指定できるのは勤怠参照権限 AND オーナー（サーバが 403 を返す）。
    *
    * 週次タブのように同一月を並列に要求されても、進行中のリクエストへ合流して 1 本にまとめる。
    */
@@ -767,7 +767,7 @@ export const useAttendance = () => {
     })
 
   /**
-   * `POST /attendance/fix-requests/{id}/decision`（**オーナーのみ**）。
+   * `POST /attendance/fix-requests/{id}/decision`（**勤怠参照権限 AND オーナー**）。
    * 承認は打刻列に fix レコードを追記するため、集計・当日状態のキャッシュを破棄する
    * （申請一覧自体は非キャッシュのため破棄対象に無い）。
    */
@@ -788,11 +788,11 @@ export const useAttendance = () => {
   const attendanceRules = async (includeInactive = false): Promise<AttendanceRuleDto[]> =>
     await apiData<AttendanceRuleDto[]>(`/attendance/rules${qs({ includeInactive })}`)
 
-  /** `POST /attendance/rules`（オーナーのみ）。`isDefault=true` は他ルールの既定を外す。 */
+  /** `POST /attendance/rules`（勤怠参照権限 AND オーナー）。`isDefault=true` は他ルールの既定を外す。 */
   const createAttendanceRule = async (input: AttendanceRuleWriteInput): Promise<AttendanceRuleDto> =>
     await apiData<AttendanceRuleDto>('/attendance/rules', { method: 'POST', body: input })
 
-  /** `PATCH /attendance/rules/{id}`（オーナーのみ・部分更新）。 */
+  /** `PATCH /attendance/rules/{id}`（勤怠参照権限 AND オーナー・部分更新）。 */
   const updateAttendanceRule = async (
     id: string,
     patch: AttendanceRulePatchInput,
@@ -813,7 +813,7 @@ export const useAttendance = () => {
   // 休暇
   // ------------------------------------------
 
-  /** `GET /attendance/leave/summary`。userId 省略時は自分（他人指定はオーナーのみ）。 */
+  /** `GET /attendance/leave/summary`。userId 省略時は自分（他人指定は勤怠参照権限 AND オーナー）。 */
   const leaveSummary = async (userId?: string, force = false): Promise<LeaveSummary> => {
     const key = userId ?? ''
     const cached = cache.value.leaveSummaries[key]
@@ -869,7 +869,7 @@ export const useAttendance = () => {
     return result
   }
 
-  /** `POST /attendance/leave/requests/{id}/decision`（オーナーのみ）。 */
+  /** `POST /attendance/leave/requests/{id}/decision`（勤怠参照権限 AND オーナー）。 */
   const decideLeave = async (id: string, action: DecisionAction): Promise<{ id: string }> => {
     const result = await apiData<{ id: string }>(`/attendance/leave/requests/${id}/decision`, {
       method: 'POST',
@@ -879,7 +879,7 @@ export const useAttendance = () => {
     return result
   }
 
-  /** `POST /attendance/leave/grants`（個別付与・オーナーのみ）。重複付与はサーバがスキップする（冪等）。 */
+  /** `POST /attendance/leave/grants`（個別付与・勤怠参照権限 AND オーナー）。重複付与はサーバがスキップする（冪等）。 */
   const grantLeave = async (input: LeaveGrantInput): Promise<LeaveGrantResult> => {
     const result = await apiData<LeaveGrantResult>('/attendance/leave/grants', {
       method: 'POST',
@@ -889,7 +889,7 @@ export const useAttendance = () => {
     return result
   }
 
-  /** `POST /attendance/leave/grants/bulk`（一括付与・オーナーのみ）。 */
+  /** `POST /attendance/leave/grants/bulk`（一括付与・勤怠参照権限 AND オーナー）。 */
   const bulkGrantLeave = async (input: LeaveBulkGrantInput): Promise<LeaveGrantBulkResult> => {
     const result = await apiData<LeaveGrantBulkResult>('/attendance/leave/grants/bulk', {
       method: 'POST',
@@ -899,7 +899,7 @@ export const useAttendance = () => {
     return result
   }
 
-  /** `POST /attendance/leave/periodic-grants/run`（周期自動付与の手動実行・オーナーのみ）。 */
+  /** `POST /attendance/leave/periodic-grants/run`（周期自動付与の手動実行・勤怠参照権限 AND オーナー）。 */
   const runPeriodicGrants = async (): Promise<LeaveGrantBulkResult> => {
     const result = await apiData<LeaveGrantBulkResult>('/attendance/leave/periodic-grants/run', {
       method: 'POST',

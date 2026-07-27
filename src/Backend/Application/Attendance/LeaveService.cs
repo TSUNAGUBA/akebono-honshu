@@ -72,13 +72,7 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
     {
         var name = (req.Name ?? string.Empty).Trim();
         ValidateTypeName(name);
-        // 法定有給の名称は予約する。統制行が論理削除・改名された隙にこの名前で非統制種別を作れると、
-        // db/init の統制シードが「同名の有効行がある」ため恒久的に抑止され、統制有給ゼロの
-        // テナントが無言で固定される (シード側は WARNING を出すが、発生自体を防ぐ)。
-        // **作成時のみ**の制限とし、更新は妨げない (既存行を編集不能にすると原則7 に反する)。
-        if (name == StatutoryLeaveTypeName)
-            throw DomainException.Validation($"「{StatutoryLeaveTypeName}」は法定有給の予約名です",
-                "別の名称を入力してください（法定有給はシードで登録済みです）");
+        EnsureNotReservedName(name);
         ValidateExpiryMonths(req.ExpiryMonths);
         ValidateDisplayOrder(req.DisplayOrder);
         await EnsureNoActiveDuplicateNameAsync(name, null, ct);
@@ -121,6 +115,10 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
         {
             var name = req.Name.Trim();
             ValidateTypeName(name);
+            // 改名でも予約名は塞ぐ。作成時だけの制限にすると「別名で作って予約名へ改名」で回避でき、
+            // ガードが防ごうとした状態 (統制有給ゼロの固定) をそのまま作れてしまう。
+            // 変更が無い場合は素通しする (既存行の他項目編集を妨げない・原則7)。
+            if (name != entity.Name) EnsureNotReservedName(name);
             await EnsureNoActiveDuplicateNameAsync(name, id, ct);
             entity.Name = name;
         }
@@ -193,6 +191,10 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
         // 復元先に同名の有効行がある場合は部分 UNIQUE 索引に抵触するため事前に弾く。
         if (entity.DeletedAt != null)
             await EnsureNoActiveDuplicateNameAsync(entity.Name, id, ct);
+
+        // 論理削除された非統制行が予約名を持つ場合、復元すると改名と同じ状態になるため塞ぐ。
+        // 統制行 (IsStatutory) の復元は DB 直操作で消された統制有給の唯一の復旧導線なので通す。
+        if (!entity.IsStatutory) EnsureNotReservedName(entity.Name);
 
         entity.DeletedAt = null;
         entity.UpdatedAt = SystemTime.UtcNow;
@@ -349,7 +351,7 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
     // ═══════════════════════════════════════════════
 
     /// <summary>
-    /// 休暇申請の一覧 (#21)。allScope=true は全員分 (呼び出し側でオーナーを検証済であること)。
+    /// 休暇申請の一覧 (#21)。allScope=true は全員分 (勤怠参照権限 AND オーナー を呼び出し側で検証済であること)。
     /// status は "pending" / "approved" / "rejected"。作成日時の降順
     /// (同一 created_at の順序を確定させるため id 降順をタイブレーカーに置く。
     ///  打刻修正申請の一覧 <see cref="AttendanceService.ListFixRequestsAsync"/> と同じ形)。
@@ -725,6 +727,18 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
     /// 法定有給の名称 (db/init/10-attendance.sql §2 / iter30-attendance.sql §4 のシードと一致させること)。
     /// </summary>
     private const string StatutoryLeaveTypeName = "有給休暇";
+
+    /// <summary>
+    /// 法定有給の名称を非統制種別が奪うのを防ぐ。奪われるとシードのガード条件 (2) が恒久的に成立し、
+    /// 統制有給ゼロのテナントが固定される (有給の周期自動付与と年 5 日義務トラッカーが停止する)。
+    /// 統制行そのものの操作は EnsureNotStatutory が別途 409 で弾く。
+    /// </summary>
+    private static void EnsureNotReservedName(string name)
+    {
+        if (name != StatutoryLeaveTypeName) return;
+        throw DomainException.Validation($"「{StatutoryLeaveTypeName}」は法定有給の予約名です",
+            "別の名称を入力してください（この名称は法定有給のシードが使用します）");
+    }
 
     private static void ValidateTypeName(string name)
     {
