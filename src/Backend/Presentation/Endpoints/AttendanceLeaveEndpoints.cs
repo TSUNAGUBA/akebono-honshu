@@ -118,8 +118,13 @@ public static class AttendanceLeaveEndpoints
     private static void MapLeaveRequests(RouteGroupBuilder group)
     {
         // #21 一覧。scope=all は全員分 (オーナーのみ)、省略時は自分の申請。
+        // キーセットページング (AKB-DOC-12 §7.1): ?limit=&cursor=<opaque>、不正は 400 AKB-SYS-011。
+        // data は従来どおり配列のままで、続きの有無は meta.page.hasMore が示す (フロント契約は非破壊)。
+        // limit 未指定時の既定は上限値 (PageRequest.MaxLimit)。フロント (useAttendance.leaveRequests) は
+        // まだ limit / cursor を送らないため、既定 50 だと申請が黙って欠落する。
         group.MapGet("/requests", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
-                                          string? scope, string? status, CancellationToken ct) =>
+                                          string? scope, string? status, int? limit, string? cursor,
+                                          CancellationToken ct) =>
         {
             var allScope = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
             var auth = allScope
@@ -127,7 +132,9 @@ public static class AttendanceLeaveEndpoints
                 : await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
-            return ApiEnvelope.Ok(http, await svc.ListRequestsAsync(auth.ActorId!.Value, allScope, status, ct));
+            var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
+            var result = await svc.ListRequestsAsync(auth.ActorId!.Value, allScope, status, page, ct);
+            return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
         // #22 申請 (勤怠==1)。対象は常に本人 (body で他人を指定させない)。

@@ -20,10 +20,21 @@ namespace Akebono.Application.Attendance;
 public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
 {
     /// <summary>
-    /// タイムカード照会期間の上限 (日)。**本定数がプロジェクトの SoT**。
-    /// フロント (pages/attendance) は同値の定数を本定数への参照コメント付きで持つ。
+    /// タイムカード照会期間の上限 (日)。**両端を含む**日数で数える
+    /// (from=2026-01-01 / to=2026-03-03 は 62 日ちょうどで可、2026-03-04 は 63 日で不可)。
+    /// **本定数がプロジェクトの SoT**。
+    /// フロント (pages/attendance) は同値の定数を本定数への参照コメント付きで持ち、
+    /// 同じ「両端含み」の数え方でクランプする。
     /// </summary>
     public const int TimecardRangeMaxDays = 62;
+
+    /// <summary>
+    /// タイムカードで一度に集計できる利用者数の上限。超過は 400 AKB-SYS-011 で弾く。
+    /// 利用者数 × 期間 (最大 62 日) 分の打刻をすべてメモリへ載せて集計するため、
+    /// 非有界のままだと在籍者の増加に比例して必ずタイムアウトする。
+    /// 超過時は q (氏名の部分一致) で絞り込ませる。
+    /// </summary>
+    public const int TimecardMaxUsers = 200;
 
     /// <summary>修正理由 (attendance_fix_requests.reason VARCHAR(512)) の最大長。</summary>
     private const int ReasonMaxLength = 512;
@@ -62,6 +73,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
                 "打刻対象の利用者ではありません",
                 "打刻が必要な場合は管理者へ連絡してください");
 
+        PunchResultDto result;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
@@ -89,23 +101,27 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             };
             db.PunchRecords.Add(entity);
             await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
 
             // 打刻後の状態 (フロントのボタン活性制御に使う)。追記済みの列で再判定する。
+            // 純粋な計算のため commit 前に済ませ、CommitAsync を try の最後の文にする (原則4)。
             rows.Add(entity);
-            var newState = AttendanceCalc.PunchStateOf(rows);
+            result = new PunchResultDto(entity.Id, AttendanceCalc.PunchStateOf(rows));
 
-            await audit.LogAsync(actorId, "Punch.Create",
-                entityType: "PunchRecord", entityId: entity.Id,
-                note: $"kind={kind}, date={date:yyyy-MM-dd}", cancellationToken: ct);
-
-            return new PunchResultDto(entity.Id, newState);
+            await tx.CommitAsync(ct);
         }
         catch
         {
             await tx.RollbackAsync(ct);
             throw;
         }
+
+        // 監査ログは確定済みトランザクションの外で記録する
+        // (try 内に置くと記録失敗時に commit 済みの tx を Rollback しようとする。原則4)。
+        await audit.LogAsync(actorId, "Punch.Create",
+            entityType: "PunchRecord", entityId: result.Id,
+            note: $"kind={kind}, date={date:yyyy-MM-dd}", cancellationToken: ct);
+
+        return result;
     }
 
     // ── #2 当日の打刻状態 ────────────────────────────────────────────────
@@ -193,8 +209,9 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     // ── #6 全員のタイムカード ────────────────────────────────────────────
 
     /// <summary>
-    /// 全員のタイムカード (オーナーのみ)。既定期間は当月 1 日〜今日、上限
-    /// <see cref="TimecardRangeMaxDays"/> 日。q は氏名の部分一致。
+    /// 全員のタイムカード (オーナーのみ)。既定期間は当月 1 日〜今日、期間の上限は
+    /// <see cref="TimecardRangeMaxDays"/> 日 (両端含み)、対象利用者数の上限は
+    /// <see cref="TimecardMaxUsers"/> 人。q は氏名の部分一致。
     /// ソートは 日付降順 → 氏名昇順。
     /// </summary>
     public async Task<IReadOnlyList<TimecardRowDto>> GetTimecardAsync(
@@ -206,18 +223,27 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         if (fromDate > toDate)
             throw DomainException.Validation("期間の開始日は終了日以前にしてください",
                 "日付（から）と日付（まで）を入れ替えて再検索してください");
-        if (fromDate.AddDays(TimecardRangeMaxDays) < toDate)
+        // 両端を含む日数で判定する (フロントのクランプと同じ数え方に揃える)。
+        if (toDate.DayNumber - fromDate.DayNumber + 1 > TimecardRangeMaxDays)
             throw DomainException.Validation($"期間は最大 {TimecardRangeMaxDays} 日までです",
                 "期間を狭めて再検索してください");
 
         var name = (q ?? string.Empty).Trim();
-        var usersQuery = db.Users.Where(u => u.IsActive && u.DeletedAt == null);
+        var usersQuery = db.Users.AsNoTracking().Where(u => u.IsActive && u.DeletedAt == null);
         if (name.Length > 0) usersQuery = usersQuery.Where(u => u.DisplayName.Contains(name));
-        var users = await usersQuery.OrderBy(u => u.EmployeeNo).ToListAsync(ct);
+        // 上限 +1 件だけ取得して超過を検知する (既存のページング規約と同じ考え方)。
+        var users = await usersQuery.OrderBy(u => u.EmployeeNo)
+            .Take(TimecardMaxUsers + 1)
+            .ToListAsync(ct);
+        if (users.Count > TimecardMaxUsers)
+            throw new DomainException(AkbErrorCodes.SysPagingInvalid, 400,
+                $"対象の利用者が多すぎます（一度に集計できるのは {TimecardMaxUsers} 人までです）",
+                "氏名で絞り込むか、期間を短くして再検索してください");
         if (users.Count == 0) return [];
 
         var userIds = users.Select(u => u.Id).ToList();
         var punches = await db.PunchRecords
+            .AsNoTracking()
             .Where(p => userIds.Contains(p.UserId) && p.Date >= fromDate && p.Date <= toDate)
             .OrderBy(p => p.At).ThenBy(p => p.CreatedAt)
             .ToListAsync(ct);
@@ -267,12 +293,22 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
                 "修正後の時刻は YYYY-MM-DDTHH:mm:ss+09:00 形式（タイムゾーン付き）で指定してください",
                 "日付と時刻を選び直して再送信してください");
 
+        // 対象日から極端に離れた時刻を承認すると、punch_records (UPDATE/DELETE 剥奪済み = 削除で
+        // 復旧できない) に異常値が残り、以後その日の集計が破綻する。JST 換算した日付が
+        // 対象日 〜 翌日 (夜勤の日跨ぎを許容) に収まることを必ず検証する。
+        var requestedJstDate = DateOnly.FromDateTime(SystemTime.ToJst(requestedAt.UtcDateTime));
+        if (requestedJstDate < date || requestedJstDate > date.AddDays(1))
+            throw DomainException.Validation(
+                "修正後の時刻は対象日または翌日（夜勤の日跨ぎ）の範囲で指定してください",
+                "対象日を選び直すか、時刻を対象日の範囲内へ修正して再送信してください");
+
         var reason = (req.Reason ?? string.Empty).Trim();
         if (reason.Length == 0)
             throw DomainException.Validation("修正理由を入力してください（客観的記録の担保）",
                 "修正が必要になった経緯を入力してください");
         if (reason.Length > ReasonMaxLength)
-            throw DomainException.Validation($"修正理由は {ReasonMaxLength} 文字以内で入力してください");
+            throw DomainException.Validation($"修正理由は {ReasonMaxLength} 文字以内で入力してください",
+                "修正理由を短くして再送信してください");
 
         var now = SystemTime.UtcNow;
         var entity = new AttendanceFixRequest
@@ -302,18 +338,32 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     /// <summary>
     /// 打刻修正申請の一覧 (createdAt 降順)。all=false は本人の申請のみ。
     /// all=true (scope=all) はオーナーのみ許可 (エンドポイント側で権限確認済み)。
+    ///
+    /// **キーセットページング必須** (AKB-DOC-12 §7.1、PurchaseOrderService.ListAsync と同じ規約)。
+    /// status 未指定の scope=all は運用年数に比例して全履歴を返すため、非有界のままでは必ず
+    /// タイムアウトする。返却は page.Limit 件で打ち切り、続きの有無は meta.page.hasMore で示す。
     /// </summary>
-    public async Task<IReadOnlyList<FixRequestDto>> ListFixRequestsAsync(
-        Guid actorId, string? status, bool all, CancellationToken ct = default)
+    public async Task<PagedResult<FixRequestDto>> ListFixRequestsAsync(
+        Guid actorId, string? status, bool all, PageRequest page, CancellationToken ct = default)
     {
         var filter = ParseStatus(status);
-        var query = db.AttendanceFixRequests.AsQueryable();
+        var query = db.AttendanceFixRequests.AsNoTracking();
         if (!all) query = query.Where(r => r.UserId == actorId);
         if (filter is { } s) query = query.Where(r => r.Status == s);
 
+        // キーセット: 前ページ末尾 (created_at, id) より「後ろ」(降順) の行のみ。
+        if (page.AfterCreatedAt is { } afterCreatedAt && page.AfterId is { } afterId)
+            query = query.Where(r => r.CreatedAt < afterCreatedAt
+                || (r.CreatedAt == afterCreatedAt && r.Id.CompareTo(afterId) < 0));
+
         var rows = await query.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
+            .Take(page.Limit + 1)
             .ToListAsync(ct);
-        if (rows.Count == 0) return [];
+
+        // limit+1 件目が取れたら次ページあり。返却は limit 件に切り詰める。
+        var hasMore = rows.Count > page.Limit;
+        if (hasMore) rows.RemoveAt(page.Limit);
+        if (rows.Count == 0) return new PagedResult<FixRequestDto>([], false, null, null);
 
         // 申請者名 / 決裁者名は scalar FK (ナビ無し) のため users を 1 クエリで解決する。
         // 無効化・削除済ユーザでも表示は維持したいので DeletedAt では絞らない (監査表示の性質)。
@@ -321,11 +371,12 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             .Concat(rows.Where(r => r.DecidedByUserId != null).Select(r => r.DecidedByUserId!.Value))
             .Distinct().ToList();
         var names = await db.Users
+            .AsNoTracking()
             .Where(u => userIds.Contains(u.Id))
             .Select(u => new { u.Id, u.DisplayName })
             .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
 
-        return rows.Select(r =>
+        var items = rows.Select(r =>
         {
             names.TryGetValue(r.UserId, out var userName);
             string? decidedByName = null;
@@ -335,6 +386,10 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
                 r.Id, r.UserId, userName ?? string.Empty, r.Date, r.Kind, r.RequestedAt, r.Reason,
                 r.Status, r.DecidedByUserId, decidedByName, r.CreatedAt);
         }).ToList();
+
+        var last = rows[^1];
+        return new PagedResult<FixRequestDto>(
+            items, hasMore, hasMore ? last.CreatedAt : null, hasMore ? last.Id : null);
     }
 
     // ── #9 打刻修正申請の承認 / 却下 ─────────────────────────────────────
@@ -349,6 +404,8 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     {
         var approved = ParseDecision(req.Action);
 
+        Guid decidedId;
+        string auditNote;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
@@ -391,29 +448,38 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             fix.UpdatedAt = now;
 
             await db.SaveChangesAsync(ct);
+
+            // 監査ログの材料は commit 前に確定させ、CommitAsync を try の最後の文にする (原則4)。
+            decidedId = fix.Id;
+            auditNote = $"user={fix.UserId}, date={fix.Date:yyyy-MM-dd}, kind={fix.Kind}";
+
             await tx.CommitAsync(ct);
-
-            await audit.LogAsync(actorId,
-                approved ? "AttendanceFixRequest.Approve" : "AttendanceFixRequest.Reject",
-                entityType: "AttendanceFixRequest", entityId: fix.Id,
-                note: $"user={fix.UserId}, date={fix.Date:yyyy-MM-dd}, kind={fix.Kind}",
-                cancellationToken: ct);
-
-            return new IdResultDto(fix.Id);
         }
         catch
         {
             await tx.RollbackAsync(ct);
             throw;
         }
+
+        // 監査ログは確定済みトランザクションの外で記録する (記録失敗で主フローを止めない。原則4)。
+        await audit.LogAsync(actorId,
+            approved ? "AttendanceFixRequest.Approve" : "AttendanceFixRequest.Reject",
+            entityType: "AttendanceFixRequest", entityId: decidedId,
+            note: auditNote, cancellationToken: ct);
+
+        return new IdResultDto(decidedId);
     }
 
     // ── 内部ヘルパー ─────────────────────────────────────────────────────
 
-    /// <summary>打刻列の取得 (fromInclusive 以上 toExclusive 未満)。順序は追記順 = (at, created_at)。</summary>
+    /// <summary>
+    /// 打刻列の取得 (fromInclusive 以上 toExclusive 未満)。順序は追記順 = (at, created_at)。
+    /// 打刻は追記のみで本経路から更新しないため参照専用 (AsNoTracking) で読む。
+    /// </summary>
     private Task<List<PunchRecord>> LoadPunchesAsync(
         Guid userId, DateOnly fromInclusive, DateOnly toExclusive, CancellationToken ct)
         => db.PunchRecords
+            .AsNoTracking()
             .Where(p => p.UserId == userId && p.Date >= fromInclusive && p.Date < toExclusive)
             .OrderBy(p => p.At).ThenBy(p => p.CreatedAt)
             .ToListAsync(ct);
@@ -421,6 +487,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     /// <summary>削除されていない勤怠ルール (ResolveRule のフォールバック順に合わせ name 昇順)。</summary>
     private Task<List<AttendanceRule>> ActiveRulesAsync(CancellationToken ct)
         => db.AttendanceRules
+            .AsNoTracking()
             .Where(r => r.DeletedAt == null)
             .OrderBy(r => r.Name).ThenBy(r => r.Id)
             .ToListAsync(ct);
@@ -431,7 +498,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     /// </summary>
     private async Task<AttendanceRule?> ResolveRuleForAsync(Guid userId, CancellationToken ct)
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct)
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, ct)
             ?? throw DomainException.Concealed("指定されたリソースが見つかりません");
         var rules = await ActiveRulesAsync(ct);
         return AttendanceCalc.ResolveRule(user, rules);
@@ -465,7 +532,8 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             "breakstart" => PunchKind.BreakStart,
             "breakend" => PunchKind.BreakEnd,
             _ => throw DomainException.Validation(
-                "打刻種別は in / out / breakStart / breakEnd のいずれかを指定してください"),
+                "打刻種別は in / out / breakStart / breakEnd のいずれかを指定してください",
+                "打刻ボタンから操作し直してください"),
         };
 
     private static bool ParseDecision(string? value)
@@ -473,7 +541,8 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         {
             "approved" => true,
             "rejected" => false,
-            _ => throw DomainException.Validation("action は approved / rejected を指定してください"),
+            _ => throw DomainException.Validation("action は approved / rejected を指定してください",
+                "承認 / 却下のボタンから操作し直してください"),
         };
 
     private static FixRequestStatus? ParseStatus(string? value)
@@ -485,36 +554,53 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             "approved" => FixRequestStatus.Approved,
             "rejected" => FixRequestStatus.Rejected,
             _ => throw DomainException.Validation(
-                "status は pending / approved / rejected のいずれかを指定してください"),
+                "status は pending / approved / rejected のいずれかを指定してください",
+                "絞り込みの状態を選び直して再検索してください"),
         };
     }
 
-    /// <summary>YYYY-MM-DD の解析。fallback が null のとき未指定は 422。</summary>
+    /// <summary>
+    /// YYYY-MM-DD の解析。fallback が null のとき未指定は 422。
+    /// 業務上ありえない日付 (0001 年等) は .NET の英語例外や非現実的な集計範囲に化けるため、
+    /// <see cref="AttendanceCalc.IsBusinessDateInRange"/> の妥当範囲でも弾く。
+    /// </summary>
     private static DateOnly ParseDate(string? value, DateOnly? fallback, string label)
     {
         if (string.IsNullOrWhiteSpace(value))
-            return fallback ?? throw DomainException.Validation($"{label} を指定してください");
+            return fallback ?? throw DomainException.Validation($"{label} を指定してください",
+                "日付を選択して再送信してください");
         if (!DateOnly.TryParseExact(value.Trim(), "yyyy-MM-dd",
                 CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
-            throw DomainException.Validation($"{label} は YYYY-MM-DD 形式で指定してください");
+            throw DomainException.Validation($"{label} は YYYY-MM-DD 形式で指定してください",
+                "カレンダーから日付を選び直して再送信してください");
+
+        var today = SystemTime.TodayJst;
+        if (!AttendanceCalc.IsBusinessDateInRange(parsed, today))
+            throw DomainException.Validation(
+                $"{label} は {AttendanceCalc.MinBusinessDate:yyyy-MM-dd} 〜 {today.AddYears(1):yyyy-MM-dd} の範囲で指定してください",
+                "対象の日付を選び直して再送信してください");
         return parsed;
     }
 
-    /// <summary>YYYY-MM の解析 (未指定は当月 JST)。不正形式は 422。</summary>
+    /// <summary>YYYY-MM の解析 (未指定は当月 JST)。不正形式・範囲外は 422。</summary>
     private static (int Year, int Month) ParseMonth(string? value, string label)
     {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            var today = SystemTime.TodayJst;
-            return (today.Year, today.Month);
-        }
+        var today = SystemTime.TodayJst;
+        if (string.IsNullOrWhiteSpace(value)) return (today.Year, today.Month);
 
         var v = value.Trim();
         if (v.Length != 7 || v[4] != '-'
             || !int.TryParse(v.AsSpan(0, 4), NumberStyles.None, CultureInfo.InvariantCulture, out var y)
             || !int.TryParse(v.AsSpan(5, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var m)
             || y < 1 || y > 9999 || m < 1 || m > 12)
-            throw DomainException.Validation($"{label} は YYYY-MM 形式で指定してください");
+            throw DomainException.Validation($"{label} は YYYY-MM 形式で指定してください",
+                "対象の年月を選び直して再送信してください");
+
+        // 月初日で妥当範囲を判定する (日付側と同じ基準)。
+        if (!AttendanceCalc.IsBusinessDateInRange(new DateOnly(y, m, 1), today))
+            throw DomainException.Validation(
+                $"{label} は {AttendanceCalc.MinBusinessDate:yyyy-MM} 〜 {today.AddYears(1):yyyy-MM} の範囲で指定してください",
+                "対象の年月を選び直して再送信してください");
         return (y, m);
     }
 }

@@ -133,7 +133,11 @@ public record AttendanceRuleWriteRequest(
 /// <summary>
 /// 勤怠ルールの部分更新ペイロード。null のフィールドは「未指定 = 更新しない」。
 /// (Zod .partial() の教訓と同趣旨: 送っていない項目を既定値で潰さない)
-/// FlexCoreStart / FlexCoreEnd は本 I/F では null クリアできない (未指定と区別できないため)。
+///
+/// FlexCoreStart / FlexCoreEnd は null 単独ではクリアできない (未指定と区別できないため)。
+/// **クリアは <c>FlexEnabled=false</c> で行う**: フレックス無効時にコアタイムは意味を持たないため、
+/// サーバ側が必ず null にする (F-8)。FlexEnabled=true のままコアタイムだけ空にする指定は
+/// 検証 (コアタイムは HH:mm 必須) で 422 になる。
 /// </summary>
 public record AttendanceRulePatchRequest(
     string? Name = null,

@@ -25,8 +25,9 @@ public record UserListItem(
     decimal WeeklyDays = 5m,
     decimal WeeklyHours = 40m);
 
-// 利用者マスタ (Part5) の作成/更新ペイロード。権限 (閲覧/操作) を含む。
-// FirebaseUid は任意 (ログイン連携のプロビジョニング用。未指定なら既存値を保持/未連携)。
+// 利用者マスタ (Part5) の作成ペイロード。権限 (閲覧/操作) を含む。
+// FirebaseUid は任意 (ログイン連携のプロビジョニング用。未指定なら未連携)。
+// **更新 (PATCH) は本 record ではなく UserPatchRequest を使う** (未指定項目を既定値で潰さないため)。
 public record UserWriteRequest(
     string EmployeeNo,
     string LoginId,
@@ -48,3 +49,42 @@ public record UserWriteRequest(
     DateOnly? HireDate = null,
     decimal WeeklyDays = 5m,
     decimal WeeklyHours = 40m);
+
+/// <summary>
+/// 利用者マスタの**部分更新 (PATCH)** ペイロード。
+/// **null = 未指定 (現在値を保持)**。<see cref="UserWriteRequest"/> をそのまま更新に使うと、
+/// 送っていない項目が record の既定値で上書きされ、勤怠列 (入社日・週所定日数/時間・勤務体系) が
+/// 黙って初期化される。実害は「表示名を直しただけで入社日が消え、有給の周期自動付与が止まり、
+/// 付与日数が法的に誤る」ため、更新は必ず本 record を使うこと
+/// (CLAUDE.md の Zod <c>.partial()</c> による既定値上書き障害と同じ轍を踏まない。
+///  <c>LeaveTypePatchRequest</c> / <c>AttendanceRulePatchRequest</c> と同じ手法)。
+///
+/// NULL 許容列 (hire_date / attendance_rule_id) は「null = 未指定」と「null = クリア」を
+/// 区別できないため、明示クリアは <see cref="ClearHireDate"/> /
+/// <see cref="ClearAttendanceRule"/> で行う (クリアフラグが優先)。
+/// Email は「null = 未指定 (保持)」「空文字 = クリア」。
+/// FirebaseUid は空/null なら既存値を保持する (連携解除は本 I/F では行わない、非破壊)。
+/// </summary>
+public record UserPatchRequest(
+    string? EmployeeNo = null,
+    string? LoginId = null,
+    string? DisplayName = null,
+    string? Email = null,
+    bool? IsPlanningStaff = null,
+    bool? IsSalesStaff = null,
+    short? ProductLedgerPermission = null,
+    short? PurchaseOrderCreatePermission = null,
+    short? PurchaseOrderInfoPermission = null,
+    short? ProcessRecordPermission = null,
+    bool? IsActive = null,
+    string? FirebaseUid = null,
+    // 勤怠 (Iteration 30)
+    short? AttendancePermission = null,
+    bool? PunchRequired = null,
+    Guid? AttendanceRuleId = null,
+    DateOnly? HireDate = null,
+    decimal? WeeklyDays = null,
+    decimal? WeeklyHours = null,
+    // 明示クリア用フラグ (末尾追加)。true のとき値の指定より優先して null にする。
+    bool ClearAttendanceRule = false,
+    bool ClearHireDate = false);

@@ -98,8 +98,13 @@ public static class AttendanceEndpoints
         });
 
         // #8 修正申請の一覧。scope=all (全件) はオーナーのみ。
+        // キーセットページング (AKB-DOC-12 §7.1): ?limit=&cursor=<opaque>、不正は 400 AKB-SYS-011。
+        // data は従来どおり配列のままで、続きの有無は meta.page.hasMore が示す (フロント契約は非破壊)。
+        // limit 未指定時の既定は上限値 (PageRequest.MaxLimit)。フロント (useAttendance.loadFixRequests) は
+        // まだ limit / cursor を送らないため、既定 50 だと申請が黙って欠落する。
         group.MapGet("/fix-requests", async (HttpContext http, IAkebonoDbContext db, AttendanceService svc,
-                                              string? status, string? scope, CancellationToken ct) =>
+                                              string? status, string? scope, int? limit, string? cursor,
+                                              CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
@@ -111,8 +116,9 @@ public static class AttendanceEndpoints
                 if (admin.ErrorResult is not null) return admin.ErrorResult;
             }
 
-            var rows = await svc.ListFixRequestsAsync(auth.ActorId!.Value, status, all, ct);
-            return ApiEnvelope.Ok(http, rows);
+            var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
+            var result = await svc.ListFixRequestsAsync(auth.ActorId!.Value, status, all, page, ct);
+            return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
         // #9 修正申請の承認 / 却下 (オーナーのみ)。承認は fix レコード追記 (元打刻は削除しない)。

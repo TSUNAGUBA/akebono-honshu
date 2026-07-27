@@ -44,6 +44,32 @@ public static class AttendanceCalc
     /// <summary>深夜帯の終了時 (JST、この時を含まない)。</summary>
     public const int NightEndHour = 5;
 
+    /// <summary>1 日の分数。深夜帯の周期計算に使う。</summary>
+    private const int MinutesPerDay = 24 * 60;
+
+    /// <summary>深夜帯の開始 (0 時からの分数) = 22:00。</summary>
+    private const int NightStartMinute = NightStartHour * 60;
+
+    /// <summary>深夜帯の終了 (0 時からの分数、この分を含まない) = 05:00。</summary>
+    private const int NightEndMinute = NightEndHour * 60;
+
+    /// <summary>1 周期 (24h) あたりの深夜分数 = 300 (0:00〜5:00) + 120 (22:00〜24:00) = 420。</summary>
+    private const int NightMinutesPerDay = NightEndMinute + (MinutesPerDay - NightStartMinute);
+
+    /// <summary>
+    /// 業務日付として受け付ける下限。これより前の日付は誤入力とみなす
+    /// (0001 年のような極端な日付を通すと集計・ループが非現実的な範囲まで広がるため)。
+    /// </summary>
+    public static readonly DateOnly MinBusinessDate = new(2000, 1, 1);
+
+    /// <summary>
+    /// 業務日付が妥当な範囲 (<see cref="MinBusinessDate"/> 〜 <paramref name="today"/> の 1 年後) か。
+    /// 上限を当日基準にするため <paramref name="today"/> は呼出側が渡す (本クラスは時刻に依存しない)。
+    /// 月の検証にも使う (その月の 1 日を渡す)。
+    /// </summary>
+    public static bool IsBusinessDateInRange(DateOnly value, DateOnly today)
+        => value >= MinBusinessDate && value <= today.AddYears(1);
+
     // ---- 36 協定アラートの識別子 ----
     // HTTP エラーコードではなくアラート識別子のため AkbErrorCodes には追加しない。
 
@@ -163,6 +189,12 @@ public static class AttendanceCalc
     /// <paramref name="atUtc"/> から <paramref name="durationMinutes"/> 分の区間のうち、
     /// 深夜帯 (JST 22:00〜翌 05:00) に重なる分数 (§4.3)。
     /// 実行環境 TZ に依存させないため必ず <see cref="SystemTime.ToJst"/> 経由で判定する。
+    ///
+    /// **計算量は O(1)**。1 分刻みで数えると、極端な打刻時刻 (誤登録された修正打刻等) で
+    /// 区間長が数百日分になったとき CPU を占有するため、完全周期 (1440 分 = 深夜 420 分) を
+    /// 掛け算で処理し、端数のみ累積関数 <see cref="NightMinutesBefore"/> で求める。
+    /// 1 分刻み実装との結果一致は 開始 0〜1439 分 × 区間 0〜3000 分 の全数比較 +
+    /// 境界 (0 / 1440 の倍数 / 2880 超 / 負値) で検証済み。
     /// </summary>
     public static int NightOverlap(DateTime atUtc, int durationMinutes)
     {
@@ -170,14 +202,25 @@ public static class AttendanceCalc
 
         var jst = SystemTime.ToJst(atUtc);
         var startMin = jst.Hour * 60 + jst.Minute;
-        var count = 0;
-        for (var i = 0; i < durationMinutes; i++)
-        {
-            var h = ((startMin + i) % 1440) / 60;
-            if (h >= NightStartHour || h < NightEndHour) count++;
-        }
+
+        // 完全周期は 1 周期あたり必ず NightMinutesPerDay 分。
+        var count = durationMinutes / MinutesPerDay * NightMinutesPerDay;
+
+        // 端数 [startMin, startMin + rest) を日跨ぎで分割して数える (startMin < 1440、rest < 1440)。
+        var rest = durationMinutes % MinutesPerDay;
+        var end = startMin + rest;
+        count += NightMinutesBefore(Math.Min(end, MinutesPerDay)) - NightMinutesBefore(startMin);
+        if (end > MinutesPerDay) count += NightMinutesBefore(end - MinutesPerDay);
+
         return count;
     }
+
+    /// <summary>
+    /// 0 時から <paramref name="minuteOfDay"/> 分まで (その分を含まない) の深夜分数。
+    /// <paramref name="minuteOfDay"/> は 0〜1440 を想定 (<see cref="NightOverlap"/> 専用の累積関数)。
+    /// </summary>
+    private static int NightMinutesBefore(int minuteOfDay)
+        => Math.Min(minuteOfDay, NightEndMinute) + Math.Max(0, minuteOfDay - NightStartMinute);
 
     /// <summary>
     /// 実労働時間を割増区分の 6 バケットへ分解する (§4.4、労基法 37 条)。

@@ -3,6 +3,8 @@
 // 書込はオーナー権限 (process_record_permission >= 1) が必要 (バックエンドで最終ガード)。
 const { user } = useAuth()
 const { apiData, apiFetch } = useApi()
+// 勤務体系 (勤怠ルール) の選択肢。勤怠 API のラッパを再利用する (原則3)。
+const { attendanceRules } = useAttendance()
 
 const canManageUsers = computed(() => (user.value?.processRecordPermission ?? 0) >= 1)
 
@@ -23,10 +25,18 @@ interface UserItem {
   // DB 既定は attendance_permission=1 / punch_required=true のため、表示時はその既定へフォールバックする。
   attendancePermission?: number
   punchRequired?: boolean
+  // 勤務体系 (null = 既定ルール)。入社日は有給の周期自動付与の起算日 (null = 対象外)。
+  // 週所定日数/時間は比例付与の判定に使う。DB 既定は 5 日 / 40 時間。
+  attendanceRuleId?: string | null
+  hireDate?: string | null
+  weeklyDays?: number
+  weeklyHours?: number
   hasFirebaseLink: boolean
 }
 
 const users = ref<UserItem[]>([])
+// 勤務体系の選択肢 (MasterSelect 用)。取得失敗時は空のまま (原則4: 主フローを止めない)。
+const attendanceRuleOptions = ref<{ id: string; name: string }[]>([])
 const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
@@ -64,6 +74,11 @@ const emptyForm = () => ({
   // 実際に打刻対象かは punchRequired で個別に外す。
   attendancePermission: 1,
   punchRequired: true,
+  // 勤怠の付与条件 (DB 既定と一致)。空欄の入社日 = 周期自動付与の対象外。
+  attendanceRuleId: null as string | null,
+  hireDate: '',
+  weeklyDays: 5,
+  weeklyHours: 40,
   isActive: true,
   firebaseUid: '',
 })
@@ -82,7 +97,22 @@ const reload = async () => {
     loading.value = false
   }
 }
-onMounted(reload)
+
+// 勤務体系の選択肢。勤怠権限が無いオーナーでは 403 になり得るが、
+// 利用者マスタ全体を止めないよう握りつぶす (原則4: 補助処理の失敗で主フローを止めない)。
+const loadAttendanceRules = async () => {
+  try {
+    const rules = await attendanceRules()
+    attendanceRuleOptions.value = rules.map((r) => ({ id: r.id, name: r.name }))
+  } catch {
+    attendanceRuleOptions.value = []
+  }
+}
+
+onMounted(async () => {
+  await reload()
+  await loadAttendanceRules()
+})
 
 const startCreate = () => {
   form.value = emptyForm()
@@ -105,6 +135,11 @@ const startEdit = (u: UserItem) => {
     // 応答に無い (Backend 未更新) 場合は DB 既定と同じ値を初期表示する。
     attendancePermission: u.attendancePermission ?? 1,
     punchRequired: u.punchRequired ?? true,
+    attendanceRuleId: u.attendanceRuleId ?? null,
+    // hireDate は "YYYY-MM-DD"。<input type="date"> 用に先頭 10 文字だけ使う。
+    hireDate: u.hireDate ? u.hireDate.slice(0, 10) : '',
+    weeklyDays: u.weeklyDays ?? 5,
+    weeklyHours: u.weeklyHours ?? 40,
     isActive: u.isActive,
     // 連携済 UID は変更させない (空で送れば既存値を保持)。
     firebaseUid: '',
@@ -114,15 +149,26 @@ const startEdit = (u: UserItem) => {
 }
 const cancelForm = () => { showForm.value = false }
 
+// 週所定の範囲 (サーバ側 UserQueryService.ValidatePermissions と同値)。超過は 422 になるため事前に弾く。
+const isWeeklyValid = computed(() => {
+  const days = Number(form.value.weeklyDays)
+  const hours = Number(form.value.weeklyHours)
+  return Number.isFinite(days) && days >= 0 && days <= 7
+    && Number.isFinite(hours) && hours >= 0 && hours <= 168
+})
+
 const canSubmit = computed(() =>
   form.value.employeeNo.trim() !== '' &&
   form.value.loginId.trim() !== '' &&
   form.value.displayName.trim() !== '' &&
+  isWeeklyValid.value &&
   !submitting.value)
 
 const submit = async () => {
   errorMessage.value = ''
   successMessage.value = ''
+  // 範囲エラーの方が具体的な案内になるため、必須チェックより先に判定する。
+  if (!isWeeklyValid.value) { errorMessage.value = '週所定日数は 0〜7、週所定時間は 0〜168 で入力してください'; return }
   if (!canSubmit.value) { errorMessage.value = '社員番号 / ログインID / 表示名は必須です'; return }
   submitting.value = true
   try {
@@ -130,7 +176,8 @@ const submit = async () => {
       employeeNo: form.value.employeeNo.trim(),
       loginId: form.value.loginId.trim(),
       displayName: form.value.displayName.trim(),
-      email: form.value.email.trim() || null,
+      // PATCH では null = 未指定 (保持) のため、クリアは空文字で送る (POST では空文字 = null 扱い)。
+      email: form.value.email.trim(),
       isPlanningStaff: form.value.isPlanningStaff,
       isSalesStaff: form.value.isSalesStaff,
       productLedgerPermission: Number(form.value.productLedgerPermission),
@@ -139,11 +186,25 @@ const submit = async () => {
       processRecordPermission: Number(form.value.processRecordPermission),
       attendancePermission: Number(form.value.attendancePermission),
       punchRequired: form.value.punchRequired,
+      // 勤怠の付与条件。**必ず送る**（送らないと PATCH で現在値のまま据え置かれ、
+      // 画面で消したつもりの値が反映されない）。null 化は下の clear* フラグで明示する。
+      attendanceRuleId: form.value.attendanceRuleId,
+      hireDate: form.value.hireDate || null,
+      weeklyDays: Number(form.value.weeklyDays),
+      weeklyHours: Number(form.value.weeklyHours),
       isActive: form.value.isActive,
       firebaseUid: form.value.firebaseUid.trim() || null,
     }
     if (isEditing.value) {
-      await apiData<UserItem>(`/users/${form.value.id}`, { method: 'PATCH', body })
+      // NULL 許容列は「未指定」と「クリア」を区別できないため、明示クリアはフラグで送る。
+      await apiData<UserItem>(`/users/${form.value.id}`, {
+        method: 'PATCH',
+        body: {
+          ...body,
+          clearHireDate: form.value.hireDate === '',
+          clearAttendanceRule: form.value.attendanceRuleId == null,
+        },
+      })
       successMessage.value = `「${body.displayName}」を更新しました`
     } else {
       await apiData<UserItem>('/users', { method: 'POST', body })
@@ -275,6 +336,38 @@ const remove = async (u: UserItem) => {
           </p>
         </fieldset>
 
+        <!-- 勤怠の付与条件。入社日が空欄だと有給の周期自動付与の対象外になるため必ず入力させる。 -->
+        <fieldset class="rounded-md border border-gray-200 p-3">
+          <legend class="px-1 text-xs font-semibold text-gray-600">勤怠 (有給付与の条件)</legend>
+          <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">入社日</span>
+              <input v-model="form.hireDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">週所定日数</span>
+              <input v-model.number="form.weeklyDays" type="number" min="0" max="7" step="0.5" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">週所定時間</span>
+              <input v-model.number="form.weeklyHours" type="number" min="0" max="168" step="0.5" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+            </label>
+            <div class="flex flex-col gap-1">
+              <span class="text-sm font-medium">勤務体系</span>
+              <MasterSelect
+                v-model="form.attendanceRuleId"
+                :items="attendanceRuleOptions"
+                allow-empty
+                empty-label="（既定の勤務体系）"
+                placeholder="勤務体系を選択…"
+              />
+            </div>
+          </div>
+          <p class="mt-2 text-xs" :class="isWeeklyValid ? 'text-gray-500' : 'text-red-600'">
+            入社日は有給の周期自動付与の起算日です (空欄 = 対象外)。週所定日数 0〜7 / 週所定時間 0〜168 は比例付与の判定に使います。
+          </p>
+        </fieldset>
+
         <div class="flex justify-end gap-2">
           <button type="button" class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm hover:bg-gray-50" @click="cancelForm">キャンセル</button>
           <button type="submit" :disabled="!canSubmit" class="rounded-md bg-blue-600 px-6 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
@@ -297,6 +390,7 @@ const remove = async (u: UserItem) => {
             <th class="px-3 py-2 text-left">発注情報</th>
             <th class="px-3 py-2 text-left">利用者管理</th>
             <th class="px-3 py-2 text-left">勤怠</th>
+            <th class="px-3 py-2 text-left">入社日</th>
             <th class="px-3 py-2 text-center">状態</th>
             <th class="px-3 py-2 text-right"></th>
           </tr>
@@ -313,6 +407,10 @@ const remove = async (u: UserItem) => {
               {{ labelOf(ATTENDANCE_OPTS, u.attendancePermission ?? 1) }}
               <span v-if="!(u.punchRequired ?? true)" class="ml-1 text-xs text-gray-400">(打刻対象外)</span>
             </td>
+            <td class="whitespace-nowrap px-3 py-2">
+              <template v-if="u.hireDate">{{ u.hireDate.slice(0, 10) }}</template>
+              <span v-else class="text-xs text-gray-400">未設定</span>
+            </td>
             <td class="px-3 py-2 text-center">
               <span :class="u.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
                 {{ u.isActive ? '有効' : '無効' }}
@@ -326,7 +424,7 @@ const remove = async (u: UserItem) => {
             </td>
           </tr>
           <tr v-if="users.length === 0">
-            <td colspan="9" class="px-3 py-6 text-center text-gray-500">利用者が登録されていません</td>
+            <td colspan="10" class="px-3 py-6 text-center text-gray-500">利用者が登録されていません</td>
           </tr>
         </tbody>
       </table>

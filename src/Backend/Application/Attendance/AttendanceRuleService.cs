@@ -13,6 +13,11 @@ namespace Akebono.Application.Attendance;
 ///   - 参照は勤怠権限 (1 or 2)、書込はオーナーのみ (エンドポイント側で確認済み)。
 ///   - PATCH は**部分更新**。null のフィールドは更新しない
 ///     (CLAUDE.md の Zod .partial() の教訓と同趣旨: 送っていない項目を既定値で潰さない)。
+///   - ただし **FlexEnabled=false のときコアタイムはサーバ側で必ず null にする**。
+///     フレックス無効時のコアタイムは意味を持たない設定であり、残すと「無効化したのに
+///     コアタイムが DB に残る」不整合になる (F-8)。専用のクリアフラグは設けない
+///     (FlexEnabled=true のままコアタイムだけ空にする操作は Validate が禁止しており、
+///      フラグを足しても到達できる状態が増えないため。原則3)。
 ///   - IsDefault はテナント内で高々 1 件。true で保存したら他ルールの IsDefault を落とす
 ///     (同一 SaveChanges = 単一トランザクションで原子的に切り替える)。
 ///   - 削除は論理削除 (deleted_at)。復元エンドポイントで取り消せる (原則: 操作の取消可能性)。
@@ -27,7 +32,7 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
     public async Task<IReadOnlyList<AttendanceRuleDto>> ListAsync(
         bool includeInactive, CancellationToken ct = default)
     {
-        var query = db.AttendanceRules.AsQueryable();
+        var query = db.AttendanceRules.AsNoTracking();
         if (!includeInactive) query = query.Where(r => r.DeletedAt == null && r.IsActive);
 
         var rows = await query.OrderBy(r => r.Name).ThenBy(r => r.Id).ToListAsync(ct);
@@ -48,8 +53,9 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
             WorkEnd = req.WorkEnd.Trim(),
             BreakMinutes = req.BreakMinutes,
             FlexEnabled = req.FlexEnabled,
-            FlexCoreStart = NullIfBlank(req.FlexCoreStart),
-            FlexCoreEnd = NullIfBlank(req.FlexCoreEnd),
+            // フレックス無効ならコアタイムは持たせない (F-8。更新時と同じ規則)。
+            FlexCoreStart = req.FlexEnabled ? NullIfBlank(req.FlexCoreStart) : null,
+            FlexCoreEnd = req.FlexEnabled ? NullIfBlank(req.FlexCoreEnd) : null,
             FlexSettlementMonths = req.FlexSettlementMonths,
             ClosingDay = req.ClosingDay,
             LegalHolidayWeekday = req.LegalHolidayWeekday,
@@ -106,8 +112,9 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
         entity.WorkEnd = merged.WorkEnd.Trim();
         entity.BreakMinutes = merged.BreakMinutes;
         entity.FlexEnabled = merged.FlexEnabled;
-        entity.FlexCoreStart = NullIfBlank(merged.FlexCoreStart);
-        entity.FlexCoreEnd = NullIfBlank(merged.FlexCoreEnd);
+        // フレックスを無効化したらコアタイムは残さない (F-8: 無効化しても DB に残る不整合の解消)。
+        entity.FlexCoreStart = merged.FlexEnabled ? NullIfBlank(merged.FlexCoreStart) : null;
+        entity.FlexCoreEnd = merged.FlexEnabled ? NullIfBlank(merged.FlexCoreEnd) : null;
         entity.FlexSettlementMonths = merged.FlexSettlementMonths;
         entity.ClosingDay = merged.ClosingDay;
         entity.LegalHolidayWeekday = merged.LegalHolidayWeekday;
@@ -190,35 +197,44 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
     {
         var name = (req.Name ?? string.Empty).Trim();
         if (name.Length == 0)
-            throw DomainException.Validation("名称を入力してください");
+            throw DomainException.Validation("名称を入力してください", "勤務体系の名称を入力してください");
         if (name.Length > NameMaxLength)
-            throw DomainException.Validation($"名称は {NameMaxLength} 文字以内で入力してください");
+            throw DomainException.Validation($"名称は {NameMaxLength} 文字以内で入力してください",
+                "名称を短くして再送信してください");
 
         var workStart = (req.WorkStart ?? string.Empty).Trim();
         var workEnd = (req.WorkEnd ?? string.Empty).Trim();
         if (!IsHhmm(workStart) || !IsHhmm(workEnd))
-            throw DomainException.Validation("始業・終業は HH:mm 形式で入力してください");
+            throw DomainException.Validation("始業・終業は HH:mm 形式で入力してください",
+                "始業・終業を 09:00 のような HH:mm 形式で入力してください");
         // 'HH:mm' はゼロ埋め固定長のため序数比較で時刻の前後を判定できる。
         if (string.CompareOrdinal(workStart, workEnd) >= 0)
-            throw DomainException.Validation("終業は始業より後の時刻にしてください");
+            throw DomainException.Validation("終業は始業より後の時刻にしてください",
+                "始業・終業のどちらかを修正して再送信してください");
 
         if (req.BreakMinutes is < 0 or > 240)
-            throw DomainException.Validation("休憩時間は 0〜240 分で入力してください");
+            throw DomainException.Validation("休憩時間は 0〜240 分で入力してください",
+                "休憩時間を 0〜240 の範囲で入力してください");
         if (req.ClosingDay is < 1 or > 31)
-            throw DomainException.Validation("締め日は 1〜31 で入力してください（31 = 月末）");
+            throw DomainException.Validation("締め日は 1〜31 で入力してください（31 = 月末）",
+                "締め日を 1〜31 の範囲で入力してください");
         if (req.LegalHolidayWeekday is < 0 or > 6)
-            throw DomainException.Validation("法定休日の曜日は 0〜6（0 = 日曜）で入力してください");
+            throw DomainException.Validation("法定休日の曜日は 0〜6（0 = 日曜）で入力してください",
+                "法定休日の曜日を選び直してください");
         if (req.FlexSettlementMonths is < 1 or > 3)
-            throw DomainException.Validation("フレックスの清算期間は 1〜3 ヶ月で入力してください");
+            throw DomainException.Validation("フレックスの清算期間は 1〜3 ヶ月で入力してください",
+                "清算期間を 1〜3 ヶ月で入力してください");
 
         if (!req.FlexEnabled) return;
 
         var coreStart = (req.FlexCoreStart ?? string.Empty).Trim();
         var coreEnd = (req.FlexCoreEnd ?? string.Empty).Trim();
         if (!IsHhmm(coreStart) || !IsHhmm(coreEnd))
-            throw DomainException.Validation("コアタイムは HH:mm 形式で入力してください");
+            throw DomainException.Validation("コアタイムは HH:mm 形式で入力してください",
+                "コアタイムを入力するか、フレックスを無効にして再送信してください");
         if (string.CompareOrdinal(coreStart, coreEnd) >= 0)
-            throw DomainException.Validation("コアタイムの終了は開始より後の時刻にしてください");
+            throw DomainException.Validation("コアタイムの終了は開始より後の時刻にしてください",
+                "コアタイムの開始・終了のどちらかを修正して再送信してください");
     }
 
     /// <summary>'HH:mm' (00:00〜23:59) か。</summary>

@@ -41,8 +41,11 @@ public static class UserEndpoints
             return ApiEnvelope.Created(http, $"/api/maker/v1/users/{created.Id}", created);
         });
 
+        // 部分更新。**送られていないフィールドは既存値を保持する** (UserPatchRequest)。
+        // 作成用の UserWriteRequest を受けると、未指定の勤怠列が record の既定値で
+        // 上書きされ入社日等が消えるため、更新は必ず patch 用 record で受けること。
         group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
-                                              UserQueryService svc, Guid id, UserWriteRequest req, CancellationToken ct) =>
+                                              UserQueryService svc, Guid id, UserPatchRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckUserAdminAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

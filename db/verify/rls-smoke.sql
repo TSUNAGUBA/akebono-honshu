@@ -94,7 +94,16 @@ BEGIN
     END LOOP;
     RAISE NOTICE 'PASS: 記録系 6 テーブルは INSERT 専用 (UPDATE/DELETE 剥奪済み)';
 
-    -- 8. accounts_receivable (security_invoker VIEW) に基底 RLS が呼出し側適用される
+    -- 8. 記録系保護 (勤怠): punch_records の UPDATE/DELETE 権限がないこと
+    --    打刻は追記のみ (訂正は source=2(Fix) の追記による論理置換) で、誤登録された打刻を
+    --    削除して復旧する手段は無い。権限が復活すると記録系保護の前提が崩れるため恒久検証する。
+    IF has_table_privilege('akebono_app', 'punch_records', 'UPDATE')
+       OR has_table_privilege('akebono_app', 'punch_records', 'DELETE') THEN
+        RAISE EXCEPTION 'FAIL: akebono_app が punch_records の UPDATE/DELETE 権限を持っている';
+    END IF;
+    RAISE NOTICE 'PASS: punch_records は INSERT 専用 (UPDATE/DELETE 剥奪済み)';
+
+    -- 9. accounts_receivable (security_invoker VIEW) に基底 RLS が呼出し側適用される
     PERFORM set_config('app.tenant_id', honshu_tenant::text, TRUE);
     SELECT count(*) INTO cnt FROM accounts_receivable;
     IF cnt = 0 THEN
