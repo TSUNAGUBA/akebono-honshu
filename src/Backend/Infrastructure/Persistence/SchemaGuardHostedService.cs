@@ -46,7 +46,7 @@ BEGIN
      SELECT 1 FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'users' AND column_name = c);
   IF missing IS NOT NULL THEN
-    RAISE EXCEPTION 'AKB-SCHEMA-GUARD: users テーブルに勤怠列 (%) がありません。db/migration/iter30-attendance.sql を適用してください (deploy/db/run-migrations.sh action=migrate)。', missing;
+    RAISE EXCEPTION 'AKB-SCHEMA-GUARD: users テーブルに勤怠列 (%) がありません。db/migration/iter30-attendance.sql を適用してください (ACTION=migrate deploy/db/run-migrations.sh)。', missing;
   END IF;
 END $$;";
 
@@ -80,7 +80,7 @@ END $$;";
             logger.LogCritical(ex,
                 "起動時スキーマ検査に失敗しました。db/migration/iter30-attendance.sql が未適用の可能性があります。" +
                 "未適用のまま起動するとログイン (/auth/sync) が全て失敗するため、アプリの起動を中断します。" +
-                "deploy/db/run-migrations.sh を action=migrate で実行してから再起動してください");
+                "ACTION=migrate deploy/db/run-migrations.sh で適用してから再起動してください");
             throw;
         }
     }
