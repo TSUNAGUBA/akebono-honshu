@@ -112,7 +112,7 @@
 | O-05 | 発注中止 | `/orders/{id}` 内アクション |
 | O-06 | 発注書 Excel 出力 | `/orders/{id}` 内アクション + `/orders/{id}/excel` ダウンロード |
 | O-07 | 連絡文章選択 | `/orders/{id}` 内モーダル |
-| ATT-01 | 打刻（出勤・退勤・休憩開始・休憩終了）| `/attendance/timecard` 打刻カード |
+| ATT-01 | 打刻（出勤・退勤・休憩開始・休憩終了）| `/attendance/timecard` 打刻カード ＋ **ヘッダのタイムカードモーダル（全画面共通、§2.1）**。いずれも共有 `components/attendance/PunchCard.vue` |
 | ATT-02 | 本人の出退勤・労働時間一覧 | `/attendance/timecard` 一覧 |
 | ATT-03 | 日次 / 週次 / 月次の勤怠集計 | `/attendance?tab=daily` / `weekly` / `monthly` |
 | ATT-04 | 36 協定アラート | `/attendance?tab=monthly` 内 |
