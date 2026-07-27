@@ -467,7 +467,7 @@ COMMENT ON COLUMN exchange_rates.quote_currency_code IS '相手通貨コード�
 > Iteration 30 で継承実装に追加した勤怠 6 テーブル（`attendance_rules` / `punch_records` /
 > `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）は、
 > **akebono-honshu ローカルの拡張であり、プラットフォーム OLTP スキーマとしては未確定**である。
-> 本ドキュメントは旧版（現行 SoT は akebono-scm-platform リポジトリ側 → §1）であり、
+> 本ドキュメントは旧版（現行 SoT は akebono-scm-platform リポジトリ側 → `docs/platform-design/README.md`）であり、
 > **プラットフォームが勤怠を所有するか、Control Plane（37）側へ寄せるかは未決**のため、
 > ここで台帳へ登録すると未確定の所有関係を既定事実にしてしまう。
 > 継承実装側の正は `db/init/10-attendance.sql` と

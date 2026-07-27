@@ -550,12 +550,15 @@ pnpm dev
    `?tab=leave-admin`（付与・一括付与・周期付与）/ `?tab=settings`（勤怠ルール）が**オーナーにだけ**表示される
 7. **権限の確認:** `attendance_permission = 2`（参照のみ）の利用者では**打刻ボタンと申請ボタンが出ない**（`== 1` 判定）、
    `0` では `/attendance` 本体を描画せず「勤怠機能の利用権限がありません。」+「ホームへ戻る」
-8. **記録系保護の確認:**
+8. **記録系保護の確認:** `akebono_app` ロールで接続して実行する（スーパーユーザは剥奪の対象外なので不可）。
    ```sql
-   SELECT count(*) FROM punch_records;   -- 打刻は追記のみ (UPDATE/DELETE 権限は剥奪済み)
+   -- どちらも ERROR: permission denied for table punch_records となること
+   UPDATE punch_records SET kind = 1 WHERE FALSE;
+   DELETE FROM punch_records WHERE FALSE;
    ```
-   期待: `akebono_app` ロールで `UPDATE punch_records` / `DELETE FROM punch_records` が**権限エラー**になる
-   （`db/verify/rls-smoke.sql §8` が恒久検証）
+   期待: **両方とも権限エラー**（`WHERE FALSE` なので権限があった場合でも行は変わらない）。
+   打刻は追記のみで、誤登録を削除して復旧する手段は無い（訂正は `source=2`(Fix) の追記による論理置換）。
+   `db/verify/rls-smoke.sql §8` が同じ検査を恒久的に行う
 
 ---
 
@@ -701,7 +704,8 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 │   │   ├── Infrastructure/     EF Core + 監査 (Iter 4 段階 B で認証は Presentation/Program.cs の JwtBearer に移行)
 │   │   └── Presentation/       Minimal API エンドポイント
 │   └── Frontend/       Nuxt 3 + Reka UI + Tailwind CSS
-│       ├── pages/              ルーティング (login, masters, products, orders, production, attendance, admin)
+│       ├── pages/              ルーティング (login, index, masters, products, orders, production,
+│       │                        attendance, sales, shipping, inventory, analytics, users, admin)
 │       ├── composables/        useAuth (Firebase Auth、Iter 4 段階 B) / useApi (getIdToken Bearer)
 │       └── middleware/         認証ガード
 ├── RUNBOOK.md (本ファイル)
