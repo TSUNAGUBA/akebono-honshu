@@ -11,7 +11,8 @@ namespace Akebono.Api.Endpoints;
 ///     (attendance_permission が 1 または 2)
 ///   - 申請 (本人): <see cref="AuthEndpoints.CheckAttendanceWriteAsync"/> (attendance_permission == 1)
 ///   - 管理系 (種別設定・承認/却下・付与・休暇管理・scope=all):
-///     <see cref="AuthEndpoints.CheckAttendanceAdminAsync"/> (オーナー = process_record_permission >= 1)
+///     <see cref="AuthEndpoints.CheckAttendanceAdminAsync"/>
+///     (勤怠参照権限 1 or 2 **AND** オーナー process_record_permission >= 1)
 ///   - 他人のサマリ参照はオーナーを要求する (<see cref="EnsureCanReadOtherAsync"/>)。
 ///
 /// 業務エラー (検証 422 / 状態違反・重複 409 / 未検出 404) は service 層の DomainException を
@@ -130,18 +131,13 @@ public static class AttendanceLeaveEndpoints
                                           int? limit, string? cursor,
                                           CancellationToken ct) =>
         {
-            // 勤怠参照権限は scope に関わらず必須。scope=all のときだけオーナーを「追加で」要求する
-            // (#8 GET /fix-requests と同じ形。三項で admin だけに切り替えると、勤怠権限 0 =
-            // 勤怠機能を明示的に禁じられたオーナーが全員分の休暇申請を読めてしまう)。
-            var auth = await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
-            if (auth.ErrorResult is not null) return auth.ErrorResult;
-
+            // scope=all は管理操作。CheckAttendanceAdminAsync が参照権限 (1 or 2) を内包するため、
+            // 勤怠権限 0 のオーナーはここで弾かれる (参照チェックを重ねる必要はない)。
             var allScope = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
-            if (allScope)
-            {
-                var admin = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
-                if (admin.ErrorResult is not null) return admin.ErrorResult;
-            }
+            var auth = allScope
+                ? await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct)
+                : await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
             var result = await svc.ListRequestsAsync(auth.ActorId!.Value, allScope, status, from, to, page, ct);

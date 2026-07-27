@@ -1071,8 +1071,16 @@ S3 アップロード完了後、メタデータを DB に登録。
 |---|---|---|
 | 書込（打刻・打刻修正申請・休暇申請）| `users.attendance_permission == 1`（更新可能）| `CheckAttendanceWriteAsync` |
 | 参照（自分の勤怠・集計・一覧・勤怠ルール/休暇種別の参照）| `attendance_permission` が **1 または 2**（0 は不可）| `CheckAttendanceReadAsync` |
-| 管理（全員のタイムカード・承認/却下・休暇付与・勤怠ルール/休暇種別の設定）| **オーナー** `users.process_record_permission >= 1` | `CheckAttendanceAdminAsync` |
-| 一覧の `scope=all`（#8 / #21）| **参照権限 AND オーナー**。参照チェックを先に通し、`scope=all` のときだけ管理チェックを**追加**で課す | `CheckAttendanceReadAsync` → `CheckAttendanceAdminAsync` |
+| 管理（全員のタイムカード・承認/却下・休暇付与・勤怠ルール/休暇種別の設定・一覧の `scope=all`）| **参照権限 AND オーナー** — `attendance_permission` が 1 または 2、**かつ** `users.process_record_permission >= 1`。**オーナーであることだけでは足りない** | `CheckAttendanceAdminAsync` |
+
+> **管理は参照権限を内包する（2026-07-27 訂正、第 12 イテレーション監査）:**
+> `attendance_permission = 0` は「**勤怠機能の利用を明示的に禁じた**」状態である。
+> ここへ管理操作（全員の打刻記録の閲覧・承認・付与・設定）を許すと禁止設定が意味を失うため、
+> **`CheckAttendanceAdminAsync` が参照権限のチェックを内包する**。
+> 当初は `#21` だけを「参照 → 管理」の 2 段に直したが、**同じ欠落が `#6`（全員のタイムカード =
+> 全従業員の法定労務記録そのもの）・`#27`（休暇管理一覧）ほか管理系 18 経路すべてに残っていた**ため、
+> 個々のエンドポイントではなく**ヘルパー側へ 1 箇所で寄せた**（原則3）。
+> このため `#8` / `#21` の `scope=all` は管理チェック単独で足り、参照チェックを重ねる必要はない。
 
 - **`attendance_permission` は既存 4 権限と同じ非単調スケール**（0=なし / 1=更新可能 / 2=参照のみ）。
   **書込判定は必ず `== 1`**（`>= 1` は「参照のみ(2)」に書込を許してしまうバグ）。
@@ -1116,7 +1124,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 | 3 | `GET` | `/api/maker/v1/attendance/day` | 日次サマリ | 勤怠 1 or 2（他人はオーナー）|
 | 4 | `GET` | `/api/maker/v1/attendance/month` | 月次サマリ | 同上 |
 | 5 | `GET` | `/api/maker/v1/attendance/alerts` | 36 協定アラート（直近 6 ヶ月）| 同上 |
-| 6 | `GET` | `/api/maker/v1/attendance/timecard` | 全員のタイムカード | **オーナー** |
+| 6 | `GET` | `/api/maker/v1/attendance/timecard` | 全員のタイムカード | **参照権限 AND オーナー** |
 
 | # | リクエスト | レスポンス | 主なエラー |
 |---|---|---|---|
@@ -1172,7 +1180,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 | # | メソッド | パス | 用途 | 認可 |
 |---|---|---|---|---|
 | 7 | `POST` | `/api/maker/v1/attendance/fix-requests` | 修正申請（対象は常に本人）| 勤怠 `==1` |
-| 8 | `GET` | `/api/maker/v1/attendance/fix-requests` | 申請一覧 | 勤怠 1 or 2。`scope=all` は**加えてオーナー**（AND）|
+| 8 | `GET` | `/api/maker/v1/attendance/fix-requests` | 申請一覧 | 勤怠 1 or 2。`scope=all` は**参照権限 AND オーナー**|
 | 9 | `POST` | `/api/maker/v1/attendance/fix-requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
 
 | # | リクエスト | レスポンス | 主なエラー |
@@ -1276,13 +1284,13 @@ S3 アップロード完了後、メタデータを DB に登録。
 | 18 | `DELETE` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 論理削除 | **オーナー** |
 | 19 | `POST` | `/api/maker/v1/attendance/leave/types/{id:guid}/restore` | 休暇種別 復元 | **オーナー** |
 | 20 | `GET` | `/api/maker/v1/attendance/leave/summary` | 残数・年 5 日義務・履歴 | 勤怠 1 or 2（他人はオーナー）|
-| 21 | `GET` | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 | 勤怠 1 or 2。`scope=all` は**加えてオーナー**（AND、#8 と同形）|
+| 21 | `GET` | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 | 勤怠 1 or 2。`scope=all` は**参照権限 AND オーナー**（#8 と同形）|
 | 22 | `POST` | `/api/maker/v1/attendance/leave/requests` | 休暇申請（対象は常に本人）| 勤怠 `==1` |
 | 23 | `POST` | `/api/maker/v1/attendance/leave/requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
 | 24 | `POST` | `/api/maker/v1/attendance/leave/grants` | 個別付与 | **オーナー** |
 | 25 | `POST` | `/api/maker/v1/attendance/leave/grants/bulk` | 一括付与 | **オーナー** |
 | 26 | `POST` | `/api/maker/v1/attendance/leave/periodic-grants/run` | 周期自動付与の実行 | **オーナー** |
-| 27 | `GET` | `/api/maker/v1/attendance/leave/admin/summary` | 休暇管理一覧（メンバー × 種別）| **オーナー** |
+| 27 | `GET` | `/api/maker/v1/attendance/leave/admin/summary` | 休暇管理一覧（メンバー × 種別）| **参照権限 AND オーナー** |
 
 | # | リクエスト | レスポンス | 主なエラー |
 |---|---|---|---|

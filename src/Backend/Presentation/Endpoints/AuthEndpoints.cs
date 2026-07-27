@@ -241,7 +241,13 @@ public static class AuthEndpoints
     /// <summary>
     /// 勤怠の管理操作 (全員のタイムカード参照 / 打刻修正・休暇申請の承認却下 / 休暇付与 /
     /// 勤怠ルール・休暇種別の設定) に必要な権限チェック。
-    /// オーナー権限 (process_record_permission >= 1) を要求する
+    ///
+    /// **勤怠参照権限 (attendance_permission 1 or 2) AND オーナー権限 (process_record_permission >= 1)**
+    /// の両方を要求する。オーナーであることだけでは足りない —
+    /// attendance_permission = 0 は「勤怠機能の利用を明示的に禁じた」状態であり、
+    /// そこへ管理操作 (全員の打刻記録の閲覧・承認・付与) を許すと禁止設定が意味を失う。
+    /// 本ヘルパーが参照権限を内包するため、呼出側で CheckAttendanceReadAsync を重ねる必要はない。
+    ///
     /// (office の admin 相当。hr 中間ロールは honshu に無いため作らない = 権限を緩めない方向で統合)。
     /// </summary>
     internal static async Task<MasterEditAuth> CheckAttendanceAdminAsync(
@@ -256,6 +262,13 @@ public static class AuthEndpoints
         if (actor is null || !actor.IsActive || actor.DeletedAt != null)
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
                 "ユーザが無効化されています"));
+
+        // 勤怠機能自体を使えない利用者は、オーナーであっても管理操作に入れない。
+        // (非単調スケールのため == 1 / == 2 の列挙で判定する。>= 1 は 0 を弾けない書き方ではないが、
+        //  スケールの意味が変わったときに壊れるため CheckAttendanceReadAsync と同じ列挙に揃える)
+        if (actor.AttendancePermission != 1 && actor.AttendancePermission != 2)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                "この操作には勤怠権限 (参照以上) が必要です"));
 
         if (actor.ProcessRecordPermission < 1)
             return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,

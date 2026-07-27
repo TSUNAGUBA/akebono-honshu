@@ -9,7 +9,8 @@ namespace Akebono.Api.Endpoints;
 /// 権限 (移植仕様 §2):
 ///   - 打刻・各種申請 (書込)         : attendance_permission == 1 (AuthEndpoints.CheckAttendanceWriteAsync)
 ///   - 自分の勤怠参照               : attendance_permission 1 or 2 (CheckAttendanceReadAsync)
-///   - 他人の勤怠参照 / 承認 / 設定  : オーナー process_record_permission >= 1 (CheckAttendanceAdminAsync)
+///   - 他人の勤怠参照 / 承認 / 設定  : 勤怠 1 or 2 AND オーナー process_record_permission >= 1
+///                                    (CheckAttendanceAdminAsync。オーナーだけでは足りない)
 ///
 /// 業務エラー (検証 422 / 状態機械・処理済み 409 / 未検出 404) は service 層の
 /// DomainException を ApiExceptionMiddleware がエラー封筒へ変換する。
@@ -106,15 +107,12 @@ public static class AttendanceEndpoints
                                               string? status, string? scope, int? limit, string? cursor,
                                               CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
-            if (auth.ErrorResult is not null) return auth.ErrorResult;
-
+            // scope=all は管理操作。CheckAttendanceAdminAsync が参照権限 (1 or 2) を内包する。
             var all = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
-            if (all)
-            {
-                var admin = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
-                if (admin.ErrorResult is not null) return admin.ErrorResult;
-            }
+            var auth = all
+                ? await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct)
+                : await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
             var result = await svc.ListFixRequestsAsync(auth.ActorId!.Value, status, all, page, ct);
