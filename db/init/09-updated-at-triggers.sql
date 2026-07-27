@@ -7,8 +7,15 @@
 --       持つ全 BASE TABLE (VIEW は除外) へ trg_<table>_set_updated_at
 --       (BEFORE UPDATE FOR EACH ROW) を冪等に配線する。
 --       テーブルを列挙しない汎用ループのため、07-ops-data.sql / 08-tenancy-rls.sql
---       など他ファイルで追加されるテーブルも (本ファイルが最後に実行される限り)
---       自動的にカバーされる。新テーブル追加時の配線漏れを構造的に防ぐ。
+--       など **本ファイルより前に実行される** ファイルで追加されたテーブルは
+--       自動的にカバーされる。
+-- 適用範囲: 本ファイルは db/init の最後ではない (Iteration 30 で 10-attendance.sql が
+--           追加された)。09 より後に実行されるファイルで作られるテーブルは、本ファイルの
+--           information_schema 走査時点ではまだ存在しないため **カバーされない**。
+--           そのため 10-attendance.sql は §5 で自らトリガを配線して補っている。
+--           11 番以降のファイルを新設して updated_at 列を持つテーブルを追加する場合も、
+--           同様に自ファイル内で set_updated_at() の BEFORE UPDATE トリガを配線すること
+--           (実装例: 10-attendance.sql §5。配線しないと updated_at が更新されない)。
 -- 冪等性: DROP TRIGGER IF EXISTS → CREATE TRIGGER のため再実行安全 (原則2)。
 --         トリガは設定系オブジェクトであり、再作成しても記録系データは巻き戻らない。
 -- プラットフォーム統合 第二段階: uuid PK / deleted_at 統一 / 監査パーティション

@@ -221,9 +221,12 @@ GitHub Actions **「DB Init / Migrate (RDS)」を `action=migrate`** で実行�
   `init` は全投入後に現行のスキーママイグレーションを「適用済み」として `schema_migrations` に記録するため、
   後から `migrate` を流しても二重適用されません。
 - **適用順序の注意:** `find | sort` は辞書順のため `iter30-attendance.sql` は `iter4-*`〜`iter9-*` より**前**に
-  並びます。本ファイルが依存するのは `01-schema.sql` の `tenant` / `users` と
-  `09-updated-at-triggers.sql` の `set_updated_at()` のみで、`iter4`〜`iter29` とは独立しているため、
+  並びます。本ファイルが依存するのは `01-schema.sql` の `tenant` / `users` と、**同じく `01-schema.sql` で
+  定義される**共通トリガ関数 `set_updated_at()` のみで、`iter4`〜`iter29` とは独立しているため、
   この並び順で問題ありません。
+  （`09-updated-at-triggers.sql` は既存テーブルへのトリガ配線のみを行うファイルであり、
+  `set_updated_at()` の定義元ではありません。適用が `function set_updated_at() does not exist` で
+  失敗した場合に確認すべきは `01-schema.sql` の投入状況です。）
 
 ### テナントコンテキスト（`SET app.tenant_id`）の扱い
 

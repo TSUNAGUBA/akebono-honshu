@@ -3,10 +3,13 @@
 -- ════════════════════════════════════════════════════════════════════
 -- 背景 (なぜ必要か):
 --   akebono-office の勤怠機能 (打刻・勤怠集計・36 協定アラート・打刻修正申請・休暇) を
---   honshu へ移植する。db/init/01-schema.sql (users 拡張列) と db/init/10-attendance.sql
---   (6 テーブル + シード + RLS + トリガ) に反映済だが、db/init/*.sql は「空 DB の初期化」
+--   honshu へ移植する。db/init/10-attendance.sql (users 拡張列 + 6 テーブル + シード +
+--   RLS + トリガ) に反映済だが、db/init/*.sql は「空 DB の初期化」
 --   (run-migrations.sh action=init / docker 初回起動) でのみ適用される。既に init 済の
 --   本番 RDS には反映されないため、本マイグレーション (action=migrate) で追加適用する。
+--   ※ users の勤怠 6 列も 10-attendance.sql §1.2 で追加される。01-schema.sql に
+--     ALTER TABLE users は無く、10 で追加する旨の案内コメントがあるだけである。
+--     init 経路との差分検証は 10-attendance.sql と本ファイルの間で行うこと (原則5)。
 --
 -- 内容 (init 側と等価):
 --   §1 users への勤怠列 6 本の追加 (すべて DEFAULT 付き = 既存行は自動で妥当な値になる)
@@ -51,7 +54,7 @@
 BEGIN;
 
 -- ════════════════════════════════════════════════════════════════════
--- §1 users への勤怠列 (db/init/01-schema.sql と等価)
+-- §1 users への勤怠列 (db/init/10-attendance.sql §1.2 と等価)
 --   attendance_permission: 0=なし / 1=更新可能 / 2=参照のみ
 --     既存 4 権限と同じ **非単調スケール**。書込判定は必ず == 1 で行うこと
 --     (>= 1 は「参照のみ(2)」に書込を許してしまうバグ)。
