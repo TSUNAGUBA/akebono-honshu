@@ -529,6 +529,34 @@ pnpm dev
    ```
    期待: 初回出力は `is_first_export=true`、テンプレ版 `ordersheet-v1`
 
+### 3.4 Iteration 30 追加シナリオ (勤怠・タイムカード)
+
+> **前提:** `db/init/10-attendance.sql`（新規初期化）または `db/migration/iter30-attendance.sql`（既存 DB）を投入済みであること。
+> **投入し忘れると勤怠画面が全滅する**（§2 の警告参照）。利用者の `attendance_permission` は DDL 既定が `1`（更新可能）。
+
+1. **打刻 (T-01):** `http://localhost:3000/attendance/timecard` → 「出勤」→ 状態バッジが「勤務中」へ変わり、出退勤一覧に当日の行が出る
+   → 「休憩開始」→「休憩終了」→「退勤」。**同じ打刻を続けて押すと 409 `AKB-SYS-007`**（状態機械が拒否）
+2. **日次集計:** `/attendance?tab=daily` → 左に打刻タイムライン、右に実労働 / 休憩 / 深夜の KPI 3 枚と 6 区分の内訳
+   → 6 時間超で休憩なしなら**休憩不足警告**（労基法 34 条）が出る
+3. **週次・月次:** `?tab=weekly`（週の起点は日曜、週 40 時間のプログレスバー）／`?tab=monthly`
+   （カレンダー + 36 協定の月 45 時間ゲージ。超過が無ければ緑帯「現時点で 36 協定に関するアラートはありません。」）
+4. **打刻修正の申請 → 承認:** 日次タブの「打刻修正を申請」→ 日付・種別・修正後時刻（`+09:00` 付き）・理由を入力して申請
+   → **オーナー**（`process_record_permission >= 1`）で `?tab=requests` →「承認待ち」に出る → 「承認」
+   → 日次タブで**修正前打刻に取消線 +「修正前」バッジ**、修正打刻に「修正反映」バッジが付く
+   （**承認は取り消せない**。誤承認はあらためて修正申請で直す → §3.14 の注記）
+5. **休暇:** `?tab=leave` で有給残数・年 5 日取得義務トラッカー →「休暇を申請」→ オーナーが `?tab=requests` で承認
+   → 月次カレンダーに「休暇」バッジが付く
+6. **オーナー専用 3 タブ:** `?tab=timecard`（全員のタイムカード、既定 = 直近 7 日・上限 62 日）/
+   `?tab=leave-admin`（付与・一括付与・周期付与）/ `?tab=settings`（勤怠ルール）が**オーナーにだけ**表示される
+7. **権限の確認:** `attendance_permission = 2`（参照のみ）の利用者では**打刻ボタンと申請ボタンが出ない**（`== 1` 判定）、
+   `0` では `/attendance` 本体を描画せず「勤怠機能の利用権限がありません。」+「ホームへ戻る」
+8. **記録系保護の確認:**
+   ```sql
+   SELECT count(*) FROM punch_records;   -- 打刻は追記のみ (UPDATE/DELETE 権限は剥奪済み)
+   ```
+   期待: `akebono_app` ロールで `UPDATE punch_records` / `DELETE FROM punch_records` が**権限エラー**になる
+   （`db/verify/rls-smoke.sql §8` が恒久検証）
+
 ---
 
 ## 4. 想定エンドポイント
@@ -673,7 +701,7 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 │   │   ├── Infrastructure/     EF Core + 監査 (Iter 4 段階 B で認証は Presentation/Program.cs の JwtBearer に移行)
 │   │   └── Presentation/       Minimal API エンドポイント
 │   └── Frontend/       Nuxt 3 + Reka UI + Tailwind CSS
-│       ├── pages/              ルーティング (login, users)
+│       ├── pages/              ルーティング (login, masters, products, orders, production, attendance, admin)
 │       ├── composables/        useAuth (Firebase Auth、Iter 4 段階 B) / useApi (getIdToken Bearer)
 │       └── middleware/         認証ガード
 ├── RUNBOOK.md (本ファイル)

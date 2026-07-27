@@ -28,9 +28,15 @@
 
 1. **マルチテナンシー導入（M1/M2）**: 全 47 業務テーブルに `tenant_id uuid NOT NULL` を追加し、
    一意制約を `UNIQUE(tenant_id, ...)` へ差替。`tenant` テーブル（レジストリ投影）を新設。
-2. **RLS 配線**: テナントスコープ 45 テーブルに `tenant_isolation` ポリシー
+2. **RLS 配線**: テナントスコープ 47 テーブルに `tenant_isolation` ポリシー
    （USING + WITH CHECK / FORCE ROW LEVEL SECURITY / fail-closed）。アプリ接続は非特権ロール
    `akebono_app`。適用除外 3 テーブルは §5 参照。
+
+> **本節の数値は 2026-07-09 実施時点の記録である。** その後 Iteration 30（勤怠移植）で
+> 勤怠 6 テーブルが追加され、**2026-07-27 現在のテナントスコープ業務テーブルは計 53 本**
+> （`db/init/08-tenancy-rls.sql` の「2」47 本 + 「2b」勤怠 6 本）。勤怠 6 本は 08 より後に
+> 作成されるため、08 の「2b」は存在チェック付きで条件付きスキップし、init 経路では
+> `10-attendance.sql §6` が実際の配線経路になる（`db/verify/rls-smoke.sql §8b/§8c` で恒久検証）。
 3. **TIMESTAMPTZ/UTC 化（M3）**: 全 timestamp 列を `TIMESTAMPTZ` に変更し、
    `Npgsql.EnableLegacyTimestampBehavior` を廃止。格納は `SystemTime.UtcNow`、
    表示・帳票・採番年度判定は `SystemTime.JstNow`。
@@ -58,6 +64,10 @@
 11. **updated_at トリガ（W-A）**: `set_updated_at()` + 汎用配線
     （db/init/09-updated-at-triggers.sql、information_schema 走査で updated_at を持つ
     全テーブルに `trg_<table>_set_updated_at` を冪等作成）。
+    **走査は 09 の実行時点に存在するテーブルだけが対象**のため、**09 より後に走る
+    `10-attendance.sql` 以降のテーブルは自ファイル内でトリガを張る必要がある**
+    （10 は §5 で自前配線済み。`punch_records` は `updated_at` を持たないため対象外）。
+    11 番以降を追加する実装者は同じ配線が要る（09 のファイル冒頭にも同旨の但し書きあり）。
 12. **監査ログの月次パーティション（W-A）**: `audit_logs` を `PARTITION BY RANGE (occurred_at)`
     化し、`ensure_audit_log_partitions(int)`（SECURITY DEFINER）+ 起動時/24h 周期の
     `AuditPartitionMaintenanceService` で先行作成（失敗は warning のみ = 非ブロッキング）。
@@ -189,11 +199,15 @@
 
 ### 7.2 カーソルページング（AKB-DOC-12 §7.1、第二段階で導入）
 
-- 対象: 一覧 4 API（`GET /orders`・`GET /products/families`・`GET /production-instructions`・
-  `GET /material-orders`）。
+- 対象: 一覧 6 API（`GET /orders`・`GET /products/families`・`GET /production-instructions`・
+  `GET /material-orders`、および Iteration 30 追加の `GET /attendance/fix-requests`（#8）・
+  `GET /attendance/leave/requests`（#21））。
 - リクエスト: `?limit=`（既定 50・上限 200。範囲外は 400 AKB-SYS-011）+ `?cursor=`
   （不透明トークン。復号不能は 400 AKB-SYS-011。`limit` が数値ですらない場合は
   バインド段階の 400 AKB-SYS-001）。
+  **例外: #8 / #21 の申請一覧 2 本だけは `limit` 省略時の既定が 200（= 上限値）**。
+  フロント（`useAttendance`）がまだ `limit` / `cursor` を送らないため、既定 50 では
+  申請が黙って欠落する。上限 200 と 400 の扱いは他の 4 本と同じ（`RUNBOOK.md §4.1` と同内容）。
 - レスポンス: `meta.page = {nextCursor, limit, hasMore}`。終端は `hasMore=false` /
   `nextCursor=null`。
 - ソートは安定キー **(created_at, id) 降順**で確定。カーソルの中身は
@@ -224,8 +238,10 @@
 
 - `dotnet build`（0 warning / 0 error）・`vue-tsc --noEmit`（0 error）
 - db/init 全 9 ファイル（09-updated-at-triggers.sql 追加後。**2026-07-27 現在は 10-attendance.sql を加えた全 10 ファイル**）を再初期化適用、
-  RLS スモーク 10 チェック ALL PASSED（記録系 6 テーブルの追記専用・
-  accounts_receivable VIEW 越しのフェイルクローズを追加検証）
+  RLS スモーク **13 チェック** ALL PASSED（記録系 6 テーブルの追記専用・
+  accounts_receivable VIEW 越しのフェイルクローズに加え、**2026-07-27 に勤怠 3 件を追加検証**:
+  `punch_records` の追記専用、勤怠 6 テーブルの `tenant_isolation` + FORCE 配線、
+  勤怠 6 テーブルの他テナント / GUC 未設定でのフェイルクローズ）
 - 実サービス経由のページング実機検証（ローカル DB）: 4 一覧のカーソル走査が
   全件クエリと完全一致（重複/欠落なし）、終端で nextCursor=null、
   `Guid.CompareTo` タイブレーカの uuid 翻訳
@@ -321,3 +337,4 @@
 |---|---|---|
 | 1.0 | 2026-07-09 | 初版（プラットフォーム統合 第一段階: マルチテナンシー / TIMESTAMPTZ / API 契約 / エラーコード / Idempotency-Key / FE 追随） |
 | 2.0 | 2026-07-09 | 第二段階（W-A: uuid PK / deleted_at / トリガ / 監査パーティション、W-B: ページング / Idempotency 拡大 / X-Tenant-Id 必須 / 取込直列化、W-C: OpenAPI + CI、W-D: 07 層正規化）。§9 未決 13 件中 10 件を解決 (うち 4 件は残余あり)、新規 2 件 (14・15) を登載 |
+| 2.1 | 2026-07-27 | Iteration 30（勤怠移植）の反映。§2 にテナントスコープ計 53 本（47 + 勤怠 6）と 09 走査の適用範囲（09 より後に走るファイルは自前でトリガ配線）を追記、§7.2 のページング対象を 4 → 6 API とし #8 / #21 の既定 200 を明記、§8 の RLS スモークを 10 → 13 チェックへ更新（勤怠の配線・フェイルクローズ検証を追加）|

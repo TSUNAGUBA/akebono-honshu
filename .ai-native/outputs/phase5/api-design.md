@@ -1071,7 +1071,8 @@ S3 アップロード完了後、メタデータを DB に登録。
 |---|---|---|
 | 書込（打刻・打刻修正申請・休暇申請）| `users.attendance_permission == 1`（更新可能）| `CheckAttendanceWriteAsync` |
 | 参照（自分の勤怠・集計・一覧・勤怠ルール/休暇種別の参照）| `attendance_permission` が **1 または 2**（0 は不可）| `CheckAttendanceReadAsync` |
-| 管理（全員のタイムカード・承認/却下・休暇付与・勤怠ルール/休暇種別の設定・`scope=all`）| **オーナー** `users.process_record_permission >= 1` | `CheckAttendanceAdminAsync` |
+| 管理（全員のタイムカード・承認/却下・休暇付与・勤怠ルール/休暇種別の設定）| **オーナー** `users.process_record_permission >= 1` | `CheckAttendanceAdminAsync` |
+| 一覧の `scope=all`（#8 / #21）| **参照権限 AND オーナー**。参照チェックを先に通し、`scope=all` のときだけ管理チェックを**追加**で課す | `CheckAttendanceReadAsync` → `CheckAttendanceAdminAsync` |
 
 - **`attendance_permission` は既存 4 権限と同じ非単調スケール**（0=なし / 1=更新可能 / 2=参照のみ）。
   **書込判定は必ず `== 1`**（`>= 1` は「参照のみ(2)」に書込を許してしまうバグ）。
@@ -1171,7 +1172,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 | # | メソッド | パス | 用途 | 認可 |
 |---|---|---|---|---|
 | 7 | `POST` | `/api/maker/v1/attendance/fix-requests` | 修正申請（対象は常に本人）| 勤怠 `==1` |
-| 8 | `GET` | `/api/maker/v1/attendance/fix-requests` | 申請一覧 | 勤怠 1 or 2 / `scope=all` は**オーナー** |
+| 8 | `GET` | `/api/maker/v1/attendance/fix-requests` | 申請一覧 | 勤怠 1 or 2。`scope=all` は**加えてオーナー**（AND）|
 | 9 | `POST` | `/api/maker/v1/attendance/fix-requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
 
 | # | リクエスト | レスポンス | 主なエラー |
@@ -1275,7 +1276,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 | 18 | `DELETE` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 論理削除 | **オーナー** |
 | 19 | `POST` | `/api/maker/v1/attendance/leave/types/{id:guid}/restore` | 休暇種別 復元 | **オーナー** |
 | 20 | `GET` | `/api/maker/v1/attendance/leave/summary` | 残数・年 5 日義務・履歴 | 勤怠 1 or 2（他人はオーナー）|
-| 21 | `GET` | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 | 勤怠 1 or 2 / `scope=all` は**オーナー** |
+| 21 | `GET` | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 | 勤怠 1 or 2。`scope=all` は**加えてオーナー**（AND、#8 と同形）|
 | 22 | `POST` | `/api/maker/v1/attendance/leave/requests` | 休暇申請（対象は常に本人）| 勤怠 `==1` |
 | 23 | `POST` | `/api/maker/v1/attendance/leave/requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
 | 24 | `POST` | `/api/maker/v1/attendance/leave/grants` | 個別付与 | **オーナー** |

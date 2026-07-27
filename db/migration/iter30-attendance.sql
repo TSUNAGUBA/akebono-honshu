@@ -264,8 +264,13 @@ BEGIN
         INSERT INTO leave_types (tenant_id, name, grant_method, expiry_months, is_statutory, description, display_order)
         SELECT t.tenant_id, '有給休暇', 0, 24, TRUE, '労働基準法 39 条の年次有給休暇 (時効 2 年)', 1
         WHERE NOT EXISTS (
+            -- ガードは不変な is_statutory を基準にする (name / deleted_at は可変)。
+            -- name 基準にすると改名後の再実行で、deleted_at 条件を付けると DB 直操作で
+            -- 論理削除した後の再実行で、それぞれ 2 行目が入る。既存 leave_grants が旧 id を
+            -- 指したまま新 id が有効になり有給残数が分裂するうえ、部分 UNIQUE 索引
+            -- uq_leave_types_tenant_name により復元 (LeaveService.RestoreTypeAsync) も 409 で塞がれる。
             SELECT 1 FROM leave_types
-             WHERE tenant_id = t.tenant_id AND name = '有給休暇' AND deleted_at IS NULL
+             WHERE tenant_id = t.tenant_id AND is_statutory
         );
     END LOOP;
 END $$;

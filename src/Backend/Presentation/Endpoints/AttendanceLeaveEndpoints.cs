@@ -130,11 +130,18 @@ public static class AttendanceLeaveEndpoints
                                           int? limit, string? cursor,
                                           CancellationToken ct) =>
         {
-            var allScope = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
-            var auth = allScope
-                ? await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct)
-                : await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
+            // 勤怠参照権限は scope に関わらず必須。scope=all のときだけオーナーを「追加で」要求する
+            // (#8 GET /fix-requests と同じ形。三項で admin だけに切り替えると、勤怠権限 0 =
+            // 勤怠機能を明示的に禁じられたオーナーが全員分の休暇申請を読めてしまう)。
+            var auth = await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
+
+            var allScope = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
+            if (allScope)
+            {
+                var admin = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
+                if (admin.ErrorResult is not null) return admin.ErrorResult;
+            }
 
             var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
             var result = await svc.ListRequestsAsync(auth.ActorId!.Value, allScope, status, from, to, page, ct);

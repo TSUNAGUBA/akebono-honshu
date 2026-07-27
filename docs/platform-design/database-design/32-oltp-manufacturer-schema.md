@@ -463,6 +463,17 @@ COMMENT ON COLUMN exchange_rates.quote_currency_code IS '相手通貨コード�
   > **2026-07-27 更新（4 → 5、マッピング漏れ注意）:** 継承実装は Iteration 30 で 5 つ目の `users.attendance_permission`（勤怠、`0=なし / 1=更新可能 / 2=参照のみ`）と勤怠付随列（`punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追加済み。**品番台帳・発注書作成・勤怠は非単調エンコード**（「参照のみ」が「更新可能」より大きい値）のため、`role`/`permission` へ写す際に `>=` による序列化を行うと権限が緩む。なお勤怠の**管理系**（承認・付与・設定）は勤怠権限ではなく工程実績管理権限（オーナー）に集約されている点もマッピング時に落とさないこと。
 - 移行: `users` 行を `app_user` へ移送（`employee_no`→ビジネスキー、`login_id`→Firebase Email 連携キー）。旧メーカー DB 内 `users` は移行後に廃止し、全 FK を `app_user(id)` へ張り替える。
 
+> **勤怠 6 テーブルは本ドキュメントの台帳（§4.1 / §3）に載せていない（2026-07-27）:**
+> Iteration 30 で継承実装に追加した勤怠 6 テーブル（`attendance_rules` / `punch_records` /
+> `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）は、
+> **akebono-honshu ローカルの拡張であり、プラットフォーム OLTP スキーマとしては未確定**である。
+> 本ドキュメントは旧版（現行 SoT は akebono-scm-platform リポジトリ側 → §1）であり、
+> **プラットフォームが勤怠を所有するか、Control Plane（37）側へ寄せるかは未決**のため、
+> ここで台帳へ登録すると未確定の所有関係を既定事実にしてしまう。
+> 継承実装側の正は `db/init/10-attendance.sql` と
+> `.ai-native/outputs/phase5/data-design.md §14`。**上の 5 権限カテゴリの記述だけが先に更新されている
+> のはこの理由による**（権限マッピングは移行時に必ず必要になるため先行して記録した）。
+
 ---
 
 ## 5. 2 層商品モデルと 11 桁品番

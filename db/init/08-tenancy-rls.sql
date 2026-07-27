@@ -68,8 +68,9 @@ REVOKE INSERT, UPDATE, DELETE ON accounts_receivable FROM akebono_app;
 GRANT EXECUTE ON FUNCTION ensure_audit_log_partitions(int) TO akebono_app;
 
 -- ─────────────────────────────────────────────────
--- 2. RLS 配線 (テナントスコープ業務テーブル 45 本)
---    (02: 19 / 03: 5 / 04: 4 / 05: 5 / 07: 12。07 は VIEW を除く 12 テーブル)
+-- 2. RLS 配線 (テナントスコープ業務テーブル 47 本)
+--    (02: 21 / 03: 5 / 04: 4 / 05: 5 / 07: 12。07 は VIEW を除く 12 テーブル)
+--    ※ 下の「2b」の勤怠 6 本を含めると、本ファイルが配線し得るのは計 53 本。
 --    ※ 勤怠 6 テーブル (10-attendance.sql) は本ファイルより後に作成されるため、
 --      下の「2b」で存在チェック付きに分離している。
 --

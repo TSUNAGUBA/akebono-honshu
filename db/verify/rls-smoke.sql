@@ -103,6 +103,56 @@ BEGIN
     END IF;
     RAISE NOTICE 'PASS: punch_records は INSERT 専用 (UPDATE/DELETE 剥奪済み)';
 
+    -- 8b. 勤怠 6 テーブルの RLS 配線 (ポリシー + FORCE) が存在すること
+    --     既存 47 表と違い、勤怠は 08-tenancy-rls.sql の「2b」が to_regclass NULL で
+    --     条件付きスキップするため、init 経路では 10-attendance.sql §6 が唯一の配線経路になる。
+    --     10 の投入漏れは「勤怠画面が全滅する」運用上の分岐点 (RUNBOOK §2) だが、
+    --     §1〜§4 は brands 1 表を代表に使うため配線漏れを検出できない。ここで全 6 表を明示検証する。
+    FOREACH t IN ARRAY ARRAY[
+        'attendance_rules', 'punch_records', 'attendance_fix_requests',
+        'leave_types', 'leave_grants', 'leave_requests'
+    ]
+    LOOP
+        IF to_regclass(t) IS NULL THEN
+            RAISE EXCEPTION 'FAIL: 勤怠テーブル % が存在しない (10-attendance.sql の投入漏れ)', t;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = t AND policyname = 'tenant_isolation'
+        ) THEN
+            RAISE EXCEPTION 'FAIL: 勤怠テーブル % に tenant_isolation ポリシーが無い', t;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_class
+             WHERE oid = to_regclass(t) AND relrowsecurity AND relforcerowsecurity
+        ) THEN
+            RAISE EXCEPTION 'FAIL: 勤怠テーブル % の ROW LEVEL SECURITY が未有効または FORCE でない', t;
+        END IF;
+    END LOOP;
+    RAISE NOTICE 'PASS: 勤怠 6 テーブルに tenant_isolation + FORCE ROW LEVEL SECURITY が配線済み';
+
+    -- 8c. 勤怠 6 テーブルのテナント分離が実際に効く (フェイルクローズ含む)
+    --     ポリシーの存在だけでは USING 句の中身までは担保できないため、
+    --     他テナント / GUC 空文字の 2 条件で 0 行になることを実データで確認する。
+    FOREACH t IN ARRAY ARRAY[
+        'attendance_rules', 'punch_records', 'attendance_fix_requests',
+        'leave_types', 'leave_grants', 'leave_requests'
+    ]
+    LOOP
+        PERFORM set_config('app.tenant_id', other_tenant::text, TRUE);
+        EXECUTE format('SELECT count(*) FROM %I', t) INTO cnt;
+        IF cnt <> 0 THEN
+            RAISE EXCEPTION 'FAIL: 他テナントコンテキストで % が % 行見えている', t, cnt;
+        END IF;
+
+        PERFORM set_config('app.tenant_id', '', TRUE);
+        EXECUTE format('SELECT count(*) FROM %I', t) INTO cnt;
+        IF cnt <> 0 THEN
+            RAISE EXCEPTION 'FAIL: GUC 未設定で % が % 行見えている (フェイルクローズ違反)', t, cnt;
+        END IF;
+    END LOOP;
+    RAISE NOTICE 'PASS: 勤怠 6 テーブルは他テナント / GUC 未設定のいずれでも 0 行 (フェイルクローズ)';
+
     -- 9. accounts_receivable (security_invoker VIEW) に基底 RLS が呼出し側適用される
     PERFORM set_config('app.tenant_id', honshu_tenant::text, TRUE);
     SELECT count(*) INTO cnt FROM accounts_receivable;

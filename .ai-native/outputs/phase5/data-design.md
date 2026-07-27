@@ -851,6 +851,17 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 `is_statutory=true`, `description='労働基準法 39 条の年次有給休暇 (時効 2 年)'`, `display_order=1`。
 `NOT EXISTS` ガード付き INSERT のため、再実行しても既存行を更新・削除しない。
 
+> **ガードの判定列は `is_statutory`（2026-07-27 訂正、第 11 イテレーション監査、原則2）:**
+> 当初のガードは `name = '有給休暇' AND deleted_at IS NULL` だったが、**判定列がどちらも可変**のため
+> 冪等性が破れていた（実機で再現確認済み）。統制有給を DB 直操作で論理削除した後、あるいは改名した後に
+> 再実行すると、**別 id の 2 行目が入る**。`db/migration/README.md` は「全処理が冪等なので再実行しても安全」
+> と明記して psql / pgAdmin からの直接実行を推奨しているため、この経路は現実に踏まれ得る。
+> 2 行になると既存 `leave_grants.leave_type_id` が旧 id を指したまま新 id が有効になり**有給残数が分裂**し、
+> さらに部分 UNIQUE 索引 `uq_leave_types_tenant_name` により**復元（`LeaveService.RestoreTypeAsync`）も 409 で塞がれる**。
+> **不変フラグである `is_statutory` のみ**を判定に使う形へ変更した（`deleted_at` は条件に含めない
+> = 論理削除済みでも再投入しない）。init / migration の両ファイルを同時に修正済み。
+> なお **API 経由では再現しない**（`EnsureNotStatutory` が統制有給の作成・更新・論理削除を 409 で弾くため）。
+
 ### 14.5 `leave_grants` — 休暇の付与（個別 / 一括 / 周期自動）
 
 | カラム | 型 | 補足 |
@@ -923,3 +934,4 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 | 2026-05-19 | 初版作成（18 マスタ + 商品 4 + 発注 3 + 監査 1 = 計 26 テーブル、機能要件 21 全対応）|
 | 2026-07-27 | Iteration 30: 勤怠 6 テーブル（`attendance_rules` / `punch_records` / `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）を §14 に追加。§3.18 `users` に勤怠列 6 本（`attendance_permission` / `punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追記、§2 ERD 概観に勤怠エンティティ群を追加（akebono-office からの移植）|
 | 2026-07-27 | **第 9 イテレーション修正コミット `bd1a96e` を §3.18 へ反映（原則5）:** `users` の勤怠 4 列（`attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）について「入力 UI が無く `PATCH /users/{id}` の全項目上書きで既定値へ巻き戻る」と**解消済みの BLOCKER を未解決として宣言し続けていた**記述を、`4c6981e` で解消済み（利用者フォームへの 4 項目追加 ＋ `UserPatchRequest` による部分更新化）へ訂正。`screen-design.md §3.12` / `api-design.md §2.7.9` と食い違ったまま放置すると、存在しない給与・法定関連の重大欠陥を SoT が宣言し、完了済み改修の再着手を誘導するため |
+| 2026-07-27 | **第 11 イテレーション監査の指摘対応（原則2 / 原則5）:** §14.4 `leave_types` のシードガードを `name` + `deleted_at`（可変）から **`is_statutory`（不変）** 基準へ変更。旧ガードは統制有給を DB 直操作で論理削除・改名した後の再実行で **2 行目を作り**、`leave_grants` が旧 id を指したまま有給残数が分裂し、部分 UNIQUE 索引により復元も 409 で塞がれた（実機で再現確認）。`db/init/10-attendance.sql` / `db/migration/iter30-attendance.sql` を同時修正し、**両経路の `pg_dump -s` 一致（7,026 行）とシード内容一致を再検証済み** |
