@@ -41,6 +41,11 @@ public static class DependencyInjection
             .AddInterceptors(sp.GetRequiredService<TenantSessionInterceptor>()));
         services.AddScoped<IAkebonoDbContext>(sp => sp.GetRequiredService<AkebonoDbContext>());
 
+        // 起動時スキーマ検査 (最初の HostedService として登録し、他の起動処理より先に走らせる)。
+        // 勤怠列の移行漏れ (iter30 未適用) で「ログインだけ静かに全滅」する事故を、起動失敗として
+        // 即座に可視化する。接続不能な一過性エラーでは止めない (SchemaGuardHostedService 参照)。
+        services.AddHostedService<SchemaGuardHostedService>();
+
         services.AddScoped<IAuditLogger, AuditLogger>();
         // audit_logs 月次パーティションの先行作成 (起動時 + 24h ごと、失敗は warning のみで継続。
         // DEFAULT パーティションが安全網 — AuditPartitionMaintenanceService 参照)。

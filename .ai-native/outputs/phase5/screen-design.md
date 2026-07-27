@@ -112,7 +112,7 @@
 | O-05 | 発注中止 | `/orders/{id}` 内アクション |
 | O-06 | 発注書 Excel 出力 | `/orders/{id}` 内アクション + `/orders/{id}/excel` ダウンロード |
 | O-07 | 連絡文章選択 | `/orders/{id}` 内モーダル |
-| ATT-01 | 打刻（出勤・退勤・休憩開始・休憩終了）| `/attendance/timecard` 打刻カード |
+| ATT-01 | 打刻（出勤・退勤・休憩開始・休憩終了）| `/attendance/timecard` 打刻カード ＋ **ヘッダのタイムカードモーダル（全画面共通、§2.1）**。いずれも共有 `components/attendance/PunchCard.vue` |
 | ATT-02 | 本人の出退勤・労働時間一覧 | `/attendance/timecard` 一覧 |
 | ATT-03 | 日次 / 週次 / 月次の勤怠集計 | `/attendance?tab=daily` / `weekly` / `monthly` |
 | ATT-04 | 36 協定アラート | `/attendance?tab=monthly` 内 |
@@ -160,7 +160,8 @@
 
 | 要素 | 実装 |
 |---|---|
-| ポータルヘッダ | `components/portal/Header.vue`（`<PortalHeader>`）。ブランド（Akebono Honshu／ホーム）＋ 戻る ＋ パンくず ＋ ユーザ名／ログアウト |
+| ポータルヘッダ | `components/portal/Header.vue`（`<PortalHeader>`）。ブランド（Akebono Honshu／ホーム）＋ 戻る ＋ パンくず ＋ **タイムカード**（下記）＋ ユーザ名／ログアウト |
+| ヘッダの「タイムカード」ボタン（Iteration 30 追加、`512b66a`）| **勤怠権限のある利用者（`canUseAttendance` = 1 or 2）にのみ表示**し、押すと**どの画面からでも**打刻カードをモーダルで開く（`components/attendance/PunchCard.vue` を共用 → §3.15）。akebono-office の `layouts/default.vue` がヘッダの `WidgetsPunchClock` モーダルを全画面共通の打刻導線にしているのに倣う。モーダルは honshu のダイアログ作法（`MasterEditDialog`：Teleport / `role=dialog` / 背景クリック・× で閉じる）に従い、**画面遷移で自動的に閉じる**（`watch(route.path)`）|
 | セクションタブ | `components/portal/TabBar.vue`（`<PortalTabBar>`）。現在セクションのリンクが 2 つ以上のときのみ表示。アクティブ判定は `navigation.ts` の純関数（詳細サブルートも親タブをハイライト）|
 | ホームのカード | `components/portal/CategoryCard.vue`（`<PortalCategoryCard>`）。`pages/index.vue` が `useNav().categories`（権限絞り込み済）を表示 |
 | パンくず・戻る | `useNav()` が `route.path` から導出（`navBreadcrumbs` / `findParentPath`）|
@@ -825,7 +826,14 @@
 
 ### 3.15 `/attendance/timecard` — タイムカード（Iteration 30）
 
-> 実装 SoT: `src/Frontend/pages/attendance/timecard.vue`。ナビの勤怠カテゴリの**既定ページ**（日常的に開く画面のため先頭に配置）。
+> 実装 SoT: `src/Frontend/pages/attendance/timecard.vue`（画面全体・出退勤一覧）＋ **打刻カードは共有コンポーネント
+> `src/Frontend/components/attendance/PunchCard.vue`（`<AttendancePunchCard>`）**。ナビの勤怠カテゴリの**既定ページ**（日常的に開く画面のため先頭に配置）。
+>
+> **打刻カードの共有化（2026-07-27、`512b66a`。office の WidgetsPunchClock に倣う）:** 下記「打刻カード」以下の
+> 時計・状態バッジ・4 ボタン・本日の打刻・修正申請導線は `<AttendancePunchCard>` に抽出し、**本画面とヘッダの
+> タイムカードモーダル（§2.1）で共用**する。状態機械・打刻 API は `useAttendance` が SoT（変更なし）。
+> 打刻が成立するとカードは `punched` を emit し、本画面はそれを受けて出退勤一覧（`reloadRange`）を取り直す。
+> **本画面からの導線と、ヘッダの「タイムカード」ボタンからの導線は同一のカードを開く**（どの画面からでも打刻できる）。
 
 | 観点 | 内容 |
 |---|---|
@@ -1244,3 +1252,4 @@ CI の `regen-openapi` ワークフロー（main 向け PR で自動再生成・
 | 2026-07-27 | **第 11 イテレーション: レビュー MINOR 1 件 + 監査 MAJOR 1 件 / MINOR 8 件の対応。** (1) **レビュー MINOR** — §3.14 タブ構成表の月次行が 36 協定の緑帯を「0 件なら」と断定し `alertsUnavailable` を反映していなかった（同一節内で概要表と詳細表が矛盾。概要表だけ読むと `7ee8284` が直した回帰を再導入する）。(2) **監査 MAJOR** — **スコープ外ドリフト（BOM 編集の空上書きによるデータ消失）がどの残課題にも記録されていなかった**。移植範囲内で `a7e6c30` が 4 件直した「取得できていないものを断定表示する」欠陥と同型であり、範囲内だけ直して範囲外の同型を記録しないと次の実装者が見落とすため、§3.16 に **OD-1 としてスコープ外ドリフト節を新設**（コードは触らない）。(3) 監査 MINOR — `#21 GET /leave/requests` の `scope=all` が三項で管理チェックだけに切り替わり、勤怠権限 0 のオーナーが全員分を読めた（`#8` は参照 AND 管理）。**#8 と同形へ揃え**、`api-design.md` の認可表に `scope=all` = 「参照権限 AND オーナー」を明記。(4) 監査 MINOR — `leave_types` のシードガードを不変列 `is_statutory` 基準へ（→ `data-design.md §14.4`）。(5) 監査 MINOR — `db/verify/rls-smoke.sql` に**勤怠 6 テーブルの RLS 配線・フェイルクローズ検証を追加**（10 の投入漏れを検出できるようにした。**10 → 13 チェック**。`main` 時点が 10、本ブランチが `punch_records` の追記専用検証で 11 にし、第 12 で 13 へ）。(6) 監査 MINOR — `db/init/08-tenancy-rls.sql` のヘッダ件数（45/19 → 47/21、+ 2b の 6 本で計 53）、`docs/platform-integration/README.md` 5 件、`RUNBOOK.md` のディレクトリ説明と **§3.4 勤怠の動作確認シナリオ新設**、`docs/platform-design/32-oltp-*.md` の勤怠未登載の理由明記 |
 | 2026-07-27 | **第 12〜14 イテレーション。** (1) **勤怠の認可モデル是正**（`c6b29e4` / `2172a70`）— §3.14 の `isOwner` を `isAttendanceAdmin = canUseAttendance && processRecordPermission >= 1`（サーバ `CheckAttendanceAdminAsync` と同式）へ。従来は勤怠権限 0 のオーナーに「オーナー権限：…を利用できます」バッジが出る一方、サーバは全操作を 403 で拒否していた。§3.12 の利用者マスタ注記も「オーナーに集約されます」→「オーナー**かつ**勤怠が更新可能/参照のみ」へ（権限を設定するその場で誤案内していた）。(2) **スコープ外ドリフト `D-1` → `OD-1`** へ改称（`data-design.md` の `D-1`〜`D-10` と衝突）。(3) **オペレーター判断を記録**（`eaa3f0a`）— **C-1**（日跨ぎ夜勤の退勤打刻不可）= 夜勤運用が無いため**制約として受け入れ**、判断が変わる条件（夜勤導入時）を併記 / **OD-1**（BOM 空上書き）= **記録のみ**（起票せず、BOM 改修時の申し送りとして残す）|
 | 2026-07-27 | **第 14 イテレーション コードレビュー: スコープ外ドリフト `OD-2` を新設。** 発注書の連絡文章で、テンプレセレクタの「（選択しない）」を選ぶと `Number('') === 0` により**テンプレ 1 件目で手入力が無言上書きされる**（`orders/new.vue:346-352` / `orders/[id].vue:70-76`）。**取り消しのつもりの操作でデータが消える**うえ取消導線が無く、`OD-1` と同じ「無言のデータ消失」クラス。**本ブランチ由来ではない**（`main` 側で導入済みで、タスク3 の改修は連絡文章セクションに触れていない）ため `OD-1` の precedent に従い記録し、オペレーター判断を仰ぐ。修正する場合は 1 行（`if (optionValue === '') return`）|
+| 2026-07-27 | **第 15 イテレーション: ヘッダからのタイムカード打刻とログイン起動時ガードを反映（`bed6974` / `512b66a`、原則5）。** (1) **ヘッダのタイムカード**（office に倣う）— §2.1 に「タイムカード」ボタン（`canUseAttendance` のみ・全画面共通の打刻モーダル）を追記。§3.15 の実装 SoT を「打刻カード = 共有コンポーネント `components/attendance/PunchCard.vue`（ヘッダモーダルと `timecard.vue` で共用）」へ更新し、両導線が同一カードを開く旨を明記。(2) **ログイン不能の再発防止**（`bed6974`）— Iteration 30 で `User` が勤怠 6 列を map し `/auth/sync` が User 全体を materialize するため、`iter30-attendance.sql` 未適用の DB でログインが全滅していた。起動時スキーマ検査 `SchemaGuardHostedService` を追加し、勤怠列欠落時は明確なメッセージで起動を中断する（根本原因・即時復旧・冪等 backfill は `RUNBOOK.md`）|
