@@ -11,6 +11,10 @@
  *   日次タブの表示時に毎回最新が要るため。
  * - **申請一覧（`loadFixRequests` / `leaveRequests`）もキャッシュしない**。承認・却下で内容が変動し、
  *   画面は「自分の申請」と「承認待ち（全員）」を続けて別条件で読むため、単一スロットでは常にミスする。
+ * - **申請一覧はページング封筒（`{ items, page }`）をそのまま返す**（`useApi().apiPaged`）。
+ *   サーバは上限件数で打ち切るため、`page.hasMore` を読み捨てると欠落が無言になる。
+ *   呼び出し側は必ず「一部のみ表示」を画面へ出すこと（原則4）。期間が決まっている画面は
+ *   `leaveRequests` の `from` / `to` で要求そのものを絞る（切り詰めを起こさないのが第一手）。
  * - キャッシュ付きの取得は**進行中リクエストへ合流（coalescing）**させる。キャッシュ判定と書込の間に
  *   `await` が挟まるため、合流が無いと同一キーの並列呼び出し（週次タブの 7 日分など）が
  *   そのまま重複リクエストになる（`coalesce` 参照）。
@@ -435,6 +439,55 @@ const coalesce = <T>(key: string, force: boolean, run: () => Promise<T>): Promis
   return p
 }
 
+/**
+ * キャッシュの世代。`invalidate()` のたびに 1 つ進める。
+ *
+ * 破棄した瞬間に飛行中だった取得は、解決時に**破棄済みのキャッシュへ承認前のスナップショットを
+ * 書き戻してしまう**（「取得中に承認 → invalidate → 再取得」で承認前の内容が復活する）。
+ * 取得開始時の世代を覚えておき、解決時に世代が進んでいたら書き戻しを捨てる
+ * （原則6: SoT → キャッシュの一方向を局所的にも破らない）。
+ *
+ * スコープ別ではなく単一のカウンタで持つ。別スコープの破棄で無関係な取得の書き戻しが
+ * 捨てられることはあるが、失うのはキャッシュヒット 1 回分（次回に取り直す）だけで、
+ * 古い値を表示する事故は起きない側に倒れる。
+ */
+let cacheGeneration = 0
+
+/** スコープごとの inflight キー接頭辞（`coalesce` へ渡すキーと対で維持すること）。 */
+const INFLIGHT_PREFIXES: Record<Exclude<AttendanceCacheScope, 'all'>, string[]> = {
+  state: ['state'],
+  months: ['month:'],
+  alerts: ['alerts:'],
+  leave: ['leaveSummary:', 'leaveTypes:'],
+}
+
+/** 破棄したスコープの「進行中リクエスト」登録も落とす（以後の呼び出しを古い Promise へ合流させない）。 */
+const dropInflight = (prefixes: string[]): void => {
+  if (!import.meta.client) return
+  for (const key of [...inflight.keys()]) {
+    if (prefixes.some((prefix) => key.startsWith(prefix))) inflight.delete(key)
+  }
+}
+
+/**
+ * キャッシュ付き取得の共通形。
+ *   1. 同一キーの進行中リクエストへ合流させる（`coalesce`）
+ *   2. 取得中に `invalidate()` を跨いだ応答は**キャッシュへ書き戻さない**（世代ガード）
+ * 呼び出し元へは取得結果をそのまま返す（表示は止めない・原則4）。
+ */
+const fetchCached = <T>(
+  key: string,
+  force: boolean,
+  run: () => Promise<T>,
+  write: (value: T) => void,
+): Promise<T> =>
+  coalesce(key, force, async () => {
+    const generation = cacheGeneration
+    const value = await run()
+    if (generation === cacheGeneration) write(value)
+    return value
+  })
+
 // ============================================
 // キャッシュ
 // ============================================
@@ -471,22 +524,39 @@ const emptyCaches = (): AttendanceCaches => ({
 // ============================================
 
 export const useAttendance = () => {
-  const { apiData, apiFetch } = useApi()
+  const { apiData, apiFetch, apiPaged } = useApi()
   const cache = useState<AttendanceCaches>('attendance:cache', emptyCaches)
 
   /**
    * キャッシュを破棄する。書込後は必ず呼ぶ（原則6: SoT への書込 → キャッシュ破棄 → 再取得）。
    * 配列で複数スコープをまとめて破棄できる。
+   *
+   * キャッシュ本体だけでなく、**進行中リクエストの合流先（`inflight`）と世代も同時に更新する**。
+   * どちらか一方だけだと「取得が飛行中に承認 → invalidate → 再取得」で、
+   * 破棄前に飛んだ古い Promise へ合流して承認前のスナップショットを表示し、
+   * さらに空にしたキャッシュへ書き戻してしまう。
    */
   const invalidate = (scope: AttendanceCacheScope | AttendanceCacheScope[] = 'all'): void => {
     const scopes = Array.isArray(scope) ? scope : [scope]
     const hit = (s: AttendanceCacheScope) => scopes.includes('all') || scopes.includes(s)
-    if (hit('state')) cache.value.state = null
-    if (hit('months')) cache.value.months = {}
-    if (hit('alerts')) cache.value.alerts = {}
+    // 破棄より前に始まった取得の書き戻しを無効化する（`fetchCached` の世代ガード）。
+    cacheGeneration++
+    if (hit('state')) {
+      cache.value.state = null
+      dropInflight(INFLIGHT_PREFIXES.state)
+    }
+    if (hit('months')) {
+      cache.value.months = {}
+      dropInflight(INFLIGHT_PREFIXES.months)
+    }
+    if (hit('alerts')) {
+      cache.value.alerts = {}
+      dropInflight(INFLIGHT_PREFIXES.alerts)
+    }
     if (hit('leave')) {
       cache.value.leaveSummaries = {}
       cache.value.leaveTypes = {}
+      dropInflight(INFLIGHT_PREFIXES.leave)
     }
   }
 
@@ -504,11 +574,12 @@ export const useAttendance = () => {
   const loadState = async (force = false): Promise<PunchStateSnapshot> => {
     const cached = cache.value.state
     if (!force && cached) return cached
-    return await coalesce('state', force, async () => {
-      const snapshot = await apiData<PunchStateSnapshot>('/attendance/state')
-      cache.value.state = snapshot
-      return snapshot
-    })
+    return await fetchCached(
+      'state',
+      force,
+      () => apiData<PunchStateSnapshot>('/attendance/state'),
+      (snapshot) => { cache.value.state = snapshot },
+    )
   }
 
   /**
@@ -546,13 +617,12 @@ export const useAttendance = () => {
     const key = `${userId ?? ''}:${targetMonth}`
     const cached = cache.value.months[key]
     if (!force && cached) return cached
-    return await coalesce(`month:${key}`, force, async () => {
-      const summary = await apiData<MonthSummary>(
-        `/attendance/month${qs({ userId, month: targetMonth })}`,
-      )
-      cache.value.months[key] = summary
-      return summary
-    })
+    return await fetchCached(
+      `month:${key}`,
+      force,
+      () => apiData<MonthSummary>(`/attendance/month${qs({ userId, month: targetMonth })}`),
+      (summary) => { cache.value.months[key] = summary },
+    )
   }
 
   /**
@@ -615,13 +685,12 @@ export const useAttendance = () => {
     const key = `${userId ?? ''}:${targetMonth}`
     const cached = cache.value.alerts[key]
     if (!force && cached) return cached
-    return await coalesce(`alerts:${key}`, force, async () => {
-      const items = await apiData<Article36Alert[]>(
-        `/attendance/alerts${qs({ userId, endMonth: targetMonth })}`,
-      )
-      cache.value.alerts[key] = items
-      return items
-    })
+    return await fetchCached(
+      `alerts:${key}`,
+      force,
+      () => apiData<Article36Alert[]>(`/attendance/alerts${qs({ userId, endMonth: targetMonth })}`),
+      (items) => { cache.value.alerts[key] = items },
+    )
   }
 
   /**
@@ -653,12 +722,17 @@ export const useAttendance = () => {
    * 承認・却下で内容が変動するうえ、画面は「自分の申請」と「承認待ち（全員）」を
    * 続けて別条件で読むため、**キャッシュしない**（同じ理由で `leaveRequests` も非キャッシュ）。
    * 再取得が要るときは呼び出し側が明示的に呼び直す。
+   *
+   * 返すのは `{ items, page }`（`apiPaged`）。サーバはキーセットページングの
+   * 上限件数で打ち切るため、**`page.hasMore` が真なら続きがある**。
+   * 呼び出し側は「一部のみ表示している」ことを必ず画面へ出すこと
+   * （黙って切り詰めない = 原則4「できたところまで進めて結果を報告する」）。
    */
   const loadFixRequests = async (
     scope: RequestScope = 'self',
     status?: RequestStatus,
-  ): Promise<FixRequestDto[]> =>
-    await apiData<FixRequestDto[]>(`/attendance/fix-requests${qs({ status, scope })}`)
+  ): Promise<PagedItems<FixRequestDto>> =>
+    await apiPaged<FixRequestDto>(`/attendance/fix-requests${qs({ status, scope })}`)
 
   /** `POST /attendance/fix-requests`（対象は常に本人）。 */
   const requestFix = async (input: FixRequestInput): Promise<{ id: string }> =>
@@ -719,11 +793,12 @@ export const useAttendance = () => {
     const key = userId ?? ''
     const cached = cache.value.leaveSummaries[key]
     if (!force && cached) return cached
-    return await coalesce(`leaveSummary:${key}`, force, async () => {
-      const summary = await apiData<LeaveSummary>(`/attendance/leave/summary${qs({ userId })}`)
-      cache.value.leaveSummaries[key] = summary
-      return summary
-    })
+    return await fetchCached(
+      `leaveSummary:${key}`,
+      force,
+      () => apiData<LeaveSummary>(`/attendance/leave/summary${qs({ userId })}`),
+      (summary) => { cache.value.leaveSummaries[key] = summary },
+    )
   }
 
   /** `GET /attendance/leave/types`。 */
@@ -731,19 +806,33 @@ export const useAttendance = () => {
     const key = String(includeInactive)
     const cached = cache.value.leaveTypes[key]
     if (!force && cached) return cached
-    return await coalesce(`leaveTypes:${key}`, force, async () => {
-      const items = await apiData<LeaveTypeDto[]>(`/attendance/leave/types${qs({ includeInactive })}`)
-      cache.value.leaveTypes[key] = items
-      return items
-    })
+    return await fetchCached(
+      `leaveTypes:${key}`,
+      force,
+      () => apiData<LeaveTypeDto[]>(`/attendance/leave/types${qs({ includeInactive })}`),
+      (items) => { cache.value.leaveTypes[key] = items },
+    )
   }
 
-  /** `GET /attendance/leave/requests`。`scope='all'` はオーナーのみ。承認で変動するためキャッシュしない。 */
+  /**
+   * `GET /attendance/leave/requests`。`scope='all'` はオーナーのみ。承認で変動するためキャッシュしない。
+   *
+   * `from` / `to` は**取得日（業務日付 YYYY-MM-DD）の範囲**（両端含み）。省略時は全期間で、
+   * 従来の呼び出し（申請タブの「承認待ち」「自分の申請」）はそのまま動く（下位互換）。
+   * 期間の上限は 366 日（SoT はバックエンド定数 `LeaveService.RequestRangeMaxDays`。超過は 422）。
+   * **月次カレンダーの休暇マーカーのように特定期間しか使わない画面は必ず範囲を渡すこと**。
+   * 全期間を要求するとページ上限で古い月の申請が黙って落ち、マーカーが静かに欠ける。
+   *
+   * 返すのは `{ items, page }`。`page.hasMore` の扱いは `loadFixRequests` と同じ
+   * （真なら「一部のみ表示」を画面へ出す）。
+   */
   const leaveRequests = async (
     scope: RequestScope = 'self',
     status?: RequestStatus,
-  ): Promise<LeaveRequestDto[]> =>
-    await apiData<LeaveRequestDto[]>(`/attendance/leave/requests${qs({ scope, status })}`)
+    from?: string,
+    to?: string,
+  ): Promise<PagedItems<LeaveRequestDto>> =>
+    await apiPaged<LeaveRequestDto>(`/attendance/leave/requests${qs({ scope, status, from, to })}`)
 
   /** `POST /attendance/leave/requests`（本人）。 */
   const requestLeave = async (input: LeaveRequestInput): Promise<{ id: string }> => {

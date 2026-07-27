@@ -45,7 +45,7 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
                 u.HireDate, u.WeeklyDays, u.WeeklyHours))
             .FirstOrDefaultAsync(ct);
 
-    // 権限値の範囲チェック (Phase 5 §3.18 の 4 権限カテゴリ) + 必須項目。
+    // 権限値の範囲チェック (Phase 5 §3.18 の 4 権限カテゴリ + 勤怠権限 = 5 件) + 必須項目・週所定の範囲。
     private static void ValidatePermissions(UserWriteRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.EmployeeNo))

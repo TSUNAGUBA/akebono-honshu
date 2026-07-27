@@ -37,6 +37,9 @@ interface UserItem {
 const users = ref<UserItem[]>([])
 // 勤務体系の選択肢 (MasterSelect 用)。取得失敗時は空のまま (原則4: 主フローを止めない)。
 const attendanceRuleOptions = ref<{ id: string; name: string }[]>([])
+// 選択肢の取得に失敗したか。空の選択肢を「勤務体系が未登録」と誤読させないための注記に使う
+// (原則4: できたところまで進めて**結果を報告する**)。
+const attendanceRulesUnavailable = ref(false)
 const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
@@ -100,12 +103,16 @@ const reload = async () => {
 
 // 勤務体系の選択肢。勤怠権限が無いオーナーでは 403 になり得るが、
 // 利用者マスタ全体を止めないよう握りつぶす (原則4: 補助処理の失敗で主フローを止めない)。
+// ただし**黙って空にはしない**: 選択肢が空だと「勤務体系が 1 件も無い」と区別が付かないため、
+// 取得できなかったことをフォームに注記する。既存の割当値は送信時もそのまま保持される。
 const loadAttendanceRules = async () => {
   try {
     const rules = await attendanceRules()
     attendanceRuleOptions.value = rules.map((r) => ({ id: r.id, name: r.name }))
+    attendanceRulesUnavailable.value = false
   } catch {
     attendanceRuleOptions.value = []
+    attendanceRulesUnavailable.value = true
   }
 }
 
@@ -361,6 +368,10 @@ const remove = async (u: UserItem) => {
                 empty-label="（既定の勤務体系）"
                 placeholder="勤務体系を選択…"
               />
+              <!-- 選択肢が空のとき「未登録」と「取得できなかった」を取り違えさせない (原則4)。 -->
+              <p v-if="attendanceRulesUnavailable" class="text-xs text-amber-700">
+                勤務体系の選択肢を取得できませんでした（勤怠の参照権限が必要です）。現在の割当は保持されます。
+              </p>
             </div>
           </div>
           <p class="mt-2 text-xs" :class="isWeeklyValid ? 'text-gray-500' : 'text-red-600'">

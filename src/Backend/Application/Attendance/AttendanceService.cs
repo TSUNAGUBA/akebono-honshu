@@ -29,7 +29,8 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     public const int TimecardRangeMaxDays = 62;
 
     /// <summary>
-    /// タイムカードで一度に集計できる利用者数の上限。超過は 400 AKB-SYS-011 で弾く。
+    /// タイムカードで一度に集計できる利用者数の上限。超過は 422 AKB-SYS-002 で弾く
+    /// (limit / cursor を持たないエンドポイントのため、ページング不正 AKB-SYS-011 は使わない)。
     /// 利用者数 × 期間 (最大 62 日) 分の打刻をすべてメモリへ載せて集計するため、
     /// 非有界のままだと在籍者の増加に比例して必ずタイムアウトする。
     /// 超過時は q (氏名の部分一致) で絞り込ませる。
@@ -212,7 +213,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     /// 全員のタイムカード (オーナーのみ)。既定期間は当月 1 日〜今日、期間の上限は
     /// <see cref="TimecardRangeMaxDays"/> 日 (両端含み)、対象利用者数の上限は
     /// <see cref="TimecardMaxUsers"/> 人。q は氏名の部分一致。
-    /// ソートは 日付降順 → 氏名昇順。
+    /// ソートは 日付降順 → 氏名昇順 → 利用者 Id 昇順 (同姓同名でも行順を確定させる)。
     /// </summary>
     public async Task<IReadOnlyList<TimecardRowDto>> GetTimecardAsync(
         string? from, string? to, string? q, CancellationToken ct = default)
@@ -235,10 +236,12 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         var users = await usersQuery.OrderBy(u => u.EmployeeNo)
             .Take(TimecardMaxUsers + 1)
             .ToListAsync(ct);
+        // 期間を短くしても利用者数は減らない (利用者クエリに期間条件が無い) ため、
+        // 復帰導線は「氏名で絞り込む」のみを案内する。
         if (users.Count > TimecardMaxUsers)
-            throw new DomainException(AkbErrorCodes.SysPagingInvalid, 400,
+            throw DomainException.Validation(
                 $"対象の利用者が多すぎます（一度に集計できるのは {TimecardMaxUsers} 人までです）",
-                "氏名で絞り込むか、期間を短くして再検索してください");
+                "氏名で絞り込んで再検索してください");
         if (users.Count == 0) return [];
 
         var userIds = users.Select(u => u.Id).ToList();
@@ -267,11 +270,16 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             }
         }
 
-        // 日付降順 → 氏名昇順 (Ordinal で決定的に)。
+        // 日付降順 → 氏名昇順 (Ordinal で決定的に) → 利用者 Id 昇順。
+        // List.Sort は不安定なため、同姓同名が同日に居ると最終タイブレーカーが無いと行順が非決定になる
+        // (他の一覧が Id をタイブレーカーに置いているのと同じ理由)。
+        // (利用者, 日付) の組は 1 行しか作られないので、Id まで見れば順序は一意に決まる。
         result.Sort((a, b) =>
         {
             var byDate = b.Date.CompareTo(a.Date);
-            return byDate != 0 ? byDate : string.Compare(a.UserName, b.UserName, StringComparison.Ordinal);
+            if (byDate != 0) return byDate;
+            var byName = string.Compare(a.UserName, b.UserName, StringComparison.Ordinal);
+            return byName != 0 ? byName : a.UserId.CompareTo(b.UserId);
         });
         return result;
     }
@@ -563,8 +571,11 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     /// YYYY-MM-DD の解析。fallback が null のとき未指定は 422。
     /// 業務上ありえない日付 (0001 年等) は .NET の英語例外や非現実的な集計範囲に化けるため、
     /// <see cref="AttendanceCalc.IsBusinessDateInRange"/> の妥当範囲でも弾く。
+    ///
+    /// 休暇申請一覧の期間絞り込み (<see cref="LeaveService.ListRequestsAsync"/>) からも使う。
+    /// 日付クエリの書式・妥当範囲・エラー文言を勤怠内で 1 箇所に保つため public にしている (原則3)。
     /// </summary>
-    private static DateOnly ParseDate(string? value, DateOnly? fallback, string label)
+    public static DateOnly ParseDate(string? value, DateOnly? fallback, string label)
     {
         if (string.IsNullOrWhiteSpace(value))
             return fallback ?? throw DomainException.Validation($"{label} を指定してください",

@@ -423,8 +423,27 @@ const selectedMonth = ref(currentMonthJst())
 const monthData = ref<MonthSummary | null>(null)
 const monthAlerts = ref<Article36Alert[]>([])
 const monthLeaves = ref<LeaveRequestItem[]>([])
+/**
+ * カレンダーの「休暇」マーカーが実データと食い違い得るときの注記
+ * （取得失敗・ページ上限での打ち切り）。空文字なら注記を出さない。
+ * 欠落を無言にしないための告知なので、成功時は必ず空へ戻す（原則4）。
+ */
+const monthLeaveNotice = ref('')
 const monthlyLoading = ref(false)
 const monthlyError = ref('')
+
+/**
+ * 休暇マーカー取得の絞り込み期間（表示中の月の 月初〜月末・両端含み）。
+ * **全期間を引かない**こと: 承認済み休暇が一覧の上限件数を超えると、過去月のマーカーが
+ * 黙って欠ける（サーバ側の期間上限は `LeaveService.RequestRangeMaxDays` = 366 日）。
+ * 年月入力が不正（`<input type="month">` を空にした等）なら絞り込まない = 従来どおり全期間。
+ */
+const monthLeaveRange = computed<{ from?: string; to?: string }>(() => {
+  const month = selectedMonth.value
+  const lastDay = bizDaysInMonth(month)
+  if (lastDay === 0) return {}
+  return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, '0')}` }
+})
 
 /**
  * 法定休日の曜日。既定ルール (isDefault かつ isActive) から取り、取得できなければ日曜 (0)。
@@ -455,12 +474,22 @@ const loadMonthly = async () => {
     monthAlerts.value = []
   }
   try {
+    // 表示中の月だけを要求する (全期間を引くと上限件数で古い月が落ち、マーカーが静かに消える)。
+    const { from, to } = monthLeaveRange.value
+    const leavePage = isViewingSelf.value
+      ? await leaveRequests('self', 'approved', from, to)
+      : await leaveRequests('all', 'approved', from, to)
     monthLeaves.value = isViewingSelf.value
-      ? await leaveRequests('self', 'approved')
-      : (await leaveRequests('all', 'approved')).filter((r) => r.userId === effectiveUserId.value)
+      ? leavePage.items
+      : leavePage.items.filter((r) => r.userId === effectiveUserId.value)
+    // 続きがある = マーカーが欠けている可能性がある。無言で切り詰めない (原則4)。
+    monthLeaveNotice.value = leavePage.page.hasMore
+      ? '承認済みの休暇が多いため、一部のみ表示しています。カレンダーの「休暇」表示が欠けている場合があります。'
+      : ''
   } catch (e) {
     console.error('[attendance] 承認済み休暇の取得に失敗しました', e)
     monthLeaves.value = []
+    monthLeaveNotice.value = '承認済みの休暇を取得できませんでした。カレンダーの「休暇」表示は反映されていません。'
   }
   // ルールは法定休日の曜日判定にのみ使う補助情報。
   if (rules.value.length === 0) await loadRules()
@@ -584,18 +613,29 @@ const myFixes = ref<FixRequest[]>([])
 const myLeaves = ref<LeaveRequestItem[]>([])
 const requestsLoading = ref(false)
 const requestsError = ref('')
+/**
+ * 一覧がページ上限で打ち切られたときの注記 (空文字なら出さない)。
+ * 申請一覧は期間で絞り込めない (全期間が対象) ため、運用年数に比例していつか必ず超える。
+ * 黙って切り詰めず「一部のみ表示している」ことを告知する (原則4)。
+ */
+const myRequestsNotice = ref('')
+const pendingNotice = ref('')
+const TRUNCATED_NOTICE = '申請が多いため、新しいものから一部のみ表示しています。'
 
 const loadRequests = async () => {
   requestsLoading.value = true
   requestsError.value = ''
+  myRequestsNotice.value = ''
+  pendingNotice.value = ''
   try {
     // 自分の申請は全員に見せる。承認待ち (全員分) はオーナーのみ取得する (scope=all はオーナー限定)。
     const [mineFix, mineLeave] = await Promise.all([
       loadFixRequests('self'),
       leaveRequests('self'),
     ])
-    myFixes.value = mineFix
-    myLeaves.value = mineLeave
+    myFixes.value = mineFix.items
+    myLeaves.value = mineLeave.items
+    if (mineFix.page.hasMore || mineLeave.page.hasMore) myRequestsNotice.value = TRUNCATED_NOTICE
   } catch (e) {
     requestsError.value = getApiErrorMessage(e, '申請一覧の取得に失敗しました')
   }
@@ -605,8 +645,9 @@ const loadRequests = async () => {
         loadFixRequests('all', 'pending'),
         leaveRequests('all', 'pending'),
       ])
-      pendingFixes.value = pf
-      pendingLeaves.value = pl
+      pendingFixes.value = pf.items
+      pendingLeaves.value = pl.items
+      if (pf.page.hasMore || pl.page.hasMore) pendingNotice.value = TRUNCATED_NOTICE
     } catch (e) {
       // 承認待ちの取得失敗は「自分の申請」の表示を止めない (原則4)。
       console.error('[attendance] 承認待ち一覧の取得に失敗しました', e)
@@ -1540,6 +1581,9 @@ const currentDefaultRuleName = computed(() =>
               <span><span class="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-red-500 align-middle" />60h 超残業</span>
               <span><span class="mr-1 rounded bg-green-100 px-1 text-[10px] text-green-700">休暇</span>承認済みの休暇</span>
             </div>
+            <p v-if="monthLeaveNotice" class="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {{ monthLeaveNotice }}
+            </p>
           </section>
 
           <div class="grid gap-3 lg:grid-cols-2">
@@ -1754,6 +1798,9 @@ const currentDefaultRuleName = computed(() =>
               承認待ち
               <span v-if="pendingCount > 0" class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{{ pendingCount }} 件</span>
             </h2>
+            <p v-if="pendingNotice" class="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {{ pendingNotice }}
+            </p>
             <p v-if="pendingCount === 0" class="px-2 py-6 text-center text-sm text-gray-500">承認待ちの申請はありません。</p>
 
             <div v-else class="space-y-3">
@@ -1810,6 +1857,10 @@ const currentDefaultRuleName = computed(() =>
                 <button type="button" class="rounded-md border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-700 hover:bg-blue-100" @click="openLeaveModal">休暇を申請</button>
               </div>
             </div>
+
+            <p v-if="myRequestsNotice" class="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {{ myRequestsNotice }}
+            </p>
 
             <p v-if="myFixes.length === 0 && myLeaves.length === 0" class="px-2 py-6 text-center text-sm text-gray-500">
               申請はまだありません。

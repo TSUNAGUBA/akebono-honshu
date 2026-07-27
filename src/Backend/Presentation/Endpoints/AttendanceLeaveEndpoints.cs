@@ -122,8 +122,12 @@ public static class AttendanceLeaveEndpoints
         // data は従来どおり配列のままで、続きの有無は meta.page.hasMore が示す (フロント契約は非破壊)。
         // limit 未指定時の既定は上限値 (PageRequest.MaxLimit)。フロント (useAttendance.leaveRequests) は
         // まだ limit / cursor を送らないため、既定 50 だと申請が黙って欠落する。
+        // ?from / ?to は取得日 (業務日付) の範囲絞り込み (両端含み・YYYY-MM-DD)。**両方省略可**で、
+        // 省略時は従来どおり全期間 (下位互換・原則7)。月次カレンダーの休暇マーカーのように
+        // 表示中の月だけが要る画面は、ページ上限で黙って切り詰められないよう範囲を指定する。
         group.MapGet("/requests", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
-                                          string? scope, string? status, int? limit, string? cursor,
+                                          string? scope, string? status, string? from, string? to,
+                                          int? limit, string? cursor,
                                           CancellationToken ct) =>
         {
             var allScope = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
@@ -133,7 +137,7 @@ public static class AttendanceLeaveEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
-            var result = await svc.ListRequestsAsync(auth.ActorId!.Value, allScope, status, page, ct);
+            var result = await svc.ListRequestsAsync(auth.ActorId!.Value, allScope, status, from, to, page, ct);
             return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 

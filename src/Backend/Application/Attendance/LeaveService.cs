@@ -27,10 +27,24 @@ namespace Akebono.Application.Attendance;
 public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
 {
     /// <summary>
-    /// 休暇管理一覧 (#27) で一度に集計できる利用者数の上限。超過は 400 AKB-SYS-011。
+    /// 休暇管理一覧 (#27) で一度に集計できる利用者数の上限。超過は 422 AKB-SYS-002
+    /// (limit / cursor を持たないエンドポイントのため、ページング不正 AKB-SYS-011 は使わない)。
     /// (打刻タイムカードの <see cref="AttendanceService.TimecardMaxUsers"/> と同趣旨の防波堤)
     /// </summary>
     public const int AdminSummaryMaxUsers = 500;
+
+    /// <summary>
+    /// 休暇申請一覧 (#21) の期間絞り込み (?from / ?to) で一度に指定できる日数の上限。
+    /// **両端を含む**日数で数える (タイムカードの <see cref="AttendanceService.TimecardRangeMaxDays"/>
+    /// と同じ数え方)。**本定数がプロジェクトの SoT**。
+    ///
+    /// 主用途である月次カレンダーの休暇マーカーは 1 ヶ月 (最大 31 日) しか要求しないが、
+    /// 年 5 日取得義務 (労基法 39 条) が年度単位の概念であり「1 年分の休暇を一覧する」照会は
+    /// 正当な使い方のため、上限は 1 年 + 閏日 = 366 日とする
+    /// (タイムカードの 62 日より緩いのは、本 API が利用者 × 期間の集計を伴わず、
+    ///  返却件数自体はキーセットページングの limit で有界なため)。
+    /// </summary>
+    public const int RequestRangeMaxDays = 366;
 
     // ═══════════════════════════════════════════════
     // 休暇種別 (#15〜#19)
@@ -285,7 +299,7 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
             .Take(AdminSummaryMaxUsers + 1)
             .ToListAsync(ct);
         if (users.Count > AdminSummaryMaxUsers)
-            throw new DomainException(AkbErrorCodes.SysPagingInvalid, 400,
+            throw DomainException.Validation(
                 $"対象の利用者が多すぎます（一度に集計できるのは {AdminSummaryMaxUsers} 人までです）",
                 "利用者ごとの休暇サマリから個別に確認してください");
         if (users.Count == 0) return [];
@@ -333,13 +347,22 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
     /// (同一 created_at の順序を確定させるため id 降順をタイブレーカーに置く。
     ///  打刻修正申請の一覧 <see cref="AttendanceService.ListFixRequestsAsync"/> と同じ形)。
     ///
+    /// from / to は**取得日 (業務日付 date) の範囲**を両端含みで絞り込む (YYYY-MM-DD)。
+    /// **両方とも省略可**で、省略時は従来どおり全期間を対象にする (下位互換・原則7)。
+    /// 月次カレンダーの休暇マーカーのように「表示中の月だけ」が要る画面は、
+    /// 全期間を引いてページ上限で黙って切り詰められないよう必ず範囲を指定すること。
+    /// 期間の上限は <see cref="RequestRangeMaxDays"/> 日 (両端含み、超過は 422)。
+    ///
     /// **キーセットページング必須** (AKB-DOC-12 §7.1、PurchaseOrderService.ListAsync と同じ規約)。
     /// status 未指定の scope=all は運用年数に比例して全履歴を返すため、非有界のままでは必ず
     /// タイムアウトする。返却は page.Limit 件で打ち切り、続きの有無は meta.page.hasMore で示す。
     /// </summary>
     public async Task<PagedResult<LeaveRequestDto>> ListRequestsAsync(
-        Guid actorUserId, bool allScope, string? status, PageRequest page, CancellationToken ct = default)
+        Guid actorUserId, bool allScope, string? status, string? from, string? to,
+        PageRequest page, CancellationToken ct = default)
     {
+        var (fromDate, toDate) = ParseDateRange(from, to);
+
         var query = db.LeaveRequests.AsNoTracking();
         if (!allScope) query = query.Where(r => r.UserId == actorUserId);
         if (!string.IsNullOrWhiteSpace(status))
@@ -347,6 +370,10 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
             var parsed = ParseStatus(status);
             query = query.Where(r => r.Status == parsed);
         }
+
+        // 取得日の範囲 (両端含み)。片側だけの指定も許す (未指定側は無制限)。
+        if (fromDate is { } fromValue) query = query.Where(r => r.Date >= fromValue);
+        if (toDate is { } toValue) query = query.Where(r => r.Date <= toValue);
 
         // キーセット: 前ページ末尾 (created_at, id) より「後ろ」(降順) の行のみ。
         if (page.AfterCreatedAt is { } afterCreatedAt && page.AfterId is { } afterId)
@@ -749,6 +776,38 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
 
         return type;
     }
+
+    /// <summary>
+    /// 一覧の期間絞り込み (?from / ?to) を解析する。**両方省略時は (null, null) = 全期間**
+    /// (既存の呼び出しをそのまま動かすため。下位互換・原則7)。
+    /// 書式・業務日付の妥当範囲・422 の文言はタイムカードと同じ
+    /// <see cref="AttendanceService.ParseDate"/> に委ねる (原則3)。
+    /// 両方指定された場合のみ from &lt;= to と <see cref="RequestRangeMaxDays"/> 日以内を強制する
+    /// (タイムカード <see cref="AttendanceService.GetTimecardAsync"/> と同じ「両端含み」の数え方)。
+    /// </summary>
+    private static (DateOnly? From, DateOnly? To) ParseDateRange(string? from, string? to)
+    {
+        var fromDate = ParseFilterDate(from, "from");
+        var toDate = ParseFilterDate(to, "to");
+
+        if (fromDate is { } fromValue && toDate is { } toValue)
+        {
+            if (fromValue > toValue)
+                throw DomainException.Validation("期間の開始日は終了日以前にしてください",
+                    "日付（から）と日付（まで）を入れ替えて再検索してください");
+            if (toValue.DayNumber - fromValue.DayNumber + 1 > RequestRangeMaxDays)
+                throw DomainException.Validation($"期間は最大 {RequestRangeMaxDays} 日までです",
+                    "期間を狭めて再検索してください");
+        }
+
+        return (fromDate, toDate);
+    }
+
+    /// <summary>絞り込み日付の解析。空 (未指定) は null = 絞り込まない。</summary>
+    private static DateOnly? ParseFilterDate(string? value, string label)
+        => string.IsNullOrWhiteSpace(value)
+            ? (DateOnly?)null
+            : AttendanceService.ParseDate(value, null, label);
 
     private static LeaveRequestStatus ParseStatus(string status)
         => status.Trim().ToLowerInvariant() switch

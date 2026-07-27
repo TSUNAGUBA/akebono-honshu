@@ -152,11 +152,19 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
         return true;
     }
 
-    /// <summary>論理削除の取消。既定フラグは復元しない (削除時に外れているため明示的に再設定する)。</summary>
+    /// <summary>
+    /// 論理削除の取消。既定フラグは復元しない (削除時に外れているため明示的に再設定する)。
+    /// 削除後に同名のルールを作られていると復元は部分 UNIQUE 索引に抵触するため、
+    /// **事前に検出して何をすれば復元できるかを返す** (汎用の 409「同一のキーを持つデータが既に存在します」
+    /// では復帰導線が分からないため。休暇種別の復元 <see cref="LeaveService.RestoreTypeAsync"/> と同形)。
+    /// </summary>
     public async Task<bool> RestoreAsync(Guid id, Guid actorId, CancellationToken ct = default)
     {
         var entity = await db.AttendanceRules.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (entity is null) return false;
+
+        if (entity.DeletedAt != null)
+            await EnsureNoActiveDuplicateNameAsync(entity.Name, id, ct);
 
         entity.DeletedAt = null;
         entity.UpdatedAt = SystemTime.UtcNow;
@@ -182,6 +190,21 @@ public class AttendanceRuleService(IAkebonoDbContext db, IAuditLogger audit)
             other.IsDefault = false;
             other.UpdatedAt = now;
         }
+    }
+
+    /// <summary>
+    /// 未削除の同名ルールを検出して 409 を返す
+    /// (部分 UNIQUE 索引 uq_attendance_rules_tenant_name = (tenant_id, name) WHERE deleted_at IS NULL
+    ///  と同じ条件。<see cref="LeaveService"/> の EnsureNoActiveDuplicateNameAsync と同形)。
+    /// excludeId は自分自身 (復元対象) を重複判定から除く。
+    /// </summary>
+    private async Task EnsureNoActiveDuplicateNameAsync(string name, Guid excludeId, CancellationToken ct)
+    {
+        var duplicated = await db.AttendanceRules.AnyAsync(
+            r => r.DeletedAt == null && r.Name == name && r.Id != excludeId, ct);
+        if (duplicated)
+            throw DomainException.UniqueViolation($"勤務体系「{name}」は既に登録されています",
+                "同名の勤務体系の名称を変更するか削除してから、もう一度復元してください");
     }
 
     private static AttendanceRuleDto ToDto(AttendanceRule r)
