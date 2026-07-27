@@ -32,12 +32,49 @@ const stateLoading = ref(true)
 const punching = ref(false)
 const punchError = ref('')
 const punchSuccess = ref('')
+/**
+ * 当日の打刻状態そのものの取得エラー（打刻操作の失敗 `punchError` とは別物）。
+ * 取得できていないのに黙って既定値へ倒すと、状態バッジが「未出勤」、本日の打刻が
+ * 「まだ打刻がありません。」と**断定**し、さらに出勤ボタンが活性化して、実際は勤務中の利用者に
+ * サーバ 409 を踏ませる。打刻後経路では既に対策済み（useAttendance.punch）の失敗モードなので、
+ * 初回取得経路にも同じ守りを入れる（原則4）。
+ */
+const stateError = ref('')
 
-/** 状態機械（§4.8）に沿ったボタンの活性判定。サーバも同じ判定で 409 を返す。 */
-const canPunchIn = computed(() => canPunch.value && punchState.value === 'before')
-const canPunchOut = computed(() => canPunch.value && punchState.value === 'working')
-const canBreakStart = computed(() => canPunch.value && punchState.value === 'working')
-const canBreakEnd = computed(() => canPunch.value && punchState.value === 'breaking')
+/**
+ * 状態機械（§4.8）に沿ったボタンの活性判定。サーバも同じ判定で 409 を返す。
+ * 状態を取得できていないとき（`stateError`）はどのボタンも押させない
+ * （キャッシュ既定値 'before' を根拠に打たせると誤った 409 になる）。
+ */
+const canPunchIn = computed(() => canPunch.value && !stateError.value && punchState.value === 'before')
+const canPunchOut = computed(() => canPunch.value && !stateError.value && punchState.value === 'working')
+const canBreakStart = computed(() => canPunch.value && !stateError.value && punchState.value === 'working')
+const canBreakEnd = computed(() => canPunch.value && !stateError.value && punchState.value === 'breaking')
+
+/** 状態バッジの表示。取得できていないときは「未出勤」と断定しない（原則4）。 */
+const stateBadgeLabel = computed(() => {
+  if (stateLoading.value) return '読み込み中…'
+  if (stateError.value) return '状態不明'
+  return PUNCH_STATE_LABELS[punchState.value]
+})
+const stateBadgeClass = computed(() =>
+  stateError.value ? 'bg-red-100 text-red-700' : PUNCH_STATE_CLASSES[punchState.value])
+
+/**
+ * 打刻状態の取得（初回・失敗後の再試行で共通）。
+ * 失敗しても投げず `stateError` に残す：一覧の表示は続ける（原則4）。
+ */
+const reloadState = async () => {
+  stateLoading.value = true
+  try {
+    await loadState(true)
+    stateError.value = ''
+  } catch (e) {
+    stateError.value = getApiErrorMessage(e, '打刻状態の取得に失敗しました')
+  } finally {
+    stateLoading.value = false
+  }
+}
 
 const doPunch = async (kind: PunchDto['kind']) => {
   punchError.value = ''
@@ -161,13 +198,7 @@ onMounted(async () => {
     return
   }
   // 打刻状態の取得に失敗しても一覧は表示する（原則4 グレースフルデグラデーション）。
-  try {
-    await loadState(true)
-  } catch (e) {
-    punchError.value = getApiErrorMessage(e, '打刻状態の取得に失敗しました')
-  } finally {
-    stateLoading.value = false
-  }
+  await reloadState()
   await reloadRange()
 })
 
@@ -206,12 +237,27 @@ onBeforeUnmount(() => {
           </div>
           <span
             class="inline-block rounded-full px-3 py-1 text-sm font-medium"
-            :class="PUNCH_STATE_CLASSES[punchState]"
+            :class="stateBadgeClass"
           >
-            {{ stateLoading ? '読み込み中…' : PUNCH_STATE_LABELS[punchState] }}
+            {{ stateBadgeLabel }}
           </span>
         </div>
 
+        <!-- 状態を取得できていないことの告知と復帰導線。打刻ボタンは無効化しているため、
+             ここから再取得できないと画面が詰む（原則1: 手動手順に頼らせない） -->
+        <div v-if="stateError" class="mt-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p class="whitespace-pre-line">{{ stateError }}</p>
+          <p class="mt-1 text-xs">
+            現在の打刻状態が分からないため、打刻ボタンを無効にしています（誤った二重打刻を防ぐため）。
+          </p>
+          <!-- 指で押す導線のため 44px 以上のタップ領域を確保する（原則8） -->
+          <button
+            type="button"
+            :disabled="stateLoading"
+            class="inline-flex min-h-[44px] items-center text-xs font-semibold underline disabled:opacity-50"
+            @click="reloadState"
+          >打刻状態を再取得する</button>
+        </div>
         <div v-if="punchError" class="mt-2 whitespace-pre-line rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
           {{ punchError }}
         </div>
@@ -270,6 +316,9 @@ onBeforeUnmount(() => {
               <span v-if="p.source === 'fix'" class="ml-1 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">修正反映</span>
             </li>
           </ul>
+          <!-- 取得に失敗しているときは「打刻がありません」と断定しない
+               （エラー帯と矛盾する断定を出さない。勤怠は法定記録であり誤読のコストが高い・原則4） -->
+          <p v-else-if="stateError" class="mt-1 text-sm text-amber-700">本日の打刻を取得できませんでした。</p>
           <p v-else class="mt-1 text-sm text-gray-500">まだ打刻がありません。</p>
           <!-- 誤操作からの復帰導線を明示する（打刻は記録系のため取消ではなく修正申請で戻す）。 -->
           <p class="mt-1.5 text-xs text-gray-500">

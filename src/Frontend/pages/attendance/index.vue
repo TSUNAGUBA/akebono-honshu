@@ -295,6 +295,11 @@ const selectTab = (tab: TabKey) => {
 // 5. 対象メンバー・共通の状態
 // ------------------------------------------------------------------
 const members = ref<MemberOption[]>([])
+/**
+ * メンバー一覧の取得に失敗したか。空の候補を「在籍者がいない」と誤読させないための注記に使う
+ * (users.vue の attendanceRulesUnavailable と同じ扱い・原則4「結果を報告する」)。
+ */
+const membersUnavailable = ref(false)
 const targetUserId = ref('')
 
 /**
@@ -314,9 +319,13 @@ const loadMembers = async () => {
   try {
     const rows = await apiData<MemberOption[]>('/users')
     members.value = rows.filter((m) => m.isActive)
+    membersUnavailable.value = false
   } catch (e) {
     // メンバー切替は補助機能。取得失敗でも自分の勤怠表示は続行する (原則4)。
+    // ただし黙って空にはしない: 候補が空のとき「在籍者がいない」と取り違えさせないため注記する。
+    // 取得済みの一覧は破棄しない (直前まで選べていた候補を失わせない)。
     console.error('[attendance] 利用者一覧の取得に失敗しました', e)
+    membersUnavailable.value = true
   }
 }
 
@@ -422,6 +431,13 @@ const shiftWeek = (delta: number) => { selectedDate.value = addBizDays(selectedD
 const selectedMonth = ref(currentMonthJst())
 const monthData = ref<MonthSummary | null>(null)
 const monthAlerts = ref<Article36Alert[]>([])
+/**
+ * 36 協定アラートの取得に失敗したか。
+ * 失敗を無言にすると「現時点で 36 協定に関するアラートはありません。」と緑帯で断定してしまい、
+ * 実際には超過しているのに問題なしと読ませる (誤読コストが最も高い箇所)。
+ * 同じ関数内の休暇マーカー (monthLeaveNotice) と同様、必ず画面に告知する (原則4)。
+ */
+const alertsUnavailable = ref(false)
 const monthLeaves = ref<LeaveRequestItem[]>([])
 /**
  * カレンダーの「休暇」マーカーが実データと食い違い得るときの注記
@@ -469,9 +485,11 @@ const loadMonthly = async () => {
   // 以降は補助情報。失敗しても月次サマリの表示は止めない (原則4)。
   try {
     monthAlerts.value = await alerts(effectiveUserId.value, selectedMonth.value)
+    alertsUnavailable.value = false
   } catch (e) {
     console.error('[attendance] 36協定アラートの取得に失敗しました', e)
     monthAlerts.value = []
+    alertsUnavailable.value = true
   }
   try {
     // 表示中の月だけを要求する (全期間を引くと上限件数で古い月が落ち、マーカーが静かに消える)。
@@ -554,6 +572,12 @@ const shiftMonth = (delta: number) => { selectedMonth.value = addBizMonths(selec
 // ------------------------------------------------------------------
 const leaveData = ref<LeaveSummaryData | null>(null)
 const leaveTypeItems = ref<LeaveTypeItem[]>([])
+/**
+ * 休暇種別の取得に失敗したか。空の選択肢を「種別が 1 件も登録されていない」と誤読させないための注記に使う
+ * (users.vue の attendanceRulesUnavailable と同じ扱い・原則3/原則4)。
+ * 無言だと通信失敗でも「管理者に確認してください」と案内してしまい、利用者を誤誘導する。
+ */
+const leaveTypesUnavailable = ref(false)
 const leaveLoading = ref(false)
 const leaveError = ref('')
 
@@ -576,9 +600,12 @@ const loadLeaveTypes = async () => {
   if (leaveTypeItems.value.length > 0) return
   try {
     leaveTypeItems.value = await leaveTypes(false)
+    leaveTypesUnavailable.value = false
   } catch (e) {
     // 種別が引けなくても残数表示は成立する。申請モーダルだけが使えなくなる (原則4)。
+    // 握りつぶさず、選択肢が空の理由を申請・付与モーダルに出す (「未登録」と取り違えさせない)。
     console.error('[attendance] 休暇種別の取得に失敗しました', e)
+    leaveTypesUnavailable.value = true
   }
 }
 
@@ -612,7 +639,16 @@ const pendingLeaves = ref<LeaveRequestItem[]>([])
 const myFixes = ref<FixRequest[]>([])
 const myLeaves = ref<LeaveRequestItem[]>([])
 const requestsLoading = ref(false)
+// エラーは取得単位で分ける。本タブは「自分の申請 (全員)」と「承認待ち (オーナーのみ)」を
+// **独立した 2 本の取得**で読むため、片方の失敗でもう片方の表示を落としてはならない (原則4)。
+// 1 本の ref を両セクションの描画条件に使うと、
+//   - 承認待ちだけ失敗 → 取得できている「自分の申請」が理由の説明なく消える
+//   - 自分の申請だけ失敗 → 取得できている承認待ちが消え、承認導線そのものが失われる
+// という巻き添えが起きる。
+/** 「自分の申請」の取得エラー。自分の申請セクションの描画条件はこちらを見る。 */
 const requestsError = ref('')
+/** 「承認待ち」(オーナーのみ) の取得エラー。承認導線・件数バッジの描画条件はこちらを見る。 */
+const pendingError = ref('')
 /**
  * 一覧がページ上限で打ち切られたときの注記 (空文字なら出さない)。
  * 本タブは期間を絞らずに読む (承認待ち・自分の申請とも全期間が対象) ため、
@@ -627,6 +663,7 @@ const TRUNCATED_NOTICE = '申請が多いため、新しいものから一部の
 const loadRequests = async () => {
   requestsLoading.value = true
   requestsError.value = ''
+  pendingError.value = ''
   myRequestsNotice.value = ''
   pendingNotice.value = ''
   try {
@@ -640,6 +677,10 @@ const loadRequests = async () => {
     if (mineFix.page.hasMore || mineLeave.page.hasMore) myRequestsNotice.value = TRUNCATED_NOTICE
   } catch (e) {
     requestsError.value = getApiErrorMessage(e, '申請一覧の取得に失敗しました')
+    // 他のローダ (loadDaily / loadWeekly / loadTimecard 等) と同じく、失敗した取得の状態は捨てる。
+    // 本体は描画されないのに古い一覧が残り続けると、再取得成功時に前回分と混ざって見える。
+    myFixes.value = []
+    myLeaves.value = []
   }
   if (isOwner.value) {
     try {
@@ -652,8 +693,12 @@ const loadRequests = async () => {
       if (pf.page.hasMore || pl.page.hasMore) pendingNotice.value = TRUNCATED_NOTICE
     } catch (e) {
       // 承認待ちの取得失敗は「自分の申請」の表示を止めない (原則4)。
+      // そのため専用の ref に入れる (requestsError を使うと自分の申請まで巻き添えで消える)。
       console.error('[attendance] 承認待ち一覧の取得に失敗しました', e)
-      requestsError.value = getApiErrorMessage(e, '承認待ち一覧の取得に失敗しました')
+      pendingError.value = getApiErrorMessage(e, '承認待ち一覧の取得に失敗しました')
+      // 件数バッジ (タブバー・見出し) が古い件数を出し続けないよう状態を捨てる。
+      pendingFixes.value = []
+      pendingLeaves.value = []
     }
   }
   requestsLoading.value = false
@@ -1311,8 +1356,9 @@ const currentDefaultRuleName = computed(() =>
             @click="selectTab(t)"
           >
             {{ TAB_META[t].label }}
+            <!-- 承認待ちの取得に失敗しているときは件数を出さない (古い件数を残さない・原則4) -->
             <span
-              v-if="t === 'requests' && isOwner && pendingCount > 0"
+              v-if="t === 'requests' && isOwner && !pendingError && pendingCount > 0"
               class="ml-1 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800"
             >{{ pendingCount }}</span>
           </button>
@@ -1348,6 +1394,10 @@ const currentDefaultRuleName = computed(() =>
           </div>
           <span class="text-xs text-gray-500">
             表示中: {{ targetUserName }}{{ isViewingSelf ? '（自分）' : '' }}
+          </span>
+          <!-- 候補が空のとき「在籍者がいない」と取り違えさせない (原則4) -->
+          <span v-if="membersUnavailable" class="text-xs text-amber-700">
+            メンバー一覧を取得できませんでした。切替候補が表示されない場合があります。
           </span>
           <button
             v-if="!isViewingSelf"
@@ -1687,6 +1737,11 @@ const currentDefaultRuleName = computed(() =>
                   <span class="ml-1 font-mono text-[11px] text-gray-500">{{ a.code }}</span>
                 </li>
               </ul>
+              <!-- 取得に失敗しているときは「アラートなし」と断定しない。緑帯で問題なしと読ませると
+                   実際の 36 協定超過を見落とす (同じ関数内の休暇マーカーと同じく告知する・原則4) -->
+              <p v-else-if="alertsUnavailable" class="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                36 協定のアラートを取得できませんでした。超過の有無は判断できません（月を切り替えるか、時間をおいて再表示してください）。
+              </p>
               <p v-else class="mt-3 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
                 現時点で 36 協定に関するアラートはありません。
               </p>
@@ -1843,24 +1898,26 @@ const currentDefaultRuleName = computed(() =>
       <!-- タブ: 申請                                                -->
       <!-- ======================================================== -->
       <template v-else-if="activeTab === 'requests'">
+        <!-- エラー帯は取得単位で出す。片方だけ失敗したとき、成功した側の一覧は表示を続ける (原則4) -->
+        <div v-if="pendingError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ pendingError }}</div>
         <div v-if="requestsError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ requestsError }}</div>
         <div v-if="requestsLoading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
         <template v-else>
-          <!-- 承認待ち (オーナーのみ) -->
+          <!-- 承認待ち (オーナーのみ)。描画条件は承認待ち専用の pendingError を見る -->
           <section v-if="isOwner" class="mb-3 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
             <h2 class="mb-2 flex items-center gap-2 border-b border-gray-100 pb-1.5 font-semibold">
               承認待ち
-              <span v-if="pendingCount > 0" class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{{ pendingCount }} 件</span>
+              <span v-if="!pendingError && pendingCount > 0" class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{{ pendingCount }} 件</span>
             </h2>
             <p v-if="pendingNotice" class="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {{ pendingNotice }}
             </p>
             <!-- 取得に失敗したときは空状態も一覧も描画しない: エラー帯を出しながら「ありません」と
                  断定すると誤読させる (集計 3 タブ・タイムカードと同じ扱い・原則4) -->
-            <p v-if="!requestsError && pendingCount === 0" class="px-2 py-6 text-center text-sm text-gray-500">承認待ちの申請はありません。</p>
+            <p v-if="!pendingError && pendingCount === 0" class="px-2 py-6 text-center text-sm text-gray-500">承認待ちの申請はありません。</p>
 
-            <div v-else-if="!requestsError" class="space-y-3">
+            <div v-else-if="!pendingError" class="space-y-3">
               <!-- 承認は即時反映で取り消せない。却下のみ確認ダイアログを挟む仕様のため、注記で補う -->
               <p class="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600">
                 <span class="font-semibold">承認した申請は取り消せません。</span>
@@ -2349,7 +2406,12 @@ const currentDefaultRuleName = computed(() =>
                 placeholder="種別を選択…"
                 @update:model-value="(v) => leaveForm.leaveTypeId = v ?? ''"
               />
-              <span v-if="activeLeaveTypeOptions.length === 0" class="text-xs text-amber-700">
+              <!-- 選択肢が空のとき「未登録」と「取得できなかった」を取り違えさせない (原則4)。
+                   通信失敗で「管理者に確認してください」と案内すると利用者を誤誘導する -->
+              <span v-if="leaveTypesUnavailable" class="text-xs text-amber-700">
+                休暇種別を取得できませんでした。時間をおいて開き直してください（種別が未登録とは限りません）。
+              </span>
+              <span v-else-if="activeLeaveTypeOptions.length === 0" class="text-xs text-amber-700">
                 利用できる休暇種別がありません。管理者に確認してください。
               </span>
             </div>
@@ -2415,6 +2477,10 @@ const currentDefaultRuleName = computed(() =>
                 placeholder="メンバーを検索…"
                 @update:model-value="(v) => grantForm.userId = v ?? ''"
               />
+              <!-- 候補が空のとき「在籍者がいない」と取り違えさせない (原則4) -->
+              <span v-if="membersUnavailable" class="text-xs text-amber-700">
+                メンバー一覧を取得できませんでした。時間をおいて開き直してください。
+              </span>
             </div>
             <div class="flex flex-col gap-1">
               <span class="text-sm font-medium">休暇の種別 <span class="text-red-500">*</span></span>
@@ -2425,6 +2491,10 @@ const currentDefaultRuleName = computed(() =>
                 @update:model-value="(v) => grantForm.leaveTypeId = v ?? ''"
               />
               <span class="text-xs text-gray-500">周期自動付与の種別（法定有給）は手動付与できません。</span>
+              <!-- 選択肢が空のとき「未登録」と「取得できなかった」を取り違えさせない (原則4) -->
+              <span v-if="leaveTypesUnavailable" class="text-xs text-amber-700">
+                休暇種別を取得できませんでした。時間をおいて開き直してください。
+              </span>
             </div>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">付与日 <span class="text-red-500">*</span></span>

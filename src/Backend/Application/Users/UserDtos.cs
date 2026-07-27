@@ -18,12 +18,19 @@ public record UserListItem(
     bool HasFirebaseLink = false,
     // 勤怠 (Iteration 30)。末尾追加 + 既定値付きで下位互換 (CLAUDE.md 原則7)。
     // AttendancePermission: 0=なし / 1=更新可能 / 2=参照のみ (非単調スケール、書込判定は ==1)。
-    short AttendancePermission = 1,
-    bool PunchRequired = true,
+    //
+    // **すべて nullable / 既定 null**: 入社日と週所定は有給の比例付与判定に直結する労務個人情報。
+    // 一覧・単票は発注/商品フォームの担当者候補にも使うため認証のみで開いており、
+    // オーナー (process_record_permission >= 1) 以外にはこの 6 列を返さず null にする
+    // (UserQueryService.WithoutLaborInfo)。勤怠 API 側の「他人の勤怠はオーナーのみ」と同じ境界。
+    // 受け手にとって null は「取得権限が無い」であり「0 / 未設定」ではないため、
+    // 表示側は fail-close (権限は 0、打刻対象は false) で解釈すること。
+    short? AttendancePermission = null,
+    bool? PunchRequired = null,
     Guid? AttendanceRuleId = null,
     DateOnly? HireDate = null,
-    decimal WeeklyDays = 5m,
-    decimal WeeklyHours = 40m);
+    decimal? WeeklyDays = null,
+    decimal? WeeklyHours = null);
 
 // 利用者マスタ (Part5) の作成ペイロード。権限 (閲覧/操作) を含む。
 // FirebaseUid は任意 (ログイン連携のプロビジョニング用。未指定なら未連携)。

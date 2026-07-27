@@ -12,6 +12,36 @@ namespace Akebono.Application.Users;
 /// </summary>
 public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
 {
+    /// <summary>
+    /// 労務個人情報 (勤怠権限・打刻要否・勤務体系・入社日・週所定日数/時間) を落とした投影。
+    /// 入社日と週所定は有給の比例付与判定に直結するため、認証のみで開いている一覧/単票から
+    /// 全在籍者分を列挙させない (勤怠 API の「他人の勤怠はオーナーのみ」と同じ境界)。
+    /// </summary>
+    private static UserListItem WithoutLaborInfo(UserListItem user) => user with
+    {
+        AttendancePermission = null,
+        PunchRequired = null,
+        AttendanceRuleId = null,
+        HireDate = null,
+        WeeklyDays = null,
+        WeeklyHours = null,
+    };
+
+    /// <summary>
+    /// 労務個人情報を返してよい相手か = オーナーか。
+    /// 判定式は <c>AuthEndpoints.CheckUserAdminAsync</c> と同じ
+    /// (有効・未削除 かつ process_record_permission &gt;= 1。オーナー判定のみ &gt;= 1 を使う)。
+    /// </summary>
+    private Task<bool> IsOwnerAsync(Guid actorUserId, CancellationToken ct)
+        => db.Users.AnyAsync(
+            u => u.Id == actorUserId && u.IsActive && u.DeletedAt == null && u.ProcessRecordPermission >= 1,
+            ct);
+
+    /// <summary>
+    /// 一覧。**労務個人情報 (勤怠 6 列) はオーナーにのみ返す**。
+    /// 本一覧は発注・商品フォームの担当者候補にも使うため認証のみで開いており、
+    /// そのままでは勤怠権限 0 の利用者でも全在籍者の入社日・週所定を列挙できてしまう。
+    /// </summary>
     public async Task<List<UserListItem>> ListAsync(Guid actorUserId, CancellationToken ct = default)
     {
         var users = await db.Users
@@ -27,12 +57,32 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
                 u.HireDate, u.WeeklyDays, u.WeeklyHours))
             .ToListAsync(ct);
 
+        if (!await IsOwnerAsync(actorUserId, ct))
+            users = users.ConvertAll(WithoutLaborInfo);
+
         await audit.LogAsync(actorUserId, "User.List", entityType: "User", note: $"Returned {users.Count} users", cancellationToken: ct);
 
         return users;
     }
 
-    public async Task<UserListItem?> GetAsync(Guid id, CancellationToken ct = default)
+    /// <summary>
+    /// 単票取得 (API 用)。労務個人情報はオーナーにのみ返す (<see cref="ListAsync"/> と同じ規則)。
+    /// GET /users/{id} も一覧と同じく認証のみで開いているため、こちらだけ素通しにしない。
+    /// </summary>
+    public async Task<UserListItem?> GetForActorAsync(Guid id, Guid actorUserId, CancellationToken ct = default)
+    {
+        var user = await GetAsync(id, ct);
+        if (user is null) return null;
+        return await IsOwnerAsync(actorUserId, ct) ? user : WithoutLaborInfo(user);
+    }
+
+    /// <summary>
+    /// 単票取得 (**内部用・労務個人情報を含む全項目**)。
+    /// オーナー以外へ露出させないため private とし、外部へ返す経路は
+    /// <see cref="GetForActorAsync"/> を通す。作成・更新の応答組み立てからのみ直接呼ぶ
+    /// (エンドポイントが CheckUserAdminAsync でオーナーを検証済みのため全項目を返してよい)。
+    /// </summary>
+    private async Task<UserListItem?> GetAsync(Guid id, CancellationToken ct = default)
         => await db.Users
             .Where(u => u.Id == id)
             .Select(u => new UserListItem(

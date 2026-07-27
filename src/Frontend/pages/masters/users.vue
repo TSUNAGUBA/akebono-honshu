@@ -22,15 +22,17 @@ interface UserItem {
   purchaseOrderInfoPermission: number
   processRecordPermission: number
   // 勤怠 (末尾追加・勤怠移植仕様 §2)。Backend 未更新の環境では欠落し得るため optional。
-  // DB 既定は attendance_permission=1 / punch_required=true のため、表示時はその既定へフォールバックする。
-  attendancePermission?: number
-  punchRequired?: boolean
-  // 勤務体系 (null = 既定ルール)。入社日は有給の周期自動付与の起算日 (null = 対象外)。
+  // さらに**労務個人情報のためオーナー以外には null で返る** (サーバが応答から落とす)。
+  // 本画面はオーナー専用のため実値が入るが、型は null 許容にそろえ、表示は fail-close
+  // (権限は 0、打刻対象は false) で解釈する。
+  attendancePermission?: number | null
+  punchRequired?: boolean | null
+  // 勤務体系 (null = 既定ルール **または 取得権限なし**)。入社日は有給の周期自動付与の起算日。
   // 週所定日数/時間は比例付与の判定に使う。DB 既定は 5 日 / 40 時間。
   attendanceRuleId?: string | null
   hireDate?: string | null
-  weeklyDays?: number
-  weeklyHours?: number
+  weeklyDays?: number | null
+  weeklyHours?: number | null
   hasFirebaseLink: boolean
 }
 
