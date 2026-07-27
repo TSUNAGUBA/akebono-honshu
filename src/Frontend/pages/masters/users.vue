@@ -19,6 +19,10 @@ interface UserItem {
   purchaseOrderCreatePermission: number
   purchaseOrderInfoPermission: number
   processRecordPermission: number
+  // 勤怠 (末尾追加・勤怠移植仕様 §2)。Backend 未更新の環境では欠落し得るため optional。
+  // DB 既定は attendance_permission=1 / punch_required=true のため、表示時はその既定へフォールバックする。
+  attendancePermission?: number
+  punchRequired?: boolean
   hasFirebaseLink: boolean
 }
 
@@ -36,6 +40,10 @@ const ORDER_CREATE_OPTS = [
   { value: 0, label: 'なし' }, { value: 1, label: '更新可能' }, { value: 2, label: '参照のみ' },
 ]
 const YESNO_OPTS = [{ value: 0, label: 'なし' }, { value: 1, label: 'あり' }]
+// 勤怠権限 (勤怠移植仕様 §2)。既存 4 権限と同じ非単調スケール (1=更新可能 が 2=参照のみ より小さい)。
+const ATTENDANCE_OPTS = [
+  { value: 0, label: 'なし' }, { value: 1, label: '更新可能' }, { value: 2, label: '参照のみ' },
+]
 
 const labelOf = (opts: { value: number; label: string }[], v: number): string =>
   opts.find((o) => o.value === v)?.label ?? String(v)
@@ -52,6 +60,10 @@ const emptyForm = () => ({
   purchaseOrderCreatePermission: 0,
   purchaseOrderInfoPermission: 0,
   processRecordPermission: 0,
+  // 勤怠は全従業員が使う機能のため既定は「更新可能・打刻対象」(DB 既定と一致)。
+  // 実際に打刻対象かは punchRequired で個別に外す。
+  attendancePermission: 1,
+  punchRequired: true,
   isActive: true,
   firebaseUid: '',
 })
@@ -90,6 +102,9 @@ const startEdit = (u: UserItem) => {
     purchaseOrderCreatePermission: u.purchaseOrderCreatePermission,
     purchaseOrderInfoPermission: u.purchaseOrderInfoPermission,
     processRecordPermission: u.processRecordPermission,
+    // 応答に無い (Backend 未更新) 場合は DB 既定と同じ値を初期表示する。
+    attendancePermission: u.attendancePermission ?? 1,
+    punchRequired: u.punchRequired ?? true,
     isActive: u.isActive,
     // 連携済 UID は変更させない (空で送れば既存値を保持)。
     firebaseUid: '',
@@ -122,6 +137,8 @@ const submit = async () => {
       purchaseOrderCreatePermission: Number(form.value.purchaseOrderCreatePermission),
       purchaseOrderInfoPermission: Number(form.value.purchaseOrderInfoPermission),
       processRecordPermission: Number(form.value.processRecordPermission),
+      attendancePermission: Number(form.value.attendancePermission),
+      punchRequired: form.value.punchRequired,
       isActive: form.value.isActive,
       firebaseUid: form.value.firebaseUid.trim() || null,
     }
@@ -215,6 +232,8 @@ const remove = async (u: UserItem) => {
           <label class="flex items-center gap-2 text-sm"><input v-model="form.isActive" type="checkbox" class="h-4 w-4" /> 有効</label>
           <label class="flex items-center gap-2 text-sm"><input v-model="form.isPlanningStaff" type="checkbox" class="h-4 w-4" /> 企画担当</label>
           <label class="flex items-center gap-2 text-sm"><input v-model="form.isSalesStaff" type="checkbox" class="h-4 w-4" /> 営業担当</label>
+          <!-- 打刻要否: 役員・外注等は打刻対象から外す (勤怠移植仕様 §2)。 -->
+          <label class="flex items-center gap-2 text-sm"><input v-model="form.punchRequired" type="checkbox" class="h-4 w-4" /> 打刻対象</label>
         </div>
 
         <fieldset class="rounded-md border border-gray-200 p-3">
@@ -244,7 +263,16 @@ const remove = async (u: UserItem) => {
                 <option v-for="o in YESNO_OPTS" :key="o.value" :value="o.value">{{ o.label }}</option>
               </select>
             </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">勤怠</span>
+              <select v-model.number="form.attendancePermission" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm">
+                <option v-for="o in ATTENDANCE_OPTS" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </label>
           </div>
+          <p class="mt-2 text-xs text-gray-500">
+            勤怠の管理操作 (全員のタイムカード・打刻修正/休暇の承認・休暇付与・勤怠ルール設定) は「利用者管理 (オーナー)」に集約されます。
+          </p>
         </fieldset>
 
         <div class="flex justify-end gap-2">
@@ -268,6 +296,7 @@ const remove = async (u: UserItem) => {
             <th class="px-3 py-2 text-left">発注書作成</th>
             <th class="px-3 py-2 text-left">発注情報</th>
             <th class="px-3 py-2 text-left">利用者管理</th>
+            <th class="px-3 py-2 text-left">勤怠</th>
             <th class="px-3 py-2 text-center">状態</th>
             <th class="px-3 py-2 text-right"></th>
           </tr>
@@ -280,6 +309,10 @@ const remove = async (u: UserItem) => {
             <td class="px-3 py-2">{{ labelOf(ORDER_CREATE_OPTS, u.purchaseOrderCreatePermission) }}</td>
             <td class="px-3 py-2">{{ labelOf(YESNO_OPTS, u.purchaseOrderInfoPermission) }}</td>
             <td class="px-3 py-2">{{ labelOf(YESNO_OPTS, u.processRecordPermission) }}</td>
+            <td class="px-3 py-2">
+              {{ labelOf(ATTENDANCE_OPTS, u.attendancePermission ?? 1) }}
+              <span v-if="!(u.punchRequired ?? true)" class="ml-1 text-xs text-gray-400">(打刻対象外)</span>
+            </td>
             <td class="px-3 py-2 text-center">
               <span :class="u.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium">
                 {{ u.isActive ? '有効' : '無効' }}
@@ -293,7 +326,7 @@ const remove = async (u: UserItem) => {
             </td>
           </tr>
           <tr v-if="users.length === 0">
-            <td colspan="8" class="px-3 py-6 text-center text-gray-500">利用者が登録されていません</td>
+            <td colspan="9" class="px-3 py-6 text-center text-gray-500">利用者が登録されていません</td>
           </tr>
         </tbody>
       </table>

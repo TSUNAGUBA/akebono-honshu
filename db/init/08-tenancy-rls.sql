@@ -70,6 +70,8 @@ GRANT EXECUTE ON FUNCTION ensure_audit_log_partitions(int) TO akebono_app;
 -- ─────────────────────────────────────────────────
 -- 2. RLS 配線 (テナントスコープ業務テーブル 45 本)
 --    (02: 19 / 03: 5 / 04: 4 / 05: 5 / 07: 12。07 は VIEW を除く 12 テーブル)
+--    ※ 勤怠 6 テーブル (10-attendance.sql) は本ファイルより後に作成されるため、
+--      下の「2b」で存在チェック付きに分離している。
 --
 -- 適用除外 (理由は各テーブルの定義コメント参照):
 --   - tenant      : テナントレジストリ投影 (横断参照。読取専用 GRANT で保護)
@@ -118,6 +120,48 @@ BEGIN
             'WITH CHECK (tenant_id = (NULLIF(current_setting(''app.tenant_id'', TRUE), ''''))::uuid)',
             t);
     END LOOP;
+END $$;
+
+-- ─────────────────────────────────────────────────
+-- 2b. RLS 配線 (勤怠 6 テーブル / Iteration 30)
+--
+-- 実行順序の注意: 勤怠テーブルを作る 10-attendance.sql は本ファイル (08) より **後** に
+-- 実行される (db/init は番号順)。そのため初回 init 時点では 6 テーブルはまだ存在せず、
+-- 上の一括ループ (存在必須) には入れられない。
+--   - 初回 init: ここは全件スキップされ、10-attendance.sql が自ら RLS を配線する
+--   - 本ファイルを既存 DB へ再実行した場合: 6 テーブルが存在するのでここで再配線される
+-- どちらの経路でも最終状態は同じ (冪等)。ポリシー定義は上の一括ループと同一の標準形。
+--
+-- punch_records は記録系 (追記のみ) のため、audit_logs と同方針で
+-- アプリロールから UPDATE/DELETE を剥奪する (CLAUDE.md 原則2)。
+-- 訂正は source=2(Fix) の行を追記する論理置換で行い、元打刻は削除しない。
+-- ─────────────────────────────────────────────────
+DO $$
+DECLARE
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'attendance_rules', 'punch_records', 'attendance_fix_requests',
+        'leave_types', 'leave_grants', 'leave_requests'
+    ]
+    LOOP
+        -- 未作成 (初回 init のこの時点) ならスキップ。10-attendance.sql 側が配線する。
+        CONTINUE WHEN to_regclass('public.' || t) IS NULL;
+
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
+        EXECUTE format(
+            'CREATE POLICY tenant_isolation ON %I '
+            'USING (tenant_id = (NULLIF(current_setting(''app.tenant_id'', TRUE), ''''))::uuid) '
+            'WITH CHECK (tenant_id = (NULLIF(current_setting(''app.tenant_id'', TRUE), ''''))::uuid)',
+            t);
+    END LOOP;
+
+    IF to_regclass('public.punch_records') IS NOT NULL
+       AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'akebono_app') THEN
+        REVOKE UPDATE, DELETE ON punch_records FROM akebono_app;
+    END IF;
 END $$;
 
 -- 注意 (運用):

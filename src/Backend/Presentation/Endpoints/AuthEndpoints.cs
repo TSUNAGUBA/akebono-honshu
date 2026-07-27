@@ -183,6 +183,83 @@ public static class AuthEndpoints
 
         return new(userId, null);
     }
+
+    /// <summary>
+    /// 勤怠の書込操作 (打刻・各種申請) に必要な権限チェック。
+    /// attendance_permission == 1 (更新可能) を要求する (Iteration 30、5 つ目の権限カテゴリ)。
+    /// </summary>
+    internal static async Task<MasterEditAuth> CheckAttendanceWriteAsync(
+        HttpContext http,
+        IAkebonoDbContext db,
+        CancellationToken ct)
+    {
+        if (!TryGetUserId(http, out var userId))
+            return new(null, UnauthorizedError(http));
+
+        var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (actor is null || !actor.IsActive || actor.DeletedAt != null)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                "ユーザが無効化されています"));
+
+        // 権限スケールは非単調 (0=なし, 1=更新可能, 2=参照のみ)。書込は「更新可能 (==1)」のみ許可する
+        // (>=1 とすると 参照のみ(2) に誤って書込を許してしまう)。
+        if (actor.AttendancePermission != 1)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                "この操作には勤怠権限 (更新可能) が必要です"));
+
+        return new(userId, null);
+    }
+
+    /// <summary>
+    /// 勤怠の参照操作 (自分の勤怠・集計・一覧) に必要な権限チェック。
+    /// attendance_permission が 1 (更新可能) または 2 (参照のみ) を要求する (0 は不可)。
+    /// 他の利用者の勤怠を参照する場合は別途 <see cref="CheckAttendanceAdminAsync"/> が必要。
+    /// </summary>
+    internal static async Task<MasterEditAuth> CheckAttendanceReadAsync(
+        HttpContext http,
+        IAkebonoDbContext db,
+        CancellationToken ct)
+    {
+        if (!TryGetUserId(http, out var userId))
+            return new(null, UnauthorizedError(http));
+
+        var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (actor is null || !actor.IsActive || actor.DeletedAt != null)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                "ユーザが無効化されています"));
+
+        if (actor.AttendancePermission != 1 && actor.AttendancePermission != 2)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                "この操作には勤怠権限 (参照以上) が必要です"));
+
+        return new(userId, null);
+    }
+
+    /// <summary>
+    /// 勤怠の管理操作 (全員のタイムカード参照 / 打刻修正・休暇申請の承認却下 / 休暇付与 /
+    /// 勤怠ルール・休暇種別の設定) に必要な権限チェック。
+    /// オーナー権限 (process_record_permission >= 1) を要求する
+    /// (office の admin 相当。hr 中間ロールは honshu に無いため作らない = 権限を緩めない方向で統合)。
+    /// </summary>
+    internal static async Task<MasterEditAuth> CheckAttendanceAdminAsync(
+        HttpContext http,
+        IAkebonoDbContext db,
+        CancellationToken ct)
+    {
+        if (!TryGetUserId(http, out var userId))
+            return new(null, UnauthorizedError(http));
+
+        var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (actor is null || !actor.IsActive || actor.DeletedAt != null)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthAccountInactive,
+                "ユーザが無効化されています"));
+
+        if (actor.ProcessRecordPermission < 1)
+            return new(null, ApiEnvelope.Error(http, 403, AkbErrorCodes.AuthInsufficientPermission,
+                "この操作には勤怠管理権限 (オーナー) が必要です"));
+
+        return new(userId, null);
+    }
 }
 
 internal sealed record MasterEditAuth(Guid? ActorId, IResult? ErrorResult);

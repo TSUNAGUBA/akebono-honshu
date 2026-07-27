@@ -86,6 +86,16 @@ CREATE TABLE users (
 CREATE INDEX idx_users_tenant ON users (tenant_id);
 CREATE INDEX idx_users_active ON users (is_active) WHERE deleted_at IS NULL;
 
+-- users の拡張列について (追加場所の索引):
+--   §3.18 の Phase 5 全カラム (firebase_uid / email / 4 権限 / 監査列 / legacy_id) は
+--     02-masters.sql の ALTER TABLE users で追加する。
+--   勤怠 (Iteration 30) の 6 列 (attendance_permission / punch_required / attendance_rule_id /
+--     hire_date / weekly_days / weekly_hours) は 10-attendance.sql で追加する。
+--     ※ ここ (01) ではなく 10 で追加する理由: attendance_rule_id の FK 先 attendance_rules が
+--        10 で作られること、および **列の並び順を db/migration/iter30-attendance.sql を適用した
+--        既存 DB と一致させる**ため (既存 DB では 02 の列より後ろにしか追加できない)。
+--        init 経路と migration 経路でスキーマが等価になる。
+
 -- ─────────────────────────────────────────────────
 -- audit_logs (Phase 5 §6.1、Iteration 0 用に最小列のみ)
 -- Phase 5 設計: INSERT 専用、UPDATE/DELETE は DB ロール権限で REVOKE

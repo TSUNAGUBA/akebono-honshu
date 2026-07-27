@@ -22,7 +22,9 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
                 u.Email, u.IsPlanningStaff, u.IsSalesStaff,
                 u.ProductLedgerPermission, u.PurchaseOrderCreatePermission,
                 u.PurchaseOrderInfoPermission, u.ProcessRecordPermission,
-                u.FirebaseUid != null))
+                u.FirebaseUid != null,
+                u.AttendancePermission, u.PunchRequired, u.AttendanceRuleId,
+                u.HireDate, u.WeeklyDays, u.WeeklyHours))
             .ToListAsync(ct);
 
         await audit.LogAsync(actorUserId, "User.List", entityType: "User", note: $"Returned {users.Count} users", cancellationToken: ct);
@@ -38,7 +40,9 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
                 u.Email, u.IsPlanningStaff, u.IsSalesStaff,
                 u.ProductLedgerPermission, u.PurchaseOrderCreatePermission,
                 u.PurchaseOrderInfoPermission, u.ProcessRecordPermission,
-                u.FirebaseUid != null))
+                u.FirebaseUid != null,
+                u.AttendancePermission, u.PunchRequired, u.AttendanceRuleId,
+                u.HireDate, u.WeeklyDays, u.WeeklyHours))
             .FirstOrDefaultAsync(ct);
 
     // 権限値の範囲チェック (Phase 5 §3.18 の 4 権限カテゴリ) + 必須項目。
@@ -51,11 +55,31 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
         if (req.PurchaseOrderCreatePermission is < 0 or > 2) throw DomainException.Validation("発注書作成権限は 0〜2 で指定してください");
         if (req.PurchaseOrderInfoPermission is < 0 or > 1) throw DomainException.Validation("発注情報権限は 0 または 1 で指定してください");
         if (req.ProcessRecordPermission is < 0 or > 1) throw DomainException.Validation("工程実績(オーナー)権限は 0 または 1 で指定してください");
+        // 勤怠 (Iteration 30)。0=なし / 1=更新可能 / 2=参照のみ (非単調スケール)。
+        if (req.AttendancePermission is < 0 or > 2) throw DomainException.Validation("勤怠権限は 0〜2 で指定してください");
+        if (req.WeeklyDays < 0m || req.WeeklyDays > 7m) throw DomainException.Validation("週所定日数は 0〜7 で指定してください");
+        if (req.WeeklyHours < 0m || req.WeeklyHours > 168m) throw DomainException.Validation("週所定時間は 0〜168 で指定してください");
+    }
+
+    /// <summary>
+    /// 勤務体系 (attendance_rules) の存在確認。未存在の ID をそのまま保存すると
+    /// FK 違反が 500 になるため、422 で復帰導線付きに変換する。NULL (既定ルール) は素通し。
+    /// </summary>
+    private async Task EnsureAttendanceRuleExistsAsync(Guid? attendanceRuleId, CancellationToken ct)
+    {
+        if (attendanceRuleId == null) return;
+
+        var exists = await db.AttendanceRules
+            .AnyAsync(r => r.Id == attendanceRuleId.Value && r.DeletedAt == null, ct);
+        if (!exists)
+            throw DomainException.Validation("指定された勤務体系が見つかりません",
+                "勤怠設定の勤務体系一覧から選び直してください");
     }
 
     public async Task<UserListItem> CreateAsync(UserWriteRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         ValidatePermissions(req);
+        await EnsureAttendanceRuleExistsAsync(req.AttendanceRuleId, ct);
         var now = SystemTime.UtcNow;
         var entity = new User
         {
@@ -71,6 +95,13 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
             PurchaseOrderCreatePermission = req.PurchaseOrderCreatePermission,
             PurchaseOrderInfoPermission = req.PurchaseOrderInfoPermission,
             ProcessRecordPermission = req.ProcessRecordPermission,
+            // 勤怠 (Iteration 30)
+            AttendancePermission = req.AttendancePermission,
+            PunchRequired = req.PunchRequired,
+            AttendanceRuleId = req.AttendanceRuleId,
+            HireDate = req.HireDate,
+            WeeklyDays = req.WeeklyDays,
+            WeeklyHours = req.WeeklyHours,
             IsActive = req.IsActive,
             CreatedAt = now,
             CreatedByUserId = actorUserId,
@@ -93,6 +124,7 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
     public async Task<UserListItem?> UpdateAsync(Guid id, UserWriteRequest req, Guid actorUserId, CancellationToken ct = default)
     {
         ValidatePermissions(req);
+        await EnsureAttendanceRuleExistsAsync(req.AttendanceRuleId, ct);
         var entity = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (entity is null) return null;
 
@@ -118,6 +150,13 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
         entity.PurchaseOrderCreatePermission = req.PurchaseOrderCreatePermission;
         entity.PurchaseOrderInfoPermission = req.PurchaseOrderInfoPermission;
         entity.ProcessRecordPermission = req.ProcessRecordPermission;
+        // 勤怠 (Iteration 30)
+        entity.AttendancePermission = req.AttendancePermission;
+        entity.PunchRequired = req.PunchRequired;
+        entity.AttendanceRuleId = req.AttendanceRuleId;
+        entity.HireDate = req.HireDate;
+        entity.WeeklyDays = req.WeeklyDays;
+        entity.WeeklyHours = req.WeeklyHours;
         entity.IsActive = req.IsActive;
         entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;

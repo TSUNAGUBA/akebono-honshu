@@ -1,4 +1,5 @@
 using Akebono.Application.Common;
+using Akebono.Domain.Attendance;
 using Akebono.Domain.Common;
 using Akebono.Domain.Entities;
 using Akebono.Domain.Orders;
@@ -72,6 +73,15 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
     public DbSet<MaterialOrder> MaterialOrders => Set<MaterialOrder>();
     public DbSet<MaterialOrderLine> MaterialOrderLines => Set<MaterialOrderLine>();
 
+    // 勤怠・休暇 (Iteration 30、db/init/10-attendance.sql)
+    public DbSet<AttendanceRule> AttendanceRules => Set<AttendanceRule>();
+    // 記録系・追記のみ (UPDATE/DELETE しない。updated_at 列を持たない)
+    public DbSet<PunchRecord> PunchRecords => Set<PunchRecord>();
+    public DbSet<AttendanceFixRequest> AttendanceFixRequests => Set<AttendanceFixRequest>();
+    public DbSet<LeaveType> LeaveTypes => Set<LeaveType>();
+    public DbSet<LeaveGrant> LeaveGrants => Set<LeaveGrant>();
+    public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // tenant — テナントレジストリ投影 (SoT = akebono-backoffice。アプリからは読取専用)
@@ -112,6 +122,14 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             b.Property(x => x.UpdatedByUserId).HasColumnName("updated_by_user_id");
             b.Property(x => x.LegacyId).HasColumnName("legacy_id").HasMaxLength(64);
+            // 勤怠 (Iteration 30)。attendance_rule_id はナビ無しの scalar のため
+            // shadow FK 列・cascade は発生しない (DB 側 FK は 10-attendance.sql で定義)。
+            b.Property(x => x.AttendancePermission).HasColumnName("attendance_permission");
+            b.Property(x => x.PunchRequired).HasColumnName("punch_required");
+            b.Property(x => x.AttendanceRuleId).HasColumnName("attendance_rule_id");
+            b.Property(x => x.HireDate).HasColumnName("hire_date");
+            b.Property(x => x.WeeklyDays).HasColumnName("weekly_days").HasColumnType("numeric(3,1)");
+            b.Property(x => x.WeeklyHours).HasColumnName("weekly_hours").HasColumnType("numeric(4,1)");
             // employee_no / login_id はテナント内一意 (firebase_uid / email はグローバル一意のまま)
             b.HasIndex(x => new { x.TenantId, x.EmployeeNo }).IsUnique();
             b.HasIndex(x => new { x.TenantId, x.LoginId }).IsUnique();
@@ -716,6 +734,129 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.HasOne(x => x.Material).WithMany().HasForeignKey(x => x.MaterialId);
             b.HasOne(x => x.ProductFamily).WithMany().HasForeignKey(x => x.ProductFamilyId);
             b.HasIndex(x => new { x.TenantId, x.MaterialOrderId, x.LineNo }).IsUnique();
+        });
+
+        // 勤怠・休暇 (Iteration 30、db/init/10-attendance.sql)
+        // enum は HasConversion<short>() で SMALLINT 列へ (既存 OrderStatus と同方式)。
+        // user_id / leave_type_id 等はナビ無しの scalar のため shadow FK 列は発生しない
+        // (DB 側 FK は SQL で定義。EF は tenant_id とクエリフィルタのみ自動配線)。
+        modelBuilder.Entity<AttendanceRule>(b =>
+        {
+            b.ToTable("attendance_rules", t =>
+            {
+                t.HasCheckConstraint("chk_ar_break_minutes", "break_minutes BETWEEN 0 AND 240");
+                t.HasCheckConstraint("chk_ar_closing_day", "closing_day BETWEEN 1 AND 31");
+                t.HasCheckConstraint("chk_ar_legal_holiday_weekday", "legal_holiday_weekday BETWEEN 0 AND 6");
+                t.HasCheckConstraint("chk_ar_flex_settlement_months", "flex_settlement_months BETWEEN 1 AND 3");
+            });
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.Name).HasColumnName("name").IsRequired().HasMaxLength(128);
+            b.Property(x => x.WorkStart).HasColumnName("work_start").IsRequired().HasMaxLength(5);
+            b.Property(x => x.WorkEnd).HasColumnName("work_end").IsRequired().HasMaxLength(5);
+            b.Property(x => x.BreakMinutes).HasColumnName("break_minutes");
+            b.Property(x => x.FlexEnabled).HasColumnName("flex_enabled");
+            b.Property(x => x.FlexCoreStart).HasColumnName("flex_core_start").HasMaxLength(5);
+            b.Property(x => x.FlexCoreEnd).HasColumnName("flex_core_end").HasMaxLength(5);
+            b.Property(x => x.FlexSettlementMonths).HasColumnName("flex_settlement_months");
+            b.Property(x => x.ClosingDay).HasColumnName("closing_day");
+            b.Property(x => x.LegalHolidayWeekday).HasColumnName("legal_holiday_weekday");
+            b.Property(x => x.IsDefault).HasColumnName("is_default");
+            b.Property(x => x.IsActive).HasColumnName("is_active");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        });
+
+        // 記録系・追記のみ (UPDATE/DELETE しない)。updated_at 列は持たない。
+        modelBuilder.Entity<PunchRecord>(b =>
+        {
+            b.ToTable("punch_records");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.UserId).HasColumnName("user_id");
+            b.Property(x => x.Date).HasColumnName("date");
+            b.Property(x => x.Kind).HasColumnName("kind").HasConversion<short>();
+            b.Property(x => x.At).HasColumnName("at");
+            b.Property(x => x.Source).HasColumnName("source").HasConversion<short>();
+            b.Property(x => x.FixedFrom).HasColumnName("fixed_from");
+            b.Property(x => x.FixReason).HasColumnName("fix_reason").HasMaxLength(512);
+            b.Property(x => x.ApprovedByUserId).HasColumnName("approved_by_user_id");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.HasIndex(x => new { x.TenantId, x.UserId, x.Date });
+            b.HasIndex(x => new { x.TenantId, x.Date });
+        });
+
+        modelBuilder.Entity<AttendanceFixRequest>(b =>
+        {
+            b.ToTable("attendance_fix_requests");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.UserId).HasColumnName("user_id");
+            b.Property(x => x.Date).HasColumnName("date");
+            b.Property(x => x.Kind).HasColumnName("kind").HasConversion<short>();
+            b.Property(x => x.RequestedAt).HasColumnName("requested_at");
+            b.Property(x => x.Reason).HasColumnName("reason").IsRequired().HasMaxLength(512);
+            b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
+            b.Property(x => x.DecidedByUserId).HasColumnName("decided_by_user_id");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.HasIndex(x => new { x.TenantId, x.Status });
+            b.HasIndex(x => new { x.TenantId, x.UserId, x.Date });
+        });
+
+        modelBuilder.Entity<LeaveType>(b =>
+        {
+            b.ToTable("leave_types", t =>
+                t.HasCheckConstraint("chk_lt_expiry_months", "expiry_months IS NULL OR expiry_months BETWEEN 1 AND 120"));
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.Name).HasColumnName("name").IsRequired().HasMaxLength(64);
+            b.Property(x => x.GrantMethod).HasColumnName("grant_method").HasConversion<short>();
+            b.Property(x => x.ExpiryMonths).HasColumnName("expiry_months");
+            b.Property(x => x.IsStatutory).HasColumnName("is_statutory");
+            b.Property(x => x.Description).HasColumnName("description").IsRequired().HasMaxLength(255);
+            b.Property(x => x.DisplayOrder).HasColumnName("display_order");
+            b.Property(x => x.IsActive).HasColumnName("is_active");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        });
+
+        modelBuilder.Entity<LeaveGrant>(b =>
+        {
+            // 周期自動付与の二重実行防止 (冪等・CLAUDE.md 原則2)。DB 側 UNIQUE が最終防壁。
+            b.ToTable("leave_grants", t => t.HasCheckConstraint("chk_lg_days", "days > 0"));
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.UserId).HasColumnName("user_id");
+            b.Property(x => x.LeaveTypeId).HasColumnName("leave_type_id");
+            b.Property(x => x.GrantDate).HasColumnName("grant_date");
+            b.Property(x => x.Days).HasColumnName("days").HasColumnType("numeric(4,1)");
+            b.Property(x => x.Kind).HasColumnName("kind").HasConversion<short>();
+            b.Property(x => x.ExpireDate).HasColumnName("expire_date");
+            b.Property(x => x.GrantedByUserId).HasColumnName("granted_by_user_id");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.HasIndex(x => new { x.TenantId, x.UserId, x.LeaveTypeId, x.GrantDate }).IsUnique();
+        });
+
+        modelBuilder.Entity<LeaveRequest>(b =>
+        {
+            b.ToTable("leave_requests");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.UserId).HasColumnName("user_id");
+            b.Property(x => x.LeaveTypeId).HasColumnName("leave_type_id");
+            b.Property(x => x.Date).HasColumnName("date");
+            b.Property(x => x.Unit).HasColumnName("unit").HasConversion<short>();
+            b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
+            b.Property(x => x.Reason).HasColumnName("reason").IsRequired().HasMaxLength(255);
+            b.Property(x => x.DecidedByUserId).HasColumnName("decided_by_user_id");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.HasIndex(x => new { x.TenantId, x.UserId, x.Date });
+            b.HasIndex(x => new { x.TenantId, x.Status });
         });
 
         // ─────────────────────────────────────────────

@@ -17,7 +17,11 @@ public record SyncResponse(
     short PurchaseOrderInfoPermission,
     short ProcessRecordPermission,
     Guid TenantId,
-    string TenantCode);
+    string TenantCode,
+    // 勤怠 (Iteration 30)。末尾追加 + 既定値付きで下位互換 (旧フロントは無視するだけ)。
+    // フロントの派生: canPunch = attendancePermission === 1 && punchRequired
+    short AttendancePermission = 1,
+    bool PunchRequired = true);
 
 public record MeResponse(
     Guid UserId,
@@ -29,4 +33,7 @@ public record MeResponse(
     short PurchaseOrderInfoPermission,
     short ProcessRecordPermission,
     Guid TenantId,
-    string TenantCode);
+    string TenantCode,
+    // 勤怠 (Iteration 30)。SyncResponse と同じフィールドを返す (画面リロード後も権限が復元される)。
+    short AttendancePermission = 1,
+    bool PunchRequired = true);

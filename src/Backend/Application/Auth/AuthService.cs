@@ -55,7 +55,9 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit, ILogger<AuthS
             user.PurchaseOrderInfoPermission,
             user.ProcessRecordPermission,
             user.TenantId,
-            tenantCode);
+            tenantCode,
+            user.AttendancePermission,
+            user.PunchRequired);
     }
 
     public async Task<MeResponse?> GetMeAsync(Guid userId, CancellationToken ct = default)
@@ -77,6 +79,8 @@ public class AuthService(IAkebonoDbContext db, IAuditLogger audit, ILogger<AuthS
             user.PurchaseOrderInfoPermission,
             user.ProcessRecordPermission,
             user.TenantId,
-            tenantCode);
+            tenantCode,
+            user.AttendancePermission,
+            user.PunchRequired);
     }
 }

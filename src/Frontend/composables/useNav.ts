@@ -29,10 +29,16 @@ export const useNav = () => {
    * リンクのアクセス可否。requires 省略時は認証済みの全ユーザ可。
    * 'owner' は工程実績管理権限（processRecordPermission === 1）を要求する
    * （旧 AppNav の「データ移行」表示条件を踏襲）。
+   * 'attendance' は勤怠権限（1=更新可能 / 2=参照のみ）を要求する。0=なし には勤怠カテゴリを出さない
+   * （勤怠移植仕様 §6.2）。権限スケールは非単調のため >= では判定しない。
    */
   const canAccess = (requires?: NavGuard): boolean => {
     if (!requires) return true
     if (requires === 'owner') return (user.value?.processRecordPermission ?? 0) === 1
+    if (requires === 'attendance') {
+      const p = user.value?.attendancePermission ?? 0
+      return p === 1 || p === 2
+    }
     return true
   }
 

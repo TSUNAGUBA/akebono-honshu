@@ -410,6 +410,9 @@ app.MapMasterEndpoints();
 app.MapProductEndpoints();
 app.MapOrderEndpoints();
 app.MapProductionEndpoints();
+// 勤怠・休暇 (Iteration 30)
+app.MapAttendanceEndpoints();
+app.MapAttendanceLeaveEndpoints();
 app.MapLegacyImportEndpoints();
 
 app.Run();

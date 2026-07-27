@@ -1,3 +1,4 @@
+using Akebono.Application.Attendance;
 using Akebono.Application.Auth;
 using Akebono.Application.Common;
 using Akebono.Application.Masters;
@@ -94,6 +95,13 @@ public static class DependencyInjection
         services.AddScoped<ProductionStatusQuery>();
         services.AddScoped<IProductionInstructionExcelService, ProductionInstructionExcelService>();
         services.AddScoped<IMaterialOrderExcelService, MaterialOrderExcelService>();
+
+        // 勤怠・休暇 (Iteration 30)
+        // AttendanceService は打刻の直列化で BeginTransaction / ExecuteSqlRawAsync を使うため
+        // IAkebonoDbContext.Database ファサード経由でトランザクションを制御する。
+        services.AddScoped<AttendanceService>();
+        services.AddScoped<AttendanceRuleService>();
+        services.AddScoped<LeaveService>();
 
         // MIG-3 既存 CSV 取込 (Iteration 4 Hardening)
         services.AddScoped<LegacyImportService>();
