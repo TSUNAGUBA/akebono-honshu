@@ -7,6 +7,17 @@
 > **方針:** REST + JSON。1 API = 1 責務（癒着回避）、クライアントに集約・加工責務を押し付けない。
 >          Phase 5 ゲート条件「API 設計に癒着がない」「全データフローが I/F レベルで検証済み」を充足する。
 
+> **【運用ルール】バックエンドの API を変更したら、同一コミットで本ドキュメントを更新すること（CLAUDE.md 開発原則 5）。**
+>
+> 実装だけ先に直してドキュメントを後回しにすると、本ドキュメントが**「修正済みのバグ」を仕様として記述し続ける**状態になり、
+> 次の改修者がその記述を根拠にバグを再導入する。
+> 実際に Iteration 30 では、ドキュメント整合コミット（`ce30be6`）の**後**にバックエンド修正コミット（`4c6981e`、`.md` の変更 0 件）が入り、
+> §2.7 のタイムカード期間上限がオフバイワンのバグを「実装の現状」として正規化したまま残った（2026-07-27 に訂正済み。§8 変更履歴）。
+>
+> API を変更する PR では、`src/Backend/Presentation/Endpoints/` および `src/Backend/Application/` の差分に対応する
+> 本ドキュメントの節を、**同じコミットで**更新する。バグ修正の場合、修正前の挙動を「実装の現状」として残さず、
+> 修正後の事実へ書き換える（Push 前セルフチェック 5「ドキュメント」/ 6「波及範囲」）。
+
 ---
 
 ## 1. 共通規約
@@ -192,6 +203,12 @@ https://<app-runner-domain>/api/v1/<resource>[/<id>[/<sub-resource>]]
 | `POST` | `/api/v1/users/{id}/deactivate` | 無効化（is_active=false + Firebase disabled=true） | `user:write` |
 | `POST` | `/api/v1/users/{id}/activate` | 再有効化 | `user:write` |
 | `DELETE` | `/api/v1/users/{id}` | 論理削除（is_deleted=true、Firebase 側も disabled）| `user:write` |
+
+> **本節は初版ドラフトのままで実装と乖離している（未整備）。** 実装のパスは `/api/maker/v1/users`、ID は UUID、
+> JSON は camelCase、認可は `user:read` / `user:write` スコープではなく**オーナー**（`process_record_permission >= 1`）。
+> **`PATCH /api/maker/v1/users/{id}` の現行契約（`UserPatchRequest` による部分更新 = `null` は現在値保持、
+> `clearHireDate` / `clearAttendanceRule` の明示クリアフラグ、`email` は空文字でクリア）は §2.7.9 に記載している。**
+> 本節の全面改訂は別途行うこと（実装 SoT: `src/Backend/Presentation/Endpoints/UserEndpoints.cs`）。
 
 #### POST /api/v1/users
 
@@ -1015,6 +1032,28 @@ S3 アップロード完了後、メタデータを DB に登録。
 - 時間量はすべて **int の「分」**。業務日付は `YYYY-MM-DD`（JST の日付）、時刻は **UTC の ISO 8601**
   （表示・深夜帯判定はフロント/ドメイン層で JST へ変換する。`data-design.md §14.0` 参照）。
 - ID はすべて `UUID`。
+- **業務日付の妥当範囲（すべての日付・年月クエリに適用）:** `date` / `from` / `to`（#3 / #6 / #7）・
+  `month`（#4）・`endMonth`（#5）・休暇申請の `date`（#22）は、書式が正しいだけでは足りず
+  **`2000-01-01` 〜 実行日の 1 年後**（`AttendanceCalc.MinBusinessDate` 〜 `today.AddYears(1)`、JST 基準）に
+  収まることを検証する。範囲外は 422 `AKB-SYS-002`。
+  書式は妥当でも業務上ありえない日付（`0001-01-01` 等）が .NET の英語例外としてそのまま露出したり、
+  非現実的な集計範囲に化けたりするのを防ぐための下限・上限である
+  （実装 SoT: `AttendanceService.ParseDate` / `ParseMonth`、`AttendanceCalc.IsBusinessDateInRange`）。
+- **一覧のキーセットページング（#8 打刻修正申請一覧 / #21 休暇申請一覧）:**
+  クエリは `?limit` / `?cursor`、レスポンスは `ApiEnvelope.OkPaged` の封筒で
+  **`meta.page = { nextCursor, limit, hasMore }`** を返す（`data` は従来どおり配列のまま = フロント契約は非破壊。
+  `nextCursor` は最終ページで `null`）。
+  - `limit` の許容範囲は **1〜200**（`PageRequest.MaxLimit = 200`）。範囲外、または `cursor` が復号できない場合は
+    **400 `AKB-SYS-011`**（`PageCursor.Read`）。`limit` が数値ですらない場合はバインド段階の 400 `AKB-SYS-001`。
+  - **本節の 2 本は `limit` 省略時の既定が `PageRequest.DefaultLimit`（50）ではなく上限値 200。**
+    実装は `PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor)`。フロント
+    （`useAttendance.loadFixRequests` / `leaveRequests`）がまだ `limit` / `cursor` を送らないため、
+    既定 50 では申請が黙って欠落するのを避ける措置。フロントがカーソル送信に対応したら既定を 50 に戻せる。
+  - `cursor` は「`createdAt`（UTC Ticks）`|` `id`」を base64url 化した**不透明トークン**。
+    クライアントは中身を解釈せず、`meta.page.nextCursor` をそのまま次要求へ渡す。
+  - ソートキーは `(createdAt, id)` の降順で固定（安定ソート。キーセットの整合性のため変更不可）。
+  - **§1.3.2 との差分（実装事実）:** 実装の封筒は `meta.pagination`（`page` / `per_page` / `total_count` /
+    `total_pages`）ではなく **`meta.page`**。キーセット方式のため**総件数・総ページ数は返さない**。
 
 **認可の考え方:**
 
@@ -1037,7 +1076,9 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 | 場面 | code | HTTP |
 |---|---|---|
-| 入力検証（`kind` 不正・`month` / `date` 形式・理由未入力・期間超過・日数不正 等）| `AKB-SYS-002`（`SysValidation`）| 422 |
+| 入力検証（`kind` 不正・`month` / `date` 形式・**日付/年月の妥当範囲外**・理由未入力・期間超過・**`requestedAt` の範囲外**・日数不正 等）| `AKB-SYS-002`（`SysValidation`）| 422 |
+| **ページング指定の不正（`limit` 範囲外・`cursor` 復号不能）／集計対象の利用者数が上限超過（#6 / #27）** | `AKB-SYS-011`（`SysPagingInvalid`）| **400** |
+| リクエストボディ / クエリの型不正（`limit` が数値でない 等、バインド段階の失敗）| `AKB-SYS-001`（`SysMalformedBody`）| 400 |
 | 打刻順序違反（状態機械）・処理済み申請への再操作・名称重複・同日重複申請 | `AKB-SYS-007`（`SysUniqueViolation`）| 409 |
 | 権限不足（勤怠権限・オーナー権限・他人の勤怠参照）・打刻対象外 | `AKB-AUTH-010`（`AuthInsufficientPermission`）| 403 |
 | 無効ユーザ / 業務ユーザ未紐付 | `AKB-AUTH-005`（`AuthAccountInactive`）| 403 |
@@ -1065,18 +1106,34 @@ S3 アップロード完了後、メタデータを DB に登録。
 |---|---|---|---|
 | 1 | body `{ "kind": "in" \| "out" \| "breakStart" \| "breakEnd" }`（大小文字非依存）。日付・時刻はサーバ採番（`date` = JST 当日 / `at` = UTC now）| **201** `PunchResultDto { id, state }`（`state` は**打刻後**の状態）。`Location: /api/maker/v1/attendance/state` | 422 `AKB-SYS-002`「打刻種別は in / out / breakStart / breakEnd のいずれかを指定してください」/ 403 `AKB-AUTH-010`「打刻対象の利用者ではありません」/ 409 `AKB-SYS-007`「現在の状態では「{出勤\|退勤\|休憩開始\|休憩終了}」はできません」/ 404 `AKB-TENANT-010` |
 | 2 | — | **200** `PunchStateDto { state, punches: PunchDto[] }`。`punches` は**生打刻列**（置換解決前、`at`→`createdAt` 昇順）| 403（勤怠権限なし）|
-| 3 | `?userId&date&raw`。`date` 既定 = **JST の今日**。`raw` は `1` / `true` / `yes` で真 | **200** `DaySummaryDto`。`raw` 真のとき `rawPunches` を同梱（偽のときは `null`。フィールド自体は省略されない）| 422「date は YYYY-MM-DD 形式で指定してください」/ 403（他人参照）/ 404 |
-| 4 | `?userId&month`。`month=YYYY-MM`、既定 = **JST の当月** | **200** `MonthSummaryDto { days[], total, workDays }` | 422「month は YYYY-MM 形式で指定してください」/ 403 / 404 |
-| 5 | `?userId&endMonth`。`endMonth=YYYY-MM`、既定 = 当月。`endMonth` を最終月とする直近 6 ヶ月を判定 | **200** `Article36AlertDto[]`（0 件なら空配列 = アラートなし）| 422「endMonth は YYYY-MM 形式で指定してください」/ 403 / 404 |
-| 6 | `?from&to&q`。既定 `from` = **当月 1 日**、`to` = **今日**（JST）。`q` = 表示名の部分一致 | **200** `TimecardRowDto[]`。**日付降順 → 氏名昇順**（`StringComparison.Ordinal` で決定的に）| 422「from / to は YYYY-MM-DD 形式で指定してください」/ 422「期間の開始日は終了日以前にしてください」/ 422「期間は最大 62 日までです」/ 403（非オーナー）|
+| 3 | `?userId&date&raw`。`date` 既定 = **JST の今日**。`raw` は `1` / `true` / `yes` で真 | **200** `DaySummaryDto`。`raw` 真のとき `rawPunches` を同梱（偽のときは `null`。フィールド自体は省略されない）| 422「date は YYYY-MM-DD 形式で指定してください」/ 422「date は 2000-01-01 〜 {実行日の 1 年後} の範囲で指定してください」/ 403（他人参照）/ 404 |
+| 4 | `?userId&month`。`month=YYYY-MM`、既定 = **JST の当月** | **200** `MonthSummaryDto { days[], total, workDays }` | 422「month は YYYY-MM 形式で指定してください」/ 422「month は 2000-01 〜 {実行日の 1 年後の年月} の範囲で指定してください」/ 403 / 404 |
+| 5 | `?userId&endMonth`。`endMonth=YYYY-MM`、既定 = 当月。`endMonth` を最終月とする直近 6 ヶ月を判定 | **200** `Article36AlertDto[]`（0 件なら空配列 = アラートなし）| 422「endMonth は YYYY-MM 形式で指定してください」/ 422「endMonth は 2000-01 〜 {実行日の 1 年後の年月} の範囲で指定してください」/ 403 / 404 |
+| 6 | `?from&to&q`。既定 `from` = **当月 1 日**、`to` = **今日**（JST）。`q` = 表示名の部分一致 | **200** `TimecardRowDto[]`。**日付降順 → 氏名昇順**（`StringComparison.Ordinal` で決定的に）| 422「from / to は YYYY-MM-DD 形式で指定してください」/ 422「from / to は 2000-01-01 〜 {実行日の 1 年後} の範囲で指定してください」/ 422「期間の開始日は終了日以前にしてください」/ 422「期間は最大 62 日までです」（**両端を含めて 62 日超**）/ **400 `AKB-SYS-011`「対象の利用者が多すぎます（一度に集計できるのは 200 人までです）」**/ 403（非オーナー）|
 
 **計算上の重要事項:**
 - **`GET /day` も月次経由で算出する。** 月 60 時間超の残業バケット（`over60Ot`）は月内累計に依存するため、
   単日だけ計算すると常に 0 になる。実装は対象月を丸ごと集計してから該当日を射影する。
 - `GET /timecard` の期間上限は **バックエンド定数 `AttendanceService.TimecardRangeMaxDays = 62` が SoT**。
-  フロント（`composables/useAttendance.ts`）は同値の定数を本定数への参照コメント付きで持つ。
-  判定式は `from + 62 日 < to` を超過とするため、**`to == from + 62 日`（両端を含めて 63 日）までは受け付ける**
-  （メッセージ文言「最大 62 日」との 1 日のずれは実装の現状。フロントは 62 日でクランプする）。
+  判定式は **`toDate.DayNumber - fromDate.DayNumber + 1 > TimecardRangeMaxDays`**、すなわち
+  **両端を含めて 62 日までを受け付け、63 日は 422「期間は最大 62 日までです」で拒否する**。
+  例: `from=2026-01-01` に対し `to=2026-03-03` は 62 日ちょうどで可、`to=2026-03-04` は 63 日で不可。
+  メッセージ文言「最大 62 日」と実効値が一致する。
+  フロントも同じ「両端含み」の数え方に統一済みで、**3 箇所**が本定数への参照コメント付きの同値定数
+  `TIMECARD_RANGE_MAX_DAYS = 62` を共有する
+  （`composables/useAttendance.ts`: 定数定義と `Math.min(diffBizDays + 1, TIMECARD_RANGE_MAX_DAYS)` /
+  `pages/attendance/index.vue`: `diffBizDays(from, to) + 1 > TIMECARD_RANGE_MAX_DAYS` で
+  `addBizDays(to, -(TIMECARD_RANGE_MAX_DAYS - 1))` へクランプ / `pages/attendance/timecard.vue`: 同じクランプ）。
+  クランプ幅が `-(62 - 1)` なのは両端含みで数えるため。ここがずれるとサーバ 422 と食い違う。
+  > **訂正（2026-07-27）:** 本項は当初「判定式は `from + 62 日 < to` のため両端を含めて 63 日まで受け付ける
+  > （メッセージとの 1 日のずれは実装の現状）」と記載していたが、これは**オフバイワンのバグを仕様として
+  > 正規化した誤記**だった（API を直叩きすれば宣言上限を 1 日超えられた）。バックエンド修正コミット `4c6981e` で
+  > 両端含みの数え方へ統一済みのため、実装の事実に合わせて書き換えた。**63 日は受け付けない。**
+- **`GET /timecard` の対象利用者数の上限は `AttendanceService.TimecardMaxUsers = 200` 人**（`q` で絞り込んだ後の件数で判定）。
+  利用者数 × 期間（最大 62 日）分の打刻をすべてメモリへ載せて集計するため、非有界のままでは在籍者の増加に比例して
+  必ずタイムアウトする。超過は **400 `AKB-SYS-011`**「対象の利用者が多すぎます（一度に集計できるのは 200 人までです）」、
+  `userAction`「氏名で絞り込むか、期間を短くして再検索してください」。
+  判定は**上限 +1 件だけ取得して超過を検知する**（既存のページング規約と同じ考え方）。
 - `TimecardRowDto` の `inAt` = 有効打刻の**最初の In**、`outAt` = **最後の Out**。
   有効打刻が 0 件の日は行を出さない。対象は `is_active` かつ未削除の利用者のみ。
 
@@ -1090,8 +1147,8 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 | # | リクエスト | レスポンス | 主なエラー |
 |---|---|---|---|
-| 7 | body `FixRequestCreateRequest { date, kind, requestedAt, reason }`。`date` は必須（既定なし）。`requestedAt` は**タイムゾーン付き**文字列（例 `2026-07-27T09:00:00+09:00`）でフロントが送り、サーバが UTC 化して保存 | **201** `IdResultDto { id }`。`Location: .../fix-requests/{id}` | 422「date を指定してください」/「date は YYYY-MM-DD 形式で指定してください」/「打刻種別は …」/「修正後の時刻は YYYY-MM-DDTHH:mm:ss+09:00 形式（タイムゾーン付き）で指定してください」/「修正理由を入力してください（客観的記録の担保）」/「修正理由は 512 文字以内で入力してください」|
-| 8 | `?status&scope`。`status` = `pending` / `approved` / `rejected`（省略 = 絞り込みなし）。`scope=all` で全員分 | **200** `FixRequestDto[]`。**`createdAt` 降順 → `id` 降順**。申請者・処理者の氏名は削除済ユーザでも解決して返す（監査表示のため）| 422「status は pending / approved / rejected のいずれかを指定してください」/ 403（`scope=all` を非オーナーが指定）|
+| 7 | body `FixRequestCreateRequest { date, kind, requestedAt, reason }`。`date` は必須（既定なし）。`requestedAt` は**タイムゾーン付き**文字列（例 `2026-07-27T09:00:00+09:00`）でフロントが送り、サーバが UTC 化して保存 | **201** `IdResultDto { id }`。`Location: .../fix-requests/{id}` | 422「date を指定してください」/「date は YYYY-MM-DD 形式で指定してください」/「date は 2000-01-01 〜 {実行日の 1 年後} の範囲で指定してください」/「打刻種別は …」/「修正後の時刻は YYYY-MM-DDTHH:mm:ss+09:00 形式（タイムゾーン付き）で指定してください」/ **「修正後の時刻は対象日または翌日（夜勤の日跨ぎ）の範囲で指定してください」**/「修正理由を入力してください（客観的記録の担保）」/「修正理由は 512 文字以内で入力してください」|
+| 8 | `?status&scope&limit&cursor`。`status` = `pending` / `approved` / `rejected`（省略 = 絞り込みなし）。`scope=all` で全員分。**`limit` = 1〜200（省略時 200 = `PageRequest.MaxLimit`）**、**`cursor`** = 前ページの `meta.page.nextCursor`（不透明トークン）| **200** `FixRequestDto[]`。**`createdAt` 降順 → `id` 降順**。申請者・処理者の氏名は削除済ユーザでも解決して返す（監査表示のため）。**`meta.page = { nextCursor, limit, hasMore }`**（`ApiEnvelope.OkPaged`。`data` は配列のままで非破壊、続きの有無は `hasMore`）| 422「status は pending / approved / rejected のいずれかを指定してください」/ **400 `AKB-SYS-011`「limit は 1〜200 の整数で指定してください」/「cursor が不正です」**/ 403（`scope=all` を非オーナーが指定）|
 | 9 | body `FixDecisionRequest { action: "approved" \| "rejected" }` | **200** `IdResultDto { id }` | 422「action は approved / rejected を指定してください」/ 404 `AKB-TENANT-010` / 409 `AKB-SYS-007`「この申請は処理済みです」|
 
 > **承認処理（トランザクション、記録系保護）:**
@@ -1101,6 +1158,18 @@ S3 アップロード完了後、メタデータを DB に登録。
 > 申請の `status` / `decidedByUserId` を更新 → Commit。
 > **元打刻は削除も更新もしない**（`data-design.md §14.2`）。409 判定を必ずトランザクション内で行うことで二重承認を防ぐ。
 > 却下時は打刻を追記しない。
+
+> **`requestedAt` の範囲検証（記録系保護）:**
+> `requestedAt` を JST 換算した日付が **対象日（`date`）または翌日**に収まることを検証する
+> （夜勤の日跨ぎを許容するため翌日まで。範囲外は 422 `AKB-SYS-002`
+> 「修正後の時刻は対象日または翌日（夜勤の日跨ぎ）の範囲で指定してください」、
+> `userAction`「対象日を選び直すか、時刻を対象日の範囲内へ修正して再送信してください」）。
+> 対象日から極端に離れた時刻を承認すると `punch_records`（UPDATE / DELETE を剥奪済み = **削除で復旧できない**）に
+> 異常値が残り、以後その日の集計が破綻する。書式検証（タイムゾーン必須）だけでは防げないため必須。
+
+> **一覧のページング（#8）:** `status` 未指定の `scope=all` は運用年数に比例して全履歴を返すため、非有界のままでは
+> 必ずタイムアウトする。既存のキーセットページング規約（§2.7.0、`PurchaseOrderService.ListAsync` と同形）へ移行した。
+> `data` は配列のままなので既存フロントは無改修で動作し、続きの有無は `meta.page.hasMore` で判定する。
 
 #### 2.7.3 勤怠ルール（勤務体系マスタ、#10〜#14）
 
@@ -1171,13 +1240,13 @@ S3 アップロード完了後、メタデータを DB に登録。
 | 18 | — | **204 No Content**（付与・申請の実績は残す）| 409「法定有給の種別は削除できません」/ 404 |
 | 19 | — | **204 No Content** | 409 名称重複（同名の未削除種別が存在する場合）/ 404 |
 | 20 | `?userId`（省略 = 自分）| **200** `LeaveSummaryDto` | 403「他の利用者の勤怠を参照する権限がありません」|
-| 21 | `?scope&status`。`scope=all` で全員分、`status` = `pending` / `approved` / `rejected` | **200** `LeaveRequestDto[]`（`createdAt` 降順）| 422「状態は pending / approved / rejected のいずれかを指定してください」/ 403 |
-| 22 | body `LeaveRequestWriteRequest { leaveTypeId, date, unit="full", reason? }`（`userId` は受け取らない）| **201** `LeaveIdDto { id }` | 422「休暇種別が存在しません」/「理由は 255 文字以内で入力してください」/ 409「同じ日付の休暇申請が既にあります」|
+| 21 | `?scope&status&limit&cursor`。`scope=all` で全員分、`status` = `pending` / `approved` / `rejected`。**`limit` = 1〜200（省略時 200 = `PageRequest.MaxLimit`）**、**`cursor`** = 前ページの `meta.page.nextCursor`（不透明トークン）| **200** `LeaveRequestDto[]`（**`createdAt` 降順 → `id` 降順**。同一 `createdAt` の順序を確定させるタイブレーカー。#8 と同形）。**`meta.page = { nextCursor, limit, hasMore }`**（`ApiEnvelope.OkPaged`。`data` は配列のままで非破壊）| 422「状態は pending / approved / rejected のいずれかを指定してください」/ **400 `AKB-SYS-011`「limit は 1〜200 の整数で指定してください」/「cursor が不正です」**/ 403 |
+| 22 | body `LeaveRequestWriteRequest { leaveTypeId, date, unit="full", reason? }`（`userId` は受け取らない）| **201** `LeaveIdDto { id }` | 422「休暇種別が存在しません」/ **「取得日は 2000-01-01 〜 {実行日の 1 年後} の範囲で指定してください」**/「理由は 255 文字以内で入力してください」/ 409「同じ日付の休暇申請が既にあります」|
 | 23 | body `LeaveDecisionRequest { action: "approved" \| "rejected" }` | **200** `LeaveIdDto { id }` | 422「操作は approved / rejected のいずれかを指定してください」/ 409「この申請は処理済みです」/ 404 |
 | 24 | body `LeaveGrantWriteRequest { userId, leaveTypeId, grantDate, days }` | **201** `LeaveGrantResultDto { id, skipped }`。**既存があれば既存レコードの `id` と `skipped=1`** を返す（201 のまま）| 422「付与日数は正の数で指定してください」/「休暇種別が存在しません」/「周期自動付与の種別は手動付与できません」/「利用者が存在しません」|
 | 25 | body `LeaveBulkGrantRequest { leaveTypeId, days, target:"all", grantDate? }`。`grantDate` 省略時は **JST の当日** | **200** `LeaveGrantBulkResultDto { granted, skipped }` | 422「一括付与の対象は all のみ指定できます」/ 上記 #24 と同じ検証 |
 | 26 | — | **200** `LeaveGrantBulkResultDto { granted, skipped }` | **業務エラーを投げない**（対象種別・対象者が無ければ `{0, 0}` を返す。原則4 グレースフルデグラデーション）|
-| 27 | — | **200** `LeaveAdminRowDto[]`（利用者の `employeeNo` 昇順 × 種別の `displayOrder` 昇順。付与も取得も 0 の組合せは行を出さない）| 403 |
+| 27 | — | **200** `LeaveAdminRowDto[]`（利用者の `employeeNo` 昇順 × 種別の `displayOrder` 昇順。付与も取得も 0 の組合せは行を出さない）| **400 `AKB-SYS-011`「対象の利用者が多すぎます（一度に集計できるのは 500 人までです）」**/ 403 |
 
 > **休暇の設計上の注意:**
 > - **法定有給（`isStatutory=true`）の種別は作成・編集・論理削除を禁止**（409 `AKB-SYS-007`）。
@@ -1191,6 +1260,12 @@ S3 アップロード完了後、メタデータを DB に登録。
 > - 残数は付与と Approved の申請から **FIFO 引当で毎回導出**する（`LeaveCalc`）。残数列は持たない。
 >   法定有給の残数には繰越上限 40 日を適用する。
 > - 同一日付の重複申請判定は `(userId, date)` のみで行う（種別は問わない）。**却下済みは再申請をブロックしない。**
+- **#27 休暇管理一覧の対象利用者数の上限は `LeaveService.AdminSummaryMaxUsers = 500` 人**（在籍中 = `is_active` かつ未削除）。
+  全在籍者の付与・取得の全履歴をメモリへ載せて集計するため、非有界のままでは在籍者数に比例して必ずタイムアウトする。
+  超過は **400 `AKB-SYS-011`**「対象の利用者が多すぎます（一度に集計できるのは 500 人までです）」、
+  `userAction`「利用者ごとの休暇サマリから個別に確認してください」で **#20 の個人別サマリへ誘導**する。
+  判定は上限 +1 件だけ取得して検知する（#6 タイムカードと同じ考え方。上限値が異なるのは 1 件あたりの集計コストの差）。
+- **#21 休暇申請一覧はキーセットページング必須**（§2.7.0）。#8 打刻修正申請一覧と同じ規約・同じソートキー。
 
 #### 2.7.5 主要 DTO
 
@@ -1265,6 +1340,54 @@ LeaveGrantResultDto { id, skipped }        LeaveGrantBulkResultDto { granted, sk
 - 本改修を行った環境では **.NET SDK を取得できず、バックエンドをローカルでコンパイル検証できていない**。
 - `docs/api/openapi.json` は**未再生成**。CI の `regen-openapi` ワークフロー（main 向け PR で自動再生成し、
   生成物を head ブランチへ自動コミットする）に委ねる。本節と OpenAPI の突合はその再生成後に行うこと。
+
+#### 2.7.9 利用者 API への影響（§2.2 の追補 — 勤怠列の追加に伴う変更）
+
+> **記載場所について:** §2.2「ユーザ管理（M-03）」は初版のドラフト（`/api/v1/users`、数値 ID、snake_case、
+> `user:read` / `user:write` スコープ）のままで実装（`/api/maker/v1/users`、UUID、camelCase、
+> オーナー権限）と乖離しており未整備のため、勤怠列の追加に伴う変更は**本節にまとめて記載する**。
+> §2.2 の全面改訂は別途行うこと。
+> **実装 SoT:** `src/Backend/Presentation/Endpoints/UserEndpoints.cs` /
+> `src/Backend/Application/Users/UserDtos.cs`（`UserWriteRequest` / `UserPatchRequest`）/ `UserQueryService.cs`。
+
+**`PATCH /api/maker/v1/users/{id:guid}` は `UserWriteRequest` ではなく `UserPatchRequest` を受け取る（部分更新）。**
+
+| 項目 | 内容 |
+|---|---|
+| 認可 | **オーナー**（`users.process_record_permission >= 1`、`AuthEndpoints.CheckUserAdminAsync`）|
+| リクエスト | `UserPatchRequest`（**全項目 nullable。`null` = 未指定 = 現在値を保持**）|
+| レスポンス | **200** `UserListItem` |
+| 主なエラー | 422 `AKB-SYS-002`（権限値の検証 /「自分自身のオーナー権限の解除・無効化はできません」/「最後の有効なオーナーの権限解除・無効化はできません」/ 勤務体系が存在しない）/ 404 |
+
+- **`POST /api/maker/v1/users`（作成）は従来どおり `UserWriteRequest`（既定値付き）で据え置き。**
+  更新用の record を分離したのは既存 I/F を変更しないため（原則7）。
+- **`null` = 未指定 = 現在値保持。** 送っていない項目は一切変更しない。
+  作成用 `UserWriteRequest` をそのまま更新に使うと、送っていない項目が record の既定値
+  （`AttendancePermission = 1` / `PunchRequired = true` / `AttendanceRuleId = null` / `HireDate = null` /
+  `WeeklyDays = 5` / `WeeklyHours = 40`）で上書きされ、**表示名を 1 文字直しただけで
+  入社日・週所定日数・週所定時間・勤務体系が初期化される**（`4c6981e` で修正した BLOCKER）。
+  入社日は有給の周期自動付与の起算日であり、消えると労基法 39 条の付与が黙って止まる。
+  週所定が既定へ戻ると比例付与のはずの短時間勤務者が通常付与と判定され、付与日数が法的に誤る。
+  （CLAUDE.md の Zod `.partial()` による既定値上書き障害と同じ轍。`LeaveTypePatchRequest` /
+  `AttendanceRulePatchRequest`（§2.7.3）と同じ手法。）
+
+**NULL 許容列の「未指定」と「クリア」の区別:**
+
+| フィールド | クリア方法 | 備考 |
+|---|---|---|
+| `hireDate`（入社日）| **`clearHireDate: true`** | クリアフラグは値の指定より**優先**（`clearHireDate=true` なら `hireDate` の値は無視して `null`）|
+| `attendanceRuleId`（勤務体系）| **`clearAttendanceRule: true`** | 同上。値を指定する場合は実在する勤怠ルールであることを検証（不在は 422）|
+| `email` | **空文字 `""` を送る** | `null` = 未指定（保持）／空文字・空白のみ = `null` へクリア。ブール型のクリアフラグは持たない |
+| `firebaseUid` | **本 I/F ではクリアできない** | `null` / 空文字はいずれも既存値を保持（連携解除は本 I/F では行わない、非破壊）|
+
+- クリアフラグ（`clearAttendanceRule` / `clearHireDate`）は `UserPatchRequest` の**末尾に追加**した
+  `bool`（既定 `false`）。送らなければ従来どおり現在値を保持するため、既存クライアントは無改修で動く（下位互換）。
+- 勤怠 4 列（`attendancePermission` / `punchRequired` / `attendanceRuleId` / `hireDate` /
+  `weeklyDays` / `weeklyHours`）は利用者フォームからも編集できる。勤務体系は `MasterSelect` で選択し、
+  選択肢の取得失敗は握りつぶす（原則4）。これが無いと周期自動付与が一度も動かず、
+  DB を直接操作するという手動手順が必要になっていた（原則1）。
+- ロックアウト防止の検証は**マージ後の値**に対して行う（自分自身のオーナー権限解除・無効化の禁止、
+  最後の有効オーナーの権限解除・無効化の禁止）。
 
 ---
 
@@ -1426,3 +1549,4 @@ paths:
 |---|---|
 | 2026-05-19 | 初版作成（21機能 × 全エンドポイント定義、A〜J 10 主要フロー検証完了）|
 | 2026-07-27 | Iteration 30: §2.7 勤怠（勤怠管理・タイムカード）を追加。実装済みエンドポイント 27 本（打刻・集計 6 / 打刻修正申請 3 / 勤怠ルール 5 / 休暇 13）、認可の考え方（勤怠権限 0/1/2 + オーナー集約 + 他人参照ガード）、`AKB-ATT-*` がアラート識別子でエラーコードではない旨、主要 DTO、監査ログ action、§2.1 への `attendancePermission` / `punchRequired` 追加を記載（akebono-office からの移植）|
+| 2026-07-27 | **バックエンド修正コミット `4c6981e`（監査・レビュー指摘の反映）の未反映分を §2.7 へ反映（原則5）。** ドキュメント整合コミット `ce30be6` が `4c6981e` より前にあったため未反映だった。**訂正:** §2.7.1 タイムカードの期間上限 — 「両端を含めて 63 日まで受け付ける（メッセージとの 1 日のずれは実装の現状）」はオフバイワンのバグを仕様として正規化した誤記。実装は `to - from + 1 > 62` で**両端を含めて 62 日まで**（63 日は 422）、フロント 3 箇所も同じ数え方に統一済み。**追記:** #8 / #21 一覧へのキーセットページング（`?limit`（1〜200、当該 2 本は省略時 200）/ `?cursor`、`meta.page = {nextCursor, limit, hasMore}`、不正は 400 `AKB-SYS-011`）/ #6 タイムカード 200 人・#27 休暇管理 500 人の利用者数上限（400 `AKB-SYS-011`）/ #7 `requestedAt` の対象日〜翌日の範囲検証（422）/ 日付・年月の業務日付範囲 `2000-01-01` 〜 実行日の 1 年後（422）/ §2.7.9 として `PATCH /api/maker/v1/users/{id}` の `UserPatchRequest` 化（`null` = 現在値保持、`clearHireDate` / `clearAttendanceRule`、`email` は空文字クリア）。あわせて冒頭に「API 変更は同一コミットでドキュメント更新」の運用ルールを明記 |
