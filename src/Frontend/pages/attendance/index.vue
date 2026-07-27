@@ -470,6 +470,19 @@ const legalHolidayWeekday = computed(() => {
   return def?.legalHolidayWeekday ?? 0
 })
 
+/**
+ * 勤怠ルールを**取得できなかった**か。`rulesError` は設定タブのエラー帯にしか出ないため、
+ * 同じ状態を月次・週次タブの注記としても使えるよう真偽で公開する
+ * (alertsUnavailable / membersUnavailable / leaveTypesUnavailable と同じ扱い・原則3/原則4)。
+ *
+ * 取得に失敗すると legalHolidayWeekday が日曜 (0) へ倒れるため、無告知だと既定ルールが土曜でも
+ * カレンダー・凡例・週次テーブルが日曜を法定休日として塗り、通信失敗を「日曜が法定休日」と断定表示する。
+ * **ルールが 1 件も無いときの日曜フォールバックはサーバ集計 (AttendanceCalc) と一致する正しい挙動**
+ * なので、告知するのは通信失敗のときだけ (rulesError) に限る。
+ * 状態は rulesError が SoT。二重管理を避けるため computed で導出する (原則3)。
+ */
+const rulesUnavailable = computed(() => rulesError.value !== '')
+
 const loadMonthly = async () => {
   if (!effectiveUserId.value) return
   monthlyLoading.value = true
@@ -1566,6 +1579,11 @@ const currentDefaultRuleName = computed(() =>
           <!-- 7 日分 (PC=テーブル / モバイル=カード) -->
           <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
             <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">日別の内訳（行をクリックで日次へ）</h2>
+            <!-- 曜日のグレー表示は法定休日の曜日に依存する。取得できていないと日曜へ倒れるため注記する
+                 （月次カレンダーの凡例と同じ扱い・原則4） -->
+            <p v-if="rulesUnavailable" class="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              勤務体系を取得できなかったため、法定休日を日曜として表示しています。実際の法定休日とは異なる場合があります。
+            </p>
 
             <div class="hidden overflow-x-auto md:block">
               <table class="w-full text-sm">
@@ -1686,6 +1704,11 @@ const currentDefaultRuleName = computed(() =>
               <span><span class="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-red-500 align-middle" />60h 超残業</span>
               <span><span class="mr-1 rounded bg-green-100 px-1 text-[10px] text-green-700">休暇</span>承認済みの休暇</span>
             </div>
+            <!-- 勤務体系を取得できていないと法定休日が日曜へ倒れる。無告知だとグレー塗り・凡例が
+                 「日曜が法定休日」と断定してしまうため注記する (原則4) -->
+            <p v-if="rulesUnavailable" class="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              勤務体系を取得できなかったため、法定休日を日曜として表示しています。実際の法定休日とは異なる場合があります。
+            </p>
             <p v-if="monthLeaveNotice" class="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {{ monthLeaveNotice }}
             </p>
@@ -2554,6 +2577,10 @@ const currentDefaultRuleName = computed(() =>
                 placeholder="種別を選択…"
                 @update:model-value="(v) => bulkForm.leaveTypeId = v ?? ''"
               />
+              <!-- 選択肢が空のとき「未登録」と「取得できなかった」を取り違えさせない (原則4) -->
+              <span v-if="leaveTypesUnavailable" class="text-xs text-amber-700">
+                休暇種別を取得できませんでした。時間をおいて開き直してください。
+              </span>
             </div>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">付与日 <span class="text-red-500">*</span></span>

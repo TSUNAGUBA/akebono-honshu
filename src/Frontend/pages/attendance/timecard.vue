@@ -316,6 +316,9 @@ onBeforeUnmount(() => {
               <span v-if="p.source === 'fix'" class="ml-1 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">修正反映</span>
             </li>
           </ul>
+          <!-- 初回取得が終わるまでは「打刻がありません」と断定しない（一覧側の listLoading と同じ扱い）。
+               状態バッジ（stateBadgeLabel）と同じく、読み込み中 → 取得失敗 → 確定値 の順で分岐する -->
+          <p v-else-if="stateLoading" class="mt-1 text-sm text-gray-500">読み込み中…</p>
           <!-- 取得に失敗しているときは「打刻がありません」と断定しない
                （エラー帯と矛盾する断定を出さない。勤怠は法定記録であり誤読のコストが高い・原則4） -->
           <p v-else-if="stateError" class="mt-1 text-sm text-amber-700">本日の打刻を取得できませんでした。</p>

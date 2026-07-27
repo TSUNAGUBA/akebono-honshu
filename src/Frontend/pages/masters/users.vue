@@ -46,6 +46,12 @@ const attendanceRuleOptions = ref<{ id: string; name: string }[]>([])
 const attendanceRulesUnavailable = ref(false)
 const loading = ref(true)
 const submitting = ref(false)
+/**
+ * 一覧取得のエラー。書込 (保存・削除) の errorMessage とは**別に持つ** (勤怠画面と同じく取得単位で分ける)。
+ * 1 本にまとめると、保存に失敗しただけで取得できている一覧本体まで消える (原則4)。
+ * 一覧本体・空状態の描画条件にも使い、取得失敗時に「利用者が登録されていません」と断定しない。
+ */
+const listError = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
 
@@ -95,11 +101,14 @@ const isEditing = computed(() => form.value.id != null)
 
 const reload = async () => {
   loading.value = true
-  errorMessage.value = ''
+  listError.value = ''
   try {
     users.value = await apiData<UserItem[]>('/users')
   } catch {
-    errorMessage.value = '利用者一覧の取得に失敗しました'
+    listError.value = '利用者一覧の取得に失敗しました'
+    // 失敗した取得の状態は捨てる (勤怠画面の各ローダと同じ扱い)。
+    // 一覧本体は listError で描画しないため、古い一覧が再取得成功時に前回分と混ざって見えないようにする。
+    users.value = []
   } finally {
     loading.value = false
   }
@@ -273,6 +282,7 @@ const remove = async (u: UserItem) => {
     <div v-if="!canManageUsers" class="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
       閲覧のみ (利用者管理はオーナー権限が必要です)。
     </div>
+    <div v-if="listError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ listError }}</div>
     <div v-if="errorMessage" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ errorMessage }}</div>
     <div v-if="successMessage" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{{ successMessage }}</div>
 
@@ -397,7 +407,9 @@ const remove = async (u: UserItem) => {
 
     <div v-if="loading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
-    <div v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+    <!-- 取得に失敗しているときは一覧本体も空状態も描画しない
+         (エラー帯と「利用者が登録されていません」という断定を同時に出さない。勤怠画面の各タブと同じ扱い・原則4) -->
+    <div v-else-if="!listError" class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
       <table class="w-full text-sm">
         <thead class="border-b border-gray-200 bg-gray-50 text-xs uppercase text-gray-600">
           <tr>
