@@ -1514,6 +1514,9 @@ LeaveGrantResultDto { id, skipped }        LeaveGrantBulkResultDto { granted, sk
   （`src/Frontend/pages/masters/users.vue` の `startEdit` / 一覧セルはいずれも
   `u.attendancePermission ?? 0` / `u.punchRequired ?? false` で揃えている。
   DB 既定値の初期表示は**新規作成フォーム（`emptyForm`）だけの責務**）。
+  なお同画面は**非オーナーも閲覧できる**ため、**一覧の「勤怠」「入社日」の 2 列は
+  非オーナーには描画しない**（`null` を「なし / 未設定」と描くと偽の断定になるため）。
+  fail-close 解釈が効くのは、オーナーが編集フォームを開いたときの経路である。
 - **なぜこの扱いにしたか。** 本一覧・単票は権限チェック無しで広く使われる経路であり、そのままでは
   **勤怠権限 0 の利用者でも全在籍者の入社日と週所定を列挙できた**。入社日と週所定は
   **有給の比例付与判定に直結する労務個人情報**で、勤怠 API 側は「**他人の勤怠の参照はオーナー限定**」を
