@@ -10,7 +10,7 @@
 
 ## 1. 既存設計の継承（前提）
 
-既存 `data-design.md` の以下を継承（再掲しない）: 命名規約（§1.2）、共通基底列（`id`/監査4列/`legacy_id`）、論理削除（トランザクション系 `is_deleted`、ただし**明細テーブルは親CASCADEで削除し `is_deleted` を持たない**＝既存 `purchase_order_lines` と同方針）、enum=SMALLINT、スナップショット凍結、SoT=RDS。
+既存 `data-design.md` の以下を継承（再掲しない）: 命名規約（§1.2）、共通基底列（`id`/監査4列/`legacy_id`）、論理削除（トランザクション系 `deleted_at`、ただし**明細テーブルは親CASCADEで削除し `deleted_at` を持たない**＝既存 `purchase_order_lines` と同方針）、enum=SMALLINT、スナップショット凍結、SoT=RDS。
 
 > **認可トークン（既存実在のもののみ使用、監査C-1反映）:** 本増分は新規トークンを発明しない。Custom Claims `permissions[]` の既存トークン `product:read/write`・`price:read/write`・`purchase_order:read/write` のみを使用（実装は段階Bでは RDS 直読 `product_ledger_permission`/`purchase_order_create_permission`、段階C で Custom Claims 二重化）。割当は §12。
 
@@ -20,13 +20,13 @@
 
 | # | テーブル | 役割 | 親 | 粒度 | 論理削除 |
 |---|---|---|---|---|---|
-| P-1 | `product_materials` | BOM（素材構成・所要量） | product_families | 品番 × 部位 × 素材 | `is_deleted` あり |
-| P-2 | `production_instructions` | 生産指示書ヘッダ | product_families | 1指示=1品番の生産1回 | `is_deleted` あり |
+| P-1 | `product_materials` | BOM（素材構成・所要量） | product_families | 品番 × 部位 × 素材 | `deleted_at` あり |
+| P-2 | `production_instructions` | 生産指示書ヘッダ | product_families | 1指示=1品番の生産1回 | `deleted_at` あり |
 | P-3 | `production_instruction_lines` | 生産指示明細（色×サイズ別数量） | production_instructions | SKU | なし（親CASCADE） |
-| P-4 | `material_orders` | 素材発注書ヘッダ | （production_instruction 任意） | 1発注=1素材仕入先 | `is_deleted` あり |
+| P-4 | `material_orders` | 素材発注書ヘッダ | （production_instruction 任意） | 1発注=1素材仕入先 | `deleted_at` あり |
 | P-5 | `material_order_lines` | 素材発注明細（所要量展開） | material_orders | 素材 | なし（親CASCADE） |
 
-> **明細テーブルの論理削除（コードレビュアー C-1 反映）:** `production_instruction_lines` / `material_order_lines` は既存 `purchase_order_lines` と同様 **`is_deleted` を持たず、親ヘッダの CASCADE で削除**。明細の差し替えはヘッダ編集トランザクション内で行単位 DELETE/INSERT。→ 未/済の派生クエリ（§7.2）は明細の `is_deleted` を参照しない（親 `is_deleted=FALSE` のみで判定）。
+> **明細テーブルの論理削除（コードレビュアー C-1 反映）:** `production_instruction_lines` / `material_order_lines` は既存 `purchase_order_lines` と同様 **`deleted_at` を持たず、親ヘッダの CASCADE で削除**。明細の差し替えはヘッダ編集トランザクション内で行単位 DELETE/INSERT。→ 未/済の派生クエリ（§7.2）は明細の `deleted_at` を参照しない（親 `deleted_at=FALSE` のみで判定）。
 > **既存テーブルへの変更:** `product_families` に**列追加なし**（未/済は派生算出、§7.2）。**既存26テーブルのスキーマ変更ゼロ**（下位互換完全維持）。
 
 ---
@@ -35,7 +35,7 @@
 
 ```
 [既存・無変更]                                [新規]
-product_families (品番企画)                product_materials (BOM)  ※is_deletedあり
+product_families (品番企画)                product_materials (BOM)  ※deleted_atあり
   - upper/insole/outsole_material_id ──┐     - material_role (0甲皮/1中底/2底/3付属/4副資材)
     （代表素材＝表示用、BOMとは疎結合） │     - material_id ──FK──► materials (既存)
     (BOM編集の初期シード元、書戻しなし) ─┘     - required_qty_per_unit / unit
@@ -43,24 +43,24 @@ product_families (品番企画)                product_materials (BOM)  ※is_de
        ▲                                      - loss_rate (任意,DEFAULT 0)
        │                          ┌──1:N── product_families
        │                          │
-       └─────────── production_instructions (生産指示書)  ※is_deletedあり
+       └─────────── production_instructions (生産指示書)  ※deleted_atあり
                       - instruction_no (UNIQUE) / product_family_id
                       - factory_supplier_id (加工先)
                       - planned_quantity / due_date / status / instructed_at
                       - first_exported_at / last_exported_at / factory_*_snapshot
                          │ 1:N (CASCADE)
                          ▼
-                    production_instruction_lines  ※is_deletedなし
+                    production_instruction_lines  ※deleted_atなし
                       - product_id (SKU) / sku_snapshot / product_name_snapshot / quantity
 
-production_instructions ─0..1:N─► material_orders (素材発注書、素材仕入先別)  ※is_deletedあり
+production_instructions ─0..1:N─► material_orders (素材発注書、素材仕入先別)  ※deleted_atあり
                                     - order_no (UNIQUE) / material_supplier_id
                                     - production_instruction_id (NULL可)
                                     - due_date / status / instructed_at
                                     - first_exported_at / last_exported_at / supplier_*_snapshot
                                        │ 1:N (CASCADE)
                                        ▼
-                                  material_order_lines  ※is_deletedなし
+                                  material_order_lines  ※deleted_atなし
                                     - material_id / material_name_snapshot
                                     - product_family_id (NULL可,由来品番) / source_pi_line_id
                                     - required_quantity / unit / unit_price(機密) / currency_code / subtotal
@@ -87,12 +87,12 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | `recommended_supplier_id` | `BIGINT NULL REFERENCES suppliers(id)` | 推奨素材仕入先（素材発注時の初期値、NULL可） |
 | `loss_rate` | `NUMERIC(5,4) NOT NULL DEFAULT 0` | **任意のロス率**（0=ロス考慮なし）。MVP推奨数量は `所要量×数量` を基本とし、loss_rate 設定時のみ `×(1+loss_rate)` を適用（§4.5・M-1反映） |
 | `remark` | `VARCHAR(255) NULL` | 備考 |
-| `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除（行単位の履歴保持・トレースのため明細と異なり保持） |
+| `deleted_at` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除（行単位の履歴保持・トレースのため明細と異なり保持） |
 | 共通監査4列 | | |
 
-**UNIQUE 制約:** `uq_pm_family_role_material UNIQUE (product_family_id, material_role, material_id) WHERE is_deleted = FALSE`（部分インデックス。同一品番・同一部位・同一素材の重複防止。同一部位に複数素材＝多層構造は material_id 差で許容）
+**UNIQUE 制約:** `uq_pm_family_role_material UNIQUE (product_family_id, material_role, material_id) WHERE deleted_at = FALSE`（部分インデックス。同一品番・同一部位・同一素材の重複防止。同一部位に複数素材＝多層構造は material_id 差で許容）
 
-**インデックス:** `idx_pm_family (product_family_id) WHERE is_deleted = FALSE`、`idx_pm_material (material_id)`、`idx_pm_supplier (recommended_supplier_id) WHERE recommended_supplier_id IS NOT NULL`
+**インデックス:** `idx_pm_family (product_family_id) WHERE deleted_at = FALSE`、`idx_pm_material (material_id)`、`idx_pm_supplier (recommended_supplier_id) WHERE recommended_supplier_id IS NOT NULL`
 
 **CHECK 制約:**
 - `chk_pm_role CHECK (material_role BETWEEN 0 AND 4)`
@@ -119,10 +119,10 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | `product_name_snapshot` | `VARCHAR(255) NULL` | 品番商品名スナップショット |
 | `communication_text` | `TEXT NULL` | 連絡文章 |
 | `first_exported_at` / `last_exported_at` | `TIMESTAMP NULL` | 初回/最終 Excel 出力日時 |
-| `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除 |
+| `deleted_at` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除 |
 | 共通監査4列 ＋ `legacy_id` | | |
 
-**インデックス:** `idx_pi_instruction_no (instruction_no)`、`idx_pi_family (product_family_id)`、`idx_pi_factory (factory_supplier_id)`、`idx_pi_status (status, due_date)`、`idx_pi_family_active (product_family_id) WHERE status IN (1,2) AND is_deleted = FALSE`（未/済=済 判定）、`idx_pi_dates (created_at DESC)`
+**インデックス:** `idx_pi_instruction_no (instruction_no)`、`idx_pi_family (product_family_id)`、`idx_pi_factory (factory_supplier_id)`、`idx_pi_status (status, due_date)`、`idx_pi_family_active (product_family_id) WHERE status IN (1,2) AND deleted_at = FALSE`（未/済=済 判定）、`idx_pi_dates (created_at DESC)`
 
 **CHECK 制約:**
 - `chk_pi_status CHECK (status IN (0,1,2,9))`
@@ -142,7 +142,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | `sku_snapshot` | `VARCHAR(11) NOT NULL` | 11桁品番スナップショット |
 | `product_name_snapshot` | `VARCHAR(255) NOT NULL` | 商品名スナップショット |
 | `quantity` | `INTEGER NOT NULL` | 当該SKU生産数量 |
-| 共通監査4列 | | （`is_deleted` なし＝親CASCADE） |
+| 共通監査4列 | | （`deleted_at` なし＝親CASCADE） |
 
 **UNIQUE:** `uq_pil_instruction_line (production_instruction_id, line_no)`、`uq_pil_instruction_product (production_instruction_id, product_id)`（同一指示内SKU重複禁止）
 **インデックス:** `idx_pil_instruction (production_instruction_id)`、`idx_pil_product (product_id)`
@@ -163,7 +163,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | `supplier_official_name_snapshot` / `supplier_code_snapshot` | `VARCHAR(255)/(3) NULL` | 仕入先凍結（帳票宛名、既存 purchase_orders と同方針） |
 | `communication_text` | `TEXT NULL` | 連絡文章 |
 | `first_exported_at` / `last_exported_at` | `TIMESTAMP NULL` | 初回/最終 Excel 出力 |
-| `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除 |
+| `deleted_at` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除 |
 | 共通監査4列 ＋ `legacy_id` | | |
 
 **インデックス:** `idx_mo_order_no (order_no)`、`idx_mo_supplier (material_supplier_id)`、`idx_mo_instruction (production_instruction_id) WHERE production_instruction_id IS NOT NULL`、`idx_mo_status (status, due_date)`、`idx_mo_dates (created_at DESC)`（未/済=済 判定は §7.2 の想定実行計画参照。`idx_mol_family` で mol を引き親 mo を PK lookup＋status フィルタ。`(id) WHERE status=1` の部分インデックスは PK 等価結合で選ばれず非効率なため**設けない**＝監査CR Major-2反映）
@@ -185,7 +185,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | `unit_price` | `NUMERIC(12,2) NULL` | 素材単価（**機密度 中-高**＝既存仕入単価と同等保護、§6・§12）。NULL=単価未確定 |
 | `currency_code` | `CHAR(3) NOT NULL DEFAULT 'JPY'` | ISO 4217 |
 | `subtotal` | `NUMERIC(16,2) GENERATED ALWAYS AS (required_quantity * COALESCE(unit_price, 0)) STORED` | 計算列（DB保証） |
-| 共通監査4列 | | （`is_deleted` なし＝親CASCADE） |
+| 共通監査4列 | | （`deleted_at` なし＝親CASCADE） |
 
 **UNIQUE:** `uq_mol_order_line (material_order_id, line_no)`
 **インデックス:** `idx_mol_order (material_order_id)`、`idx_mol_material (material_id)`、`idx_mol_family (product_family_id) WHERE product_family_id IS NOT NULL`（未/済算出）
@@ -243,16 +243,16 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 - 既存 `product_families.upper/insole/outsole_material_id`（NOT NULL）は**変更せず存置＝代表素材の表示用**（品番台帳ビュー・MIG-3移行データ・既存実装が依存）。
 - `product_materials` は**所要量を伴うBOMの独立SoT**。**両者は疎結合**: BOM編集は `product_materials` のみを更新し、**3FK列へ書き戻さない**（双方向同期を廃止＝同期失敗・寸断リスクを排除、監査M-3）。
 - **利便のため**、BOM未登録の品番でBOM編集を開くと、3部位（role 0/1/2）を 3FK列の素材で**初期シード**表示する（所要量は空欄、保存は product_materials のみ）。これは一方向の読み取りシードで、保存後の同期は行わない。
-- **更新方式（監査M-3）:** ~~BOM保存は**差分upsert**（既存行のIDを保持＝`source_pi_line_id` 等のトレース寸断を回避）。削除は `is_deleted=TRUE`。~~ **2026-07-27 訂正（第 13 イテレーション監査）:** 実装 `ProductMaterialService.ReplaceAsync` は**全置換**（既存行を全件 `deleted_at` で論理削除 → 新規 INSERT）で、**行 ID は保持されない**。削除フラグの列名も `is_deleted` ではなく **`deleted_at`**（W-A で統一済み）。M-3 の「ID 保持」是正は実装されていない。PUT 全体の**単一トランザクション**化のみ実在する。関連する既知の欠陥は `screen-design.md §3.16「スコープ外ドリフト OD-1」`。
+- **更新方式（監査M-3）:** ~~BOM保存は**差分upsert**（既存行のIDを保持＝`source_pi_line_id` 等のトレース寸断を回避）。削除は `deleted_at=TRUE`。~~ **2026-07-27 訂正（第 13 イテレーション監査）:** 実装 `ProductMaterialService.ReplaceAsync` は**全置換**（既存行を全件 `deleted_at` で論理削除 → 新規 INSERT）で、**行 ID は保持されない**。削除フラグの列名も `is_deleted` ではなく **`deleted_at`**（W-A で統一済み）。M-3 の「ID 保持」是正は実装されていない。PUT 全体の**単一トランザクション**化のみ実在する。関連する既知の欠陥は `screen-design.md §3.16「スコープ外ドリフト OD-1」`。
 - **既存データへの影響（監査C-3）:** 既存 `product_families` 行には移行時に `product_materials` を**自動生成しない**（暫定所要量の投入による誤発注を防止）。BOMは実ユーザが明示登録（UC-PROD-1）。BOM未登録品番は素材発注の所要量展開を**ブロック**（MORD-001、§9・API §2.1）。
 
 ### 7.2 未/済バッジの算出方式（denormalized列なし・コードレビュアーC-1反映）
 - 「品番ごと 素材発注 未/済 / 生産指示 未/済」は **派生算出**（`product_families` に状態列を追加しない＝同期バグ回避、原則2/6）。
 - 算出ロジック（一覧の各品番に対し SQL EXISTS、約2,000品番でインデックス有効）:
-  - 生産指示 **済** = `EXISTS(SELECT 1 FROM production_instructions pi WHERE pi.product_family_id = pf.id AND pi.status IN (1,2) AND pi.is_deleted = FALSE)` （`idx_pi_family_active` 利用）
-  - 素材発注 **済** = `EXISTS(SELECT 1 FROM material_order_lines mol JOIN material_orders mo ON mol.material_order_id = mo.id WHERE mol.product_family_id = pf.id AND mo.status = 1 AND mo.is_deleted = FALSE)` （`idx_mol_family` で mol を引き、親 mo を PK lookup＋`status=1`/`is_deleted=FALSE` フィルタ。下記想定実行計画参照）
-- **明細の `is_deleted` は参照しない**（明細は親CASCADEのみ、§2）。親 `mo.is_deleted=FALSE` ＋ `mo.status=1`（Ordered）で判定。
-- **想定実行計画（監査CR Major-2反映）:** 生産指示=済 は `idx_pi_family_active`（`product_family_id` WHERE status IN(1,2) AND not deleted）で family 起点に直接判定。素材発注=済 は `idx_mol_family` で当該 family の mol（通常少数）を引き、各 mol の親 mo を PK（`material_orders_pkey`）lookup して `status=1 AND is_deleted=FALSE` をフィルタ。EXISTS は最初の1件ヒットで打切り。
+  - 生産指示 **済** = `EXISTS(SELECT 1 FROM production_instructions pi WHERE pi.product_family_id = pf.id AND pi.status IN (1,2) AND pi.deleted_at = FALSE)` （`idx_pi_family_active` 利用）
+  - 素材発注 **済** = `EXISTS(SELECT 1 FROM material_order_lines mol JOIN material_orders mo ON mol.material_order_id = mo.id WHERE mol.product_family_id = pf.id AND mo.status = 1 AND mo.deleted_at = FALSE)` （`idx_mol_family` で mol を引き、親 mo を PK lookup＋`status=1`/`deleted_at=FALSE` フィルタ。下記想定実行計画参照）
+- **明細の `deleted_at` は参照しない**（明細は親CASCADEのみ、§2）。親 `mo.deleted_at=FALSE` ＋ `mo.status=1`（Ordered）で判定。
+- **想定実行計画（監査CR Major-2反映）:** 生産指示=済 は `idx_pi_family_active`（`product_family_id` WHERE status IN(1,2) AND not deleted）で family 起点に直接判定。素材発注=済 は `idx_mol_family` で当該 family の mol（通常少数）を引き、各 mol の親 mo を PK（`material_orders_pkey`）lookup して `status=1 AND deleted_at=FALSE` をフィルタ。EXISTS は最初の1件ヒットで打切り。
 - denormalized cache 列は持たない（SoT直読が単一真実源で安全）。2,000品番で 500ms 担保（実測再評価 D-prod-2）。大規模化時のみ cache を検討。
 
 ### 7.3 出力履歴の方式（コードレビュアーM-2反映）
@@ -318,7 +318,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | 1 | 技術スタック制約 | ✅ PostgreSQL(本番14.17互換)＋EF Core 8。`GENERATED STORED`/部分インデックス/`pg_advisory_xact_lock` は 12+ 対応 |
 | 2 | ユースケース | ✅ UC-PROD-1〜5 全カバー |
 | 3 | ユーザビリティ | ✅ 未/済の部分インデックスで一覧高速化、単価未設定注記 |
-| 4 | データ設計上の都合 | ✅ 正規化＋非正規化根拠明示、既存26テーブル無変更、明細 is_deleted 方針を既存と統一 |
+| 4 | データ設計上の都合 | ✅ 正規化＋非正規化根拠明示、既存26テーブル無変更、明細 deleted_at 方針を既存と統一 |
 | 5 | 型の継承関係 | ✅ Entity→DTO→API 写像、Enum=SMALLINT⇔文字列 |
 | 6 | データフロー整合性 | ✅ BOMは独立SoT（3FKと疎結合）、生産指示→素材発注の起点連鎖、未/済はSoT直読・採番は同時実行安全 |
 
@@ -350,7 +350,8 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 | 日付 | 内容 |
 |---|---|
 | 2026-06-22 | 初版（5テーブル） |
-| 2026-06-22 v2 | 独立レビュー1周目反映: 明細 is_deleted 非保持を明記し未/済クエリ修正（C-1）/ 認可を既存実在トークンに是正＋§12新設（監査C-1）/ 素材単価のprice権限AND・デフォルトマスク・MaterialPrice.Viewブロッキング監査（監査C-2/M-4）/ 移行はBOM自動生成せず誤発注防止（監査C-3）/ 採番をadvisory lock+リトライ・複数発注は独立Tx（監査C-4/M-1）/ BOM↔3FK疎結合化・差分upsert・単一Tx（監査M-3）/ ロス率を任意DEFAULT0でMVP基本式統一（M-1）/ 出力履歴はaudit_logs集約を明記（M-2）/ subtotal精度根拠（Mi-1）/ NULL単価subtotal=0意味論＋注記（Mi-2）/ CHECK括弧明示（Mi-3）/ ERDにlast_exported_at（Ni-1） |
+| 2026-06-22 v2 | 独立レビュー1周目反映: 明細 deleted_at 列非保持を明記し未/済クエリ修正（C-1）/ 認可を既存実在トークンに是正＋§12新設（監査C-1）/ 素材単価のprice権限AND・デフォルトマスク・MaterialPrice.Viewブロッキング監査（監査C-2/M-4）/ 移行はBOM自動生成せず誤発注防止（監査C-3）/ 採番をadvisory lock+リトライ・複数発注は独立Tx（監査C-4/M-1）/ BOM↔3FK疎結合化・差分upsert・単一Tx（監査M-3）/ ロス率を任意DEFAULT0でMVP基本式統一（M-1）/ 出力履歴はaudit_logs集約を明記（M-2）/ subtotal精度根拠（Mi-1）/ NULL単価subtotal=0意味論＋注記（Mi-2）/ CHECK括弧明示（Mi-3）/ ERDにlast_exported_at（Ni-1） |
 | 2026-06-22 v3 | 独立レビュー2周目反映: §12 権限値の非単調エンコード是正＝既存 CheckMasterEditAsync/CheckOrderEditAsync 再利用（SA Major-1）/ PS-01生産バッジ権限を purchase_order:read に整合（SA Major-2）/ MaterialPrice.View を既存 data-design.md §6.1/§9 へ追記＋新設理由（CR Major-1）/ ブロッキング監査の読取系=明示サービス層INSERT＋2sタイムアウト＋AUDIT-001（SA Major-3）/ idx_mo_active 廃止＋§7.2 想定実行計画（CR Major-2）/ 採番リトライ上限 PINST-005/MORD-004（SA Minor-3）/ product_family_id NULL ロールアップ仕様（CR Minor-2）/ 採番Tx最小化・EC2単一実体注記（SA Minor-1） |
-| 2026-07-27 | §12 権限値の非単調エンコード注意に **5 つ目の権限カテゴリ `attendance_permission`（0=なし/1=更新可能/2=参照のみ、同じ非単調スケール）を追加**。あわせて write gate の記述を実装に合わせて `>= 1` → `== 1` へ訂正（`CheckMasterEditAsync` / `CheckOrderEditAsync`）。勤怠の管理系はオーナー権限 `process_record_permission >= 1`（2 値、非単調ではない）に集約する旨を明記 |
+| 2026-07-27 | §12 権限値の非単調エンコード注意に **5 つ目の権限カテゴリ `attendance_permission`（0=なし/1=更新可能/2=参照のみ、同じ非単調スケール）を追加**。あわせて write gate の記述を実装に合わせて `>= 1` → `== 1` へ訂正（`CheckMasterEditAsync` / `CheckOrderEditAsync`）。勤怠の管理系は**勤怠参照権限（1 or 2）とオーナー権限 `process_record_permission >= 1`（2 値、非単調ではない）の AND** で判定する旨を明記（**2026-07-27 訂正**: 当初「オーナー権限に集約」と記載していたが、`CheckAttendanceAdminAsync` が参照権限を内包する）|
+| 2026-07-27 | **第 13〜14 イテレーション監査の反映。** (1) §12 の勤怠管理系の認可を「オーナー権限に集約」→「**勤怠参照権限（1 or 2）とオーナーの AND**」へ訂正（`CheckAttendanceAdminAsync` が参照権限を内包する）。(2) §4 BOM の更新方式を「差分upsert（既存行の ID を保持）」→「**全置換**」へ訂正し、監査 M-3 の「ID 保持」是正が**実在しない**旨を明記。(3) 論理削除の列名 `is_deleted` を全件 **`deleted_at`** へ統一（W-A で統一済みだが本書だけ旧名が残っていた。実 DB にも `is_deleted` 列は存在しない）|
 | 2026-06-22 v4 | 独立レビュー3周目（収束確認）反映: §5 採番の実行基盤表記を中立化（「App Runner複数インスタンス」→「実行基盤のインスタンス数に依らず／本番EC2単一・将来複数とも直列化」、CR Nit-1/SA INFO-1）。3周目で CR=Crit0/Maj0/Min0、SA=リリースOK Crit0/Maj0/Min0 を確認、本修正で唯一の残差解消＝収束 |

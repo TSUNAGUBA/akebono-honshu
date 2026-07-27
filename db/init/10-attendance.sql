@@ -288,7 +288,7 @@ BEGIN
         -- 無言だと運用者に伝わらないので必ず告知する (原則4)。
         IF NOT EXISTS (SELECT 1 FROM leave_types
                         WHERE tenant_id = t.tenant_id AND is_statutory) THEN
-            RAISE WARNING '法定有給のシードを skip しました: tenant % に同名 (有給休暇) の非統制種別が有効で存在します。統制有給が未登録のままです', t.tenant_id;
+            RAISE WARNING '法定有給のシードを skip しました: tenant % に同名 (有給休暇) の非統制種別が有効で存在します。統制有給が未登録のままだと有給の周期自動付与と年5日義務トラッカーが停止します。復旧手順: (1) その非統制種別を改名または論理削除する (勤怠管理の設定タブ、または休暇種別 PATCH/DELETE) (2) 本スクリプトを再実行する。統制行が論理削除されているだけの場合は休暇種別の復元 (POST /attendance/leave/types/{id}/restore) でも戻せます', t.tenant_id;
         END IF;
     END LOOP;
 END $$;

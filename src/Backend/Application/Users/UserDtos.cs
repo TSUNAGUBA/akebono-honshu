@@ -22,7 +22,9 @@ public record UserListItem(
     // **すべて nullable / 既定 null**: 入社日と週所定は有給の比例付与判定に直結する労務個人情報。
     // 一覧・単票は発注/商品フォームの担当者候補にも使うため認証のみで開いており、
     // オーナー (process_record_permission >= 1) 以外にはこの 6 列を返さず null にする
-    // (UserQueryService.WithoutLaborInfo)。勤怠 API 側の「他人の勤怠はオーナーのみ」と同じ境界。
+    // (UserQueryService.WithoutLaborInfo)。境界は **勤怠 API と意図的に揃えない** (オーナー単独で開く)。
+    // 理由は UserQueryService.WithoutLaborInfo の docstring 参照 (レダクションすると利用者マスタの
+    // 全項目送信フォームが他人の勤怠設定を巻き戻すため)。
     // 受け手にとって null は「取得権限が無い」であり「0 / 未設定」ではないため、
     // 表示側は fail-close (権限は 0、打刻対象は false) で解釈すること。
     short? AttendancePermission = null,

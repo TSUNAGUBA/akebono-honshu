@@ -210,7 +210,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     // ── #6 全員のタイムカード ────────────────────────────────────────────
 
     /// <summary>
-    /// 全員のタイムカード (オーナーのみ)。既定期間は当月 1 日〜今日、期間の上限は
+    /// 全員のタイムカード (勤怠参照権限 AND オーナー)。既定期間は当月 1 日〜今日、期間の上限は
     /// <see cref="TimecardRangeMaxDays"/> 日 (両端含み)、対象利用者数の上限は
     /// <see cref="TimecardMaxUsers"/> 人。q は氏名の部分一致。
     /// ソートは 日付降順 → 氏名昇順 → 利用者 Id 昇順 (同姓同名でも行順を確定させる)。
@@ -345,7 +345,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
 
     /// <summary>
     /// 打刻修正申請の一覧 (createdAt 降順)。all=false は本人の申請のみ。
-    /// all=true (scope=all) はオーナーのみ許可 (エンドポイント側で権限確認済み)。
+    /// all=true (scope=all) は勤怠参照権限 AND オーナーのみ許可 (エンドポイント側で権限確認済み)。
     ///
     /// **キーセットページング必須** (AKB-DOC-12 §7.1、PurchaseOrderService.ListAsync と同じ規約)。
     /// status 未指定の scope=all は運用年数に比例して全履歴を返すため、非有界のままでは必ず
@@ -403,7 +403,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     // ── #9 打刻修正申請の承認 / 却下 ─────────────────────────────────────
 
     /// <summary>
-    /// 打刻修正申請の承認 / 却下 (オーナーのみ)。
+    /// 打刻修正申請の承認 / 却下 (勤怠参照権限 AND オーナー)。
     /// トランザクション内で対象行を FOR UPDATE ロックし、Status != Pending を再確認して
     /// 二重承認を防ぐ。承認時は fix レコードを追記する (**元打刻は削除しない**)。
     /// </summary>

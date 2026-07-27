@@ -460,7 +460,7 @@ COMMENT ON COLUMN exchange_rates.quote_currency_code IS '相手通貨コード�
 
 - メーカー OLTP は `app_user` を**参照のみ**とし、監査列（`created_by_user_id`/`updated_by_user_id`）と発注担当者（`orderer_user_id` 等）で `REFERENCES app_user(id)` を張る。
 - 継承実装の **5 権限カテゴリ**（品番台帳管理 / 発注書作成 / 発注情報管理 / 工程実績管理 / **勤怠**）は、Control Plane の `role`/`permission`（37）へマッピングする。メーカー固有権限のコード体系は 37 と [05 メーカーサービス](../basic-design/05-service-manufacturer.md) で確定する。
-  > **2026-07-27 更新（4 → 5、マッピング漏れ注意）:** 継承実装は Iteration 30 で 5 つ目の `users.attendance_permission`（勤怠、`0=なし / 1=更新可能 / 2=参照のみ`）と勤怠付随列（`punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追加済み。**品番台帳・発注書作成・勤怠は非単調エンコード**（「参照のみ」が「更新可能」より大きい値）のため、`role`/`permission` へ写す際に `>=` による序列化を行うと権限が緩む。なお勤怠の**管理系**（承認・付与・設定）は勤怠権限ではなく工程実績管理権限（オーナー）に集約されている点もマッピング時に落とさないこと。
+  > **2026-07-27 更新（4 → 5、マッピング漏れ注意）:** 継承実装は Iteration 30 で 5 つ目の `users.attendance_permission`（勤怠、`0=なし / 1=更新可能 / 2=参照のみ`）と勤怠付随列（`punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追加済み。**品番台帳・発注書作成・勤怠は非単調エンコード**（「参照のみ」が「更新可能」より大きい値）のため、`role`/`permission` へ写す際に `>=` による序列化を行うと権限が緩む。なお勤怠の**管理系**（承認・付与・設定）は、**勤怠権限（1 or 2）と工程実績管理権限（オーナー）の AND** で判定する点もマッピング時に落とさないこと（**オーナー単独では不可**。2026-07-27 訂正 — 当初「勤怠権限ではなく工程実績管理権限に集約」と記載していたが、`CheckAttendanceAdminAsync` が参照権限を内包する形へ是正済み。旧記述のまま移送すると『勤怠権限 0 のオーナーが全員の労務情報を読める』穴が別リポジトリへ複製される）。
 - 移行: `users` 行を `app_user` へ移送（`employee_no`→ビジネスキー、`login_id`→Firebase Email 連携キー）。旧メーカー DB 内 `users` は移行後に廃止し、全 FK を `app_user(id)` へ張り替える。
 
 > **勤怠 6 テーブルは本ドキュメントの台帳（§4.1 / §3）に載せていない（2026-07-27）:**

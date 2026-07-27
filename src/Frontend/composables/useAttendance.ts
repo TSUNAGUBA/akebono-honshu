@@ -45,6 +45,13 @@ export type PunchState = 'before' | 'working' | 'breaking' | 'done'
 export type RequestStatus = 'pending' | 'approved' | 'rejected'
 /** 承認/却下アクション（§5.2 #9 / §5.4 #23）。 */
 export type DecisionAction = 'approved' | 'rejected'
+/**
+ * 本ファイルのコメントで「**オーナー**」と書いたものは、すべて
+ * `isAttendanceAdmin` = **勤怠参照権限（1 or 2）AND `processRecordPermission >= 1`** を指す。
+ * サーバ側 `AuthEndpoints.CheckAttendanceAdminAsync` と同式で、**オーナー権限だけでは足りない**
+ * （`attendancePermission = 0` は勤怠機能の利用を明示的に禁じた状態で、管理操作も 403 になる）。
+ */
+
 /** 申請一覧のスコープ。'all'（全員）はオーナーのみ。 */
 export type RequestScope = 'self' | 'all'
 

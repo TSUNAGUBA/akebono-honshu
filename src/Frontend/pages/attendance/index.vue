@@ -243,6 +243,12 @@ const router = useRouter()
 const PAGE_PATH = '/attendance'
 
 const activeTab = ref<TabKey>('daily')
+/**
+ * 本ファイルのコメント・テンプレートで「**オーナー**」と書いたものは、すべて
+ * `isOwner` = `isAttendanceAdmin` = **勤怠参照権限（1 or 2）AND `processRecordPermission >= 1`** を指す。
+ * サーバ側 `AuthEndpoints.CheckAttendanceAdminAsync` と同式で、**オーナー権限だけでは足りない**。
+ */
+
 /** 対象メンバー切替を出すタブ (自分以外の勤怠を見られるのはオーナーのみ)。 */
 const MEMBER_SWITCH_TABS: TabKey[] = ['daily', 'weekly', 'monthly', 'leave']
 
