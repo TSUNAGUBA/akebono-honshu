@@ -243,7 +243,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 - 既存 `product_families.upper/insole/outsole_material_id`（NOT NULL）は**変更せず存置＝代表素材の表示用**（品番台帳ビュー・MIG-3移行データ・既存実装が依存）。
 - `product_materials` は**所要量を伴うBOMの独立SoT**。**両者は疎結合**: BOM編集は `product_materials` のみを更新し、**3FK列へ書き戻さない**（双方向同期を廃止＝同期失敗・寸断リスクを排除、監査M-3）。
 - **利便のため**、BOM未登録の品番でBOM編集を開くと、3部位（role 0/1/2）を 3FK列の素材で**初期シード**表示する（所要量は空欄、保存は product_materials のみ）。これは一方向の読み取りシードで、保存後の同期は行わない。
-- **更新方式（監査M-3）:** BOM保存は**差分upsert**（既存行のIDを保持＝`source_pi_line_id` 等のトレース寸断を回避）。削除は `is_deleted=TRUE`。PUT全体を**単一トランザクション**化。
+- **更新方式（監査M-3）:** ~~BOM保存は**差分upsert**（既存行のIDを保持＝`source_pi_line_id` 等のトレース寸断を回避）。削除は `is_deleted=TRUE`。~~ **2026-07-27 訂正（第 13 イテレーション監査）:** 実装 `ProductMaterialService.ReplaceAsync` は**全置換**（既存行を全件 `deleted_at` で論理削除 → 新規 INSERT）で、**行 ID は保持されない**。削除フラグの列名も `is_deleted` ではなく **`deleted_at`**（W-A で統一済み）。M-3 の「ID 保持」是正は実装されていない。PUT 全体の**単一トランザクション**化のみ実在する。関連する既知の欠陥は `screen-design.md §3.16「スコープ外ドリフト OD-1」`。
 - **既存データへの影響（監査C-3）:** 既存 `product_families` 行には移行時に `product_materials` を**自動生成しない**（暫定所要量の投入による誤発注を防止）。BOMは実ユーザが明示登録（UC-PROD-1）。BOM未登録品番は素材発注の所要量展開を**ブロック**（MORD-001、§9・API §2.1）。
 
 ### 7.2 未/済バッジの算出方式（denormalized列なし・コードレビュアーC-1反映）
@@ -328,7 +328,7 @@ production_instructions ─0..1:N─► material_orders (素材発注書、素�
 
 > **権限値の非単調エンコード注意（監査Major-1反映、最重要）:** RDS権限列は単調増加ではない。`product_ledger_permission`: 0=なし/1=更新可能/2=参照のみ/3=参照のみ(制限)。`purchase_order_create_permission`: 0=なし/1=更新可能/2=参照のみ。**`attendance_permission`（勤怠、Iteration 30 で追加した 5 つ目のカテゴリ）: 0=なし/1=更新可能/2=参照のみ — 既存カテゴリと同じ非単調スケール。**「値が大きい＝高権限」ではない**ため `≥` で read/write を導出してはならない（勤怠権限も同様。`>= 1` と書くと「参照のみ(2)」に書込を許すバグになる）。**本増分は判定ロジックを新発明せず既存実装を再利用する**: write 系は既存 `CheckMasterEditAsync`（`product_ledger_permission`）／`CheckOrderEditAsync`（`purchase_order_create_permission`）をそのまま使う。read 系は既存の参照系エンドポイント同様、認証済アクティブユーザに開放（フロントで編集UIを権限制御）。段階Cで Custom Claims 化する際の write/read 厳密導出（1=更新可能 vs 2=参照のみ の解釈の精緻化）は**既存と歩調を合わせて一括で実施**する（本増分単独では既存の2値運用を踏襲し、独自の値解釈を持ち込まない）。
 >
-> **2026-07-27 訂正（実装との乖離解消）:** 本注記は当初 write gate を「`ProductLedgerPermission >= 1` を要求（現行MVPの2値簡素化＝Iter1知見#7）」「`PurchaseOrderCreatePermission >= 1`」と記述していたが、**実装は既に `== 1`（更新可能）のみを許可する形へ是正済み**（`src/Backend/Presentation/Endpoints/AuthEndpoints.cs`。旧 `>= 1` は「参照のみ(2/3)」に誤って書込を許していた）。本注記が警告していた非単調エンコード問題そのものであるため、記述を実装に合わせて訂正する。**5 つ目の勤怠権限にも同じ規則が適用される**（write = `CheckAttendanceWriteAsync` が `attendance_permission == 1`、read = `CheckAttendanceReadAsync` が `1 または 2`）。なお勤怠の**管理系**（全員のタイムカード・承認/却下・休暇付与・勤怠ルール設定）は勤怠権限では判定せず、**オーナー権限 `process_record_permission >= 1`**（`CheckAttendanceAdminAsync`）に集約する。`process_record_permission` は 0/1 の 2 値なので `>= 1` で正しい（非単調ではない）。
+> **2026-07-27 訂正（実装との乖離解消）:** 本注記は当初 write gate を「`ProductLedgerPermission >= 1` を要求（現行MVPの2値簡素化＝Iter1知見#7）」「`PurchaseOrderCreatePermission >= 1`」と記述していたが、**実装は既に `== 1`（更新可能）のみを許可する形へ是正済み**（`src/Backend/Presentation/Endpoints/AuthEndpoints.cs`。旧 `>= 1` は「参照のみ(2/3)」に誤って書込を許していた）。本注記が警告していた非単調エンコード問題そのものであるため、記述を実装に合わせて訂正する。**5 つ目の勤怠権限にも同じ規則が適用される**（write = `CheckAttendanceWriteAsync` が `attendance_permission == 1`、read = `CheckAttendanceReadAsync` が `1 または 2`）。なお勤怠の**管理系**（全員のタイムカード・承認/却下・休暇付与・勤怠ルール設定）は、**勤怠参照権限（1 または 2）かつオーナー権限 `process_record_permission >= 1`** の **AND** で判定する（`CheckAttendanceAdminAsync` が参照権限のチェックを内包する）。`process_record_permission` は 0/1 の 2 値なので `>= 1` で正しい（非単調ではない）。**オーナーであることだけでは足りない**点に注意（2026-07-27 訂正。当初は「勤怠権限では判定せず、オーナー権限に集約」と記載していた）。
 
 | 機能 | 認可（既存トークン/ヘルパー） |
 |---|---|

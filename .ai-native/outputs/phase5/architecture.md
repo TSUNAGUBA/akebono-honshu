@@ -366,7 +366,7 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 > | 1 | `product_ledger_permission` | 0=なし / 1=更新可能 / 2=参照のみ / 3=参照のみ(制限) | `== 1` |
 > | 2 | `purchase_order_create_permission` | 0=なし / 1=更新可能 / 2=参照のみ | `== 1` |
 > | 3 | `purchase_order_info_permission` | 0=なし / 1=あり | `>= 1` |
-> | 4 | `process_record_permission`（**オーナー権限**。利用者マスタ管理・勤怠管理系の gate を兼ねる）| 0=なし / 1=あり | `>= 1` |
+> | 4 | `process_record_permission`（**オーナー権限**。利用者マスタ管理の gate を兼ねる。**勤怠管理系は本権限と `attendance_permission` の AND**）| 0=なし / 1=あり | `>= 1` |
 > | 5 | **`attendance_permission`（Iteration 30 追加）** | 0=なし / 1=更新可能 / 2=参照のみ | **`== 1`** |
 >
 > **#1 / #2 / #5 は非単調エンコード**（「参照のみ」が「更新可能」より大きい値）のため、

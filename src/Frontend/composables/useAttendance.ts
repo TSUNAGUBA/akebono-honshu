@@ -719,7 +719,7 @@ export const useAttendance = () => {
     await apiData<DaySummary>(`/attendance/day${qs({ userId, date, raw: true })}`)
 
   /**
-   * `GET /attendance/timecard`（全員のタイムカード・**オーナーのみ**）。
+   * `GET /attendance/timecard`（全員のタイムカード・**勤怠参照権限 AND オーナー**）。
    * 既定は当月 1 日 〜 今日。期間上限は `TIMECARD_RANGE_MAX_DAYS`（超過はサーバ 422）。
    */
   const timecard = async (from?: string, to?: string, q?: string): Promise<TimecardRow[]> =>
@@ -736,7 +736,7 @@ export const useAttendance = () => {
   // ------------------------------------------
 
   /**
-   * `GET /attendance/fix-requests`（createdAt 降順）。`scope='all'` はオーナーのみ。
+   * `GET /attendance/fix-requests`（createdAt 降順）。`scope='all'` は勤怠参照権限 AND オーナー。
    * 承認・却下で内容が変動するうえ、画面は「自分の申請」と「承認待ち（全員）」を
    * 続けて別条件で読むため、**キャッシュしない**（同じ理由で `leaveRequests` も非キャッシュ）。
    * 再取得が要るときは呼び出し側が明示的に呼び直す。
@@ -833,7 +833,7 @@ export const useAttendance = () => {
   }
 
   /**
-   * `GET /attendance/leave/requests`。`scope='all'` はオーナーのみ。承認で変動するためキャッシュしない。
+   * `GET /attendance/leave/requests`。`scope='all'` は勤怠参照権限 AND オーナー。承認で変動するためキャッシュしない。
    *
    * `from` / `to` は**取得日（業務日付 YYYY-MM-DD）の範囲**（両端含み）。省略時は全期間で、
    * 従来の呼び出し（申請タブの「承認待ち」「自分の申請」）はそのまま動く（下位互換）。
@@ -901,7 +901,7 @@ export const useAttendance = () => {
     return result
   }
 
-  /** `GET /attendance/leave/admin/summary`（メンバー × 種別の付与/取得/残・オーナーのみ）。 */
+  /** `GET /attendance/leave/admin/summary`（メンバー × 種別の付与/取得/残・勤怠参照権限 AND オーナー）。 */
   const leaveAdminSummary = async (): Promise<LeaveAdminRow[]> =>
     await apiData<LeaveAdminRow[]>('/attendance/leave/admin/summary')
 

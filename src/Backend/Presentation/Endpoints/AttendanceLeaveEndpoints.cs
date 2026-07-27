@@ -46,7 +46,7 @@ public static class AttendanceLeaveEndpoints
             return ApiEnvelope.Ok(http, await svc.ListTypesAsync(includeInactive ?? false, ct));
         });
 
-        // #16 作成 (オーナー)。IsStatutory は受け取らないため法定有給は作成できない。
+        // #16 作成 (勤怠参照権限 AND オーナー)。IsStatutory は受け取らないため法定有給は作成できない。
         group.MapPost("/types", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                         LeaveTypeWriteRequest req, CancellationToken ct) =>
         {
@@ -56,7 +56,7 @@ public static class AttendanceLeaveEndpoints
             return ApiEnvelope.Created(http, $"{BasePath}/types/{created.Id}", created);
         });
 
-        // #17 部分更新 (オーナー)。送られていないフィールドは既存値を保持する。法定有給は 409。
+        // #17 部分更新 (勤怠参照権限 AND オーナー)。送られていないフィールドは既存値を保持する。法定有給は 409。
         group.MapPatch("/types/{id:guid}", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                                    Guid id, LeaveTypePatchRequest req, CancellationToken ct) =>
         {
@@ -66,7 +66,7 @@ public static class AttendanceLeaveEndpoints
             return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
 
-        // #18 論理削除 (オーナー)。付与・申請の実績は残す。法定有給は 409。
+        // #18 論理削除 (勤怠参照権限 AND オーナー)。付与・申請の実績は残す。法定有給は 409。
         group.MapDelete("/types/{id:guid}", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                                     Guid id, CancellationToken ct) =>
         {
@@ -76,7 +76,7 @@ public static class AttendanceLeaveEndpoints
             return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        // #19 復元 (オーナー)。削除の取消導線 (誤操作で詰まないための戻り道)。
+        // #19 復元 (勤怠参照権限 AND オーナー)。削除の取消導線 (誤操作で詰まないための戻り道)。
         group.MapPost("/types/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                                           Guid id, CancellationToken ct) =>
         {
@@ -90,7 +90,7 @@ public static class AttendanceLeaveEndpoints
     // ── サマリ (#20 / #27) ────────────────────────────
     private static void MapLeaveSummary(RouteGroupBuilder group)
     {
-        // #20 残数・年5日義務・履歴。userId 省略時は自分。他人の指定はオーナーのみ。
+        // #20 残数・年5日義務・履歴。userId 省略時は自分。他人の指定は勤怠参照権限 AND オーナー。
         group.MapGet("/summary", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                          Guid? userId, CancellationToken ct) =>
         {
@@ -105,7 +105,7 @@ public static class AttendanceLeaveEndpoints
             return ApiEnvelope.Ok(http, await svc.GetSummaryAsync(targetUserId, ct));
         });
 
-        // #27 休暇管理一覧 (オーナー)。メンバー×種別の付与/取得/残。
+        // #27 休暇管理一覧 (勤怠参照権限 AND オーナー)。メンバー×種別の付与/取得/残。
         group.MapGet("/admin/summary", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                                CancellationToken ct) =>
         {
@@ -118,7 +118,7 @@ public static class AttendanceLeaveEndpoints
     // ── 休暇申請 (#21〜#23) ───────────────────────────
     private static void MapLeaveRequests(RouteGroupBuilder group)
     {
-        // #21 一覧。scope=all は全員分 (オーナーのみ)、省略時は自分の申請。
+        // #21 一覧。scope=all は全員分 (勤怠参照権限 AND オーナー)、省略時は自分の申請。
         // キーセットページング (AKB-DOC-12 §7.1): ?limit=&cursor=<opaque>、不正は 400 AKB-SYS-011。
         // data は従来どおり配列のままで、続きの有無は meta.page.hasMore が示す (フロント契約は非破壊)。
         // limit 未指定時の既定は上限値 (PageRequest.MaxLimit)。フロント (useAttendance.leaveRequests) は
@@ -156,7 +156,7 @@ public static class AttendanceLeaveEndpoints
             return ApiEnvelope.Created(http, $"{BasePath}/requests/{created.Id}", created);
         });
 
-        // #23 承認/却下 (オーナー)。処理済みの再操作は 409 (トランザクション内で再確認)。
+        // #23 承認/却下 (勤怠参照権限 AND オーナー)。処理済みの再操作は 409 (トランザクション内で再確認)。
         group.MapPost("/requests/{id:guid}/decision",
             async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                    Guid id, LeaveDecisionRequest req, CancellationToken ct) =>
@@ -171,7 +171,7 @@ public static class AttendanceLeaveEndpoints
     // ── 付与 (#24〜#26) ───────────────────────────────
     private static void MapLeaveGrants(RouteGroupBuilder group)
     {
-        // #24 個別付与 (オーナー)。同一 (user, 種別, 付与日) が既にあれば skipped=1 で既存 ID を返す。
+        // #24 個別付与 (勤怠参照権限 AND オーナー)。同一 (user, 種別, 付与日) が既にあれば skipped=1 で既存 ID を返す。
         group.MapPost("/grants", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                          LeaveGrantWriteRequest req, CancellationToken ct) =>
         {
@@ -181,7 +181,7 @@ public static class AttendanceLeaveEndpoints
             return ApiEnvelope.Created(http, $"{BasePath}/grants/{result.Id}", result);
         });
 
-        // #25 一括付与 (オーナー)。target=all のみ。既存分は skipped。
+        // #25 一括付与 (勤怠参照権限 AND オーナー)。target=all のみ。既存分は skipped。
         group.MapPost("/grants/bulk", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                               LeaveBulkGrantRequest req, CancellationToken ct) =>
         {
@@ -190,7 +190,7 @@ public static class AttendanceLeaveEndpoints
             return ApiEnvelope.Ok(http, await svc.BulkGrantAsync(req, auth.ActorId!.Value, ct));
         });
 
-        // #26 周期自動付与の実行 (オーナー)。何度実行しても既存の付与は変更されない (原則 2)。
+        // #26 周期自動付与の実行 (勤怠参照権限 AND オーナー)。何度実行しても既存の付与は変更されない (原則 2)。
         group.MapPost("/periodic-grants/run", async (HttpContext http, IAkebonoDbContext db, LeaveService svc,
                                                       CancellationToken ct) =>
         {

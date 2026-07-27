@@ -283,6 +283,13 @@ BEGIN
              WHERE tenant_id = t.tenant_id
                AND (is_statutory OR (name = '有給休暇' AND deleted_at IS NULL))
         );
+
+        -- 条件 (2) で抑止したときは統制有給が 0 件のまま残る。中断させない判断は正しいが、
+        -- 無言だと運用者に伝わらないので必ず告知する (原則4)。
+        IF NOT EXISTS (SELECT 1 FROM leave_types
+                        WHERE tenant_id = t.tenant_id AND is_statutory) THEN
+            RAISE WARNING '法定有給のシードを skip しました: tenant % に同名 (有給休暇) の非統制種別が有効で存在します。統制有給が未登録のままです', t.tenant_id;
+        END IF;
     END LOOP;
 END $$;
 

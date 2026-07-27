@@ -1078,9 +1078,18 @@ S3 アップロード完了後、メタデータを DB に登録。
 > ここへ管理操作（全員の打刻記録の閲覧・承認・付与・設定）を許すと禁止設定が意味を失うため、
 > **`CheckAttendanceAdminAsync` が参照権限のチェックを内包する**。
 > 当初は `#21` だけを「参照 → 管理」の 2 段に直したが、**同じ欠落が `#6`（全員のタイムカード =
-> 全従業員の法定労務記録そのもの）・`#27`（休暇管理一覧）ほか管理系 18 経路すべてに残っていた**ため、
+> 全従業員の法定労務記録そのもの）・`#27`（休暇管理一覧）ほかに残っていた**ため
+> （`CheckAttendanceAdminAsync` の呼出しは **19 箇所**。うち `#8` / `#21` / `ResolveTargetAsync` /
+> `EnsureCanReadOtherAsync` の 4 箇所は参照チェックが先行済みで、**欠落は 15 経路**）、
 > 個々のエンドポイントではなく**ヘルパー側へ 1 箇所で寄せた**（原則3）。
 > このため `#8` / `#21` の `scope=all` は管理チェック単独で足り、参照チェックを重ねる必要はない。
+>
+> **例外: `GET /users` の労務情報レダクション（§2.7.9）は「オーナー単独」のまま**とする。
+> 勤怠 6 列は利用者マスタが**設定する対象そのもの**で、編集フォームは全項目を明示送信するため、
+> ここでレダクションすると「オーナーだが勤怠権限 0」の管理者が利用者を開いて保存しただけで
+> **他人の勤怠設定を fail-close 値へ巻き戻す**（Iteration 30 で解消した BLOCKER の再発）。
+> 利用者マスタ管理は「**他人の**勤怠設定を管理する」機能であり、「**自分が**勤怠機能を使う」
+> こととは別の権限軸として扱う。境界が違うのは**意図的な設計判断**である。
 
 - **`attendance_permission` は既存 4 権限と同じ非単調スケール**（0=なし / 1=更新可能 / 2=参照のみ）。
   **書込判定は必ず `== 1`**（`>= 1` は「参照のみ(2)」に書込を許してしまうバグ）。
@@ -1181,7 +1190,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 |---|---|---|---|---|
 | 7 | `POST` | `/api/maker/v1/attendance/fix-requests` | 修正申請（対象は常に本人）| 勤怠 `==1` |
 | 8 | `GET` | `/api/maker/v1/attendance/fix-requests` | 申請一覧 | 勤怠 1 or 2。`scope=all` は**参照権限 AND オーナー**|
-| 9 | `POST` | `/api/maker/v1/attendance/fix-requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
+| 9 | `POST` | `/api/maker/v1/attendance/fix-requests/{id:guid}/decision` | 承認 / 却下 | **勤怠参照権限（1 or 2）AND オーナー** |
 
 | # | リクエスト | レスポンス | 主なエラー |
 |---|---|---|---|
@@ -1214,10 +1223,10 @@ S3 アップロード完了後、メタデータを DB に登録。
 | # | メソッド | パス | 用途 | 認可 |
 |---|---|---|---|---|
 | 10 | `GET` | `/api/maker/v1/attendance/rules` | 一覧（`?includeInactive`、既定 false）| 勤怠 1 or 2 |
-| 11 | `POST` | `/api/maker/v1/attendance/rules` | 新規作成 | **オーナー** |
-| 12 | `PATCH` | `/api/maker/v1/attendance/rules/{id:guid}` | **部分更新** | **オーナー** |
-| 13 | `DELETE` | `/api/maker/v1/attendance/rules/{id:guid}` | 論理削除 | **オーナー** |
-| 14 | `POST` | `/api/maker/v1/attendance/rules/{id:guid}/restore` | 論理削除の取消 | **オーナー** |
+| 11 | `POST` | `/api/maker/v1/attendance/rules` | 新規作成 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 12 | `PATCH` | `/api/maker/v1/attendance/rules/{id:guid}` | **部分更新** | **勤怠参照権限（1 or 2）AND オーナー** |
+| 13 | `DELETE` | `/api/maker/v1/attendance/rules/{id:guid}` | 論理削除 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 14 | `POST` | `/api/maker/v1/attendance/rules/{id:guid}/restore` | 論理削除の取消 | **勤怠参照権限（1 or 2）AND オーナー** |
 
 | # | リクエスト | レスポンス | 主なエラー |
 |---|---|---|---|
@@ -1279,17 +1288,17 @@ S3 アップロード完了後、メタデータを DB に登録。
 | # | メソッド | パス | 用途 | 認可 |
 |---|---|---|---|---|
 | 15 | `GET` | `/api/maker/v1/attendance/leave/types` | 休暇種別 一覧（`?includeInactive`）| 勤怠 1 or 2 |
-| 16 | `POST` | `/api/maker/v1/attendance/leave/types` | 休暇種別 作成 | **オーナー** |
-| 17 | `PATCH` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 部分更新 | **オーナー** |
-| 18 | `DELETE` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 論理削除 | **オーナー** |
-| 19 | `POST` | `/api/maker/v1/attendance/leave/types/{id:guid}/restore` | 休暇種別 復元 | **オーナー** |
+| 16 | `POST` | `/api/maker/v1/attendance/leave/types` | 休暇種別 作成 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 17 | `PATCH` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 部分更新 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 18 | `DELETE` | `/api/maker/v1/attendance/leave/types/{id:guid}` | 休暇種別 論理削除 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 19 | `POST` | `/api/maker/v1/attendance/leave/types/{id:guid}/restore` | 休暇種別 復元 | **勤怠参照権限（1 or 2）AND オーナー** |
 | 20 | `GET` | `/api/maker/v1/attendance/leave/summary` | 残数・年 5 日義務・履歴 | 勤怠 1 or 2（他人はオーナー）|
 | 21 | `GET` | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 | 勤怠 1 or 2。`scope=all` は**参照権限 AND オーナー**（#8 と同形）|
 | 22 | `POST` | `/api/maker/v1/attendance/leave/requests` | 休暇申請（対象は常に本人）| 勤怠 `==1` |
-| 23 | `POST` | `/api/maker/v1/attendance/leave/requests/{id:guid}/decision` | 承認 / 却下 | **オーナー** |
-| 24 | `POST` | `/api/maker/v1/attendance/leave/grants` | 個別付与 | **オーナー** |
-| 25 | `POST` | `/api/maker/v1/attendance/leave/grants/bulk` | 一括付与 | **オーナー** |
-| 26 | `POST` | `/api/maker/v1/attendance/leave/periodic-grants/run` | 周期自動付与の実行 | **オーナー** |
+| 23 | `POST` | `/api/maker/v1/attendance/leave/requests/{id:guid}/decision` | 承認 / 却下 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 24 | `POST` | `/api/maker/v1/attendance/leave/grants` | 個別付与 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 25 | `POST` | `/api/maker/v1/attendance/leave/grants/bulk` | 一括付与 | **勤怠参照権限（1 or 2）AND オーナー** |
+| 26 | `POST` | `/api/maker/v1/attendance/leave/periodic-grants/run` | 周期自動付与の実行 | **勤怠参照権限（1 or 2）AND オーナー** |
 | 27 | `GET` | `/api/maker/v1/attendance/leave/admin/summary` | 休暇管理一覧（メンバー × 種別）| **参照権限 AND オーナー** |
 
 | # | リクエスト | レスポンス | 主なエラー |

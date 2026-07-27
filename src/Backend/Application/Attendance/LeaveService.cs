@@ -72,6 +72,13 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
     {
         var name = (req.Name ?? string.Empty).Trim();
         ValidateTypeName(name);
+        // 法定有給の名称は予約する。統制行が論理削除・改名された隙にこの名前で非統制種別を作れると、
+        // db/init の統制シードが「同名の有効行がある」ため恒久的に抑止され、統制有給ゼロの
+        // テナントが無言で固定される (シード側は WARNING を出すが、発生自体を防ぐ)。
+        // **作成時のみ**の制限とし、更新は妨げない (既存行を編集不能にすると原則7 に反する)。
+        if (name == StatutoryLeaveTypeName)
+            throw DomainException.Validation($"「{StatutoryLeaveTypeName}」は法定有給の予約名です",
+                "別の名称を入力してください（法定有給はシードで登録済みです）");
         ValidateExpiryMonths(req.ExpiryMonths);
         ValidateDisplayOrder(req.DisplayOrder);
         await EnsureNoActiveDuplicateNameAsync(name, null, ct);
@@ -713,6 +720,11 @@ public class LeaveService(IAkebonoDbContext db, IAuditLogger audit)
             .Where(r => r.LeaveTypeId == leaveTypeId && r.Status == LeaveRequestStatus.Approved)
             .OrderBy(r => r.Date)
             .ToList();
+
+    /// <summary>
+    /// 法定有給の名称 (db/init/10-attendance.sql §2 / iter30-attendance.sql §4 のシードと一致させること)。
+    /// </summary>
+    private const string StatutoryLeaveTypeName = "有給休暇";
 
     private static void ValidateTypeName(string name)
     {

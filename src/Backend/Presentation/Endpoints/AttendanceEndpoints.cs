@@ -74,7 +74,7 @@ public static class AttendanceEndpoints
             return ApiEnvelope.Ok(http, alerts);
         });
 
-        // #6 全員のタイムカード (オーナーのみ)。期間上限は AttendanceService.TimecardRangeMaxDays。
+        // #6 全員のタイムカード (勤怠参照権限 AND オーナー)。期間上限は AttendanceService.TimecardRangeMaxDays。
         group.MapGet("/timecard", async (HttpContext http, IAkebonoDbContext db, AttendanceService svc,
                                           string? from, string? to, string? q, CancellationToken ct) =>
         {
@@ -98,7 +98,7 @@ public static class AttendanceEndpoints
                 $"/api/maker/v1/attendance/fix-requests/{created.Id}", created);
         });
 
-        // #8 修正申請の一覧。scope=all (全件) はオーナーのみ。
+        // #8 修正申請の一覧。scope=all (全件) は勤怠参照権限 AND オーナー。
         // キーセットページング (AKB-DOC-12 §7.1): ?limit=&cursor=<opaque>、不正は 400 AKB-SYS-011。
         // data は従来どおり配列のままで、続きの有無は meta.page.hasMore が示す (フロント契約は非破壊)。
         // limit 未指定時の既定は上限値 (PageRequest.MaxLimit)。フロント (useAttendance.loadFixRequests) は
@@ -119,7 +119,7 @@ public static class AttendanceEndpoints
             return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
-        // #9 修正申請の承認 / 却下 (オーナーのみ)。承認は fix レコード追記 (元打刻は削除しない)。
+        // #9 修正申請の承認 / 却下 (勤怠参照権限 AND オーナー)。承認は fix レコード追記 (元打刻は削除しない)。
         group.MapPost("/fix-requests/{id:guid}/decision", async (HttpContext http, IAkebonoDbContext db,
                                                                   AttendanceService svc, Guid id,
                                                                   FixDecisionRequest req, CancellationToken ct) =>
@@ -142,7 +142,7 @@ public static class AttendanceEndpoints
             return ApiEnvelope.Ok(http, rules);
         });
 
-        // #11 新規作成 (オーナー)
+        // #11 新規作成 (勤怠参照権限 AND オーナー)
         group.MapPost("/rules", async (HttpContext http, IAkebonoDbContext db, AttendanceRuleService svc,
                                         AttendanceRuleWriteRequest req, CancellationToken ct) =>
         {
@@ -152,7 +152,7 @@ public static class AttendanceEndpoints
             return ApiEnvelope.Created(http, $"/api/maker/v1/attendance/rules/{created.Id}", created);
         });
 
-        // #12 部分更新 (オーナー)。null のフィールドは更新しない。
+        // #12 部分更新 (勤怠参照権限 AND オーナー)。null のフィールドは更新しない。
         group.MapPatch("/rules/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
                                                    AttendanceRuleService svc, Guid id,
                                                    AttendanceRulePatchRequest req, CancellationToken ct) =>
@@ -163,7 +163,7 @@ public static class AttendanceEndpoints
             return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });
 
-        // #13 論理削除 (オーナー)
+        // #13 論理削除 (勤怠参照権限 AND オーナー)
         group.MapDelete("/rules/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
                                                     AttendanceRuleService svc, Guid id, CancellationToken ct) =>
         {
@@ -173,7 +173,7 @@ public static class AttendanceEndpoints
             return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
         });
 
-        // #14 論理削除の取消 (オーナー)
+        // #14 論理削除の取消 (勤怠参照権限 AND オーナー)
         group.MapPost("/rules/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
                                                           AttendanceRuleService svc, Guid id, CancellationToken ct) =>
         {

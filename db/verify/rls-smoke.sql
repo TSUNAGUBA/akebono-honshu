@@ -11,7 +11,7 @@
 DO $$
 DECLARE
     honshu_tenant  UUID := '00000000-0000-4000-8000-000000000001';
-    other_tenant   UUID := '00000000-0000-4000-8000-000000000002';
+    other_tenant   UUID;   -- 実在しない値を実行時に導出する (下記 BEGIN 冒頭)
     cnt            BIGINT;
     t              TEXT;
     ref_qual       TEXT;   -- §8b: 既知の正としての brands.tenant_isolation の USING 式
@@ -19,6 +19,15 @@ DECLARE
     probed         INT;    -- §8c: 実データで分離を実証できた勤怠テーブル数
     skipped        TEXT;   -- §8c: 行が無く実証できなかった勤怠テーブル
 BEGIN
+    -- 越境テストに使うセンチネルテナント ID は **実在しない値を実行時に選ぶ**。
+    -- 固定値をハードコードすると、その UUID が実際に登録された DB で「他テナントの行が見える」
+    -- ことになり、健全な DB で偽 FAIL する (10-attendance.sql §2 が全テナントに leave_types を
+    -- 保証するため、衝突すると確実に踏む)。
+    LOOP
+        other_tenant := gen_random_uuid();
+        EXIT WHEN NOT EXISTS (SELECT 1 FROM tenant WHERE tenant_id = other_tenant);
+    END LOOP;
+
     -- §8b で使う参照式を先に取る (brands は §1〜§4 で分離が実証済みの代表表)
     SELECT qual, with_check INTO ref_qual, ref_check
       FROM pg_policies
@@ -117,7 +126,7 @@ BEGIN
 
     -- 8b. 勤怠 6 テーブルの RLS 配線 (ポリシー + FORCE) が存在すること
     --     既存 47 表と違い、勤怠は 08-tenancy-rls.sql の「2b」が to_regclass NULL で
-    --     条件付きスキップするため、init 経路では 10-attendance.sql §6 が唯一の配線経路になる。
+    --     条件付きスキップするため、init 経路では 10-attendance.sql §4 が唯一の配線経路になる。
     --     10 の投入漏れは「勤怠画面が全滅する」運用上の分岐点 (RUNBOOK §2) だが、
     --     §1〜§4 は brands 1 表を代表に使うため配線漏れを検出できない。ここで全 6 表を明示検証する。
     FOREACH t IN ARRAY ARRAY[
@@ -153,6 +162,15 @@ BEGIN
         ) THEN
             RAISE EXCEPTION 'FAIL: 勤怠テーブル % の tenant_isolation が brands と異なる式 (USING/WITH CHECK の書換または無効化)', t;
         END IF;
+
+        -- ポリシーは permissive なら OR で合成されるため、tenant_isolation を残したまま
+        -- USING (true) の別ポリシーを **追加** するだけで分離は完全に無効化できる。
+        -- 式の一致だけを見ると「置換」は検出できても「追加」は見逃す。総数で塞ぐ。
+        SELECT count(*) INTO cnt
+          FROM pg_policies WHERE schemaname = 'public' AND tablename = t;
+        IF cnt <> 1 THEN
+            RAISE EXCEPTION 'FAIL: 勤怠テーブル % のポリシーが % 件ある (tenant_isolation の 1 件のみが正。USING(true) 等の追加を疑う)', t, cnt;
+        END IF;
     END LOOP;
     RAISE NOTICE 'PASS: 勤怠 6 テーブルに tenant_isolation + FORCE ROW LEVEL SECURITY が配線済み (式も brands と一致)';
 
@@ -170,6 +188,12 @@ BEGIN
     LOOP
         PERFORM set_config('app.tenant_id', honshu_tenant::text, TRUE);
         EXECUTE format('SELECT count(*) FROM %I', t) INTO cnt;
+        -- leave_types だけは §2 のシードにより全テナントで必ず 1 行以上ある。ここが 0 なら
+        -- 「空だから実証できない」ではなく **シード欠落かポリシー/GRANT の異常** なので SKIP させない
+        -- (式が正しくても TO postgres 等へ付け替えるとアプリからは 0 行になり、§8b は roles を見ない)。
+        IF t = 'leave_types' AND cnt = 0 THEN
+            RAISE EXCEPTION 'FAIL: leave_types が自テナントで 0 行 (シード欠落、またはポリシー・GRANT の異常)';
+        END IF;
         IF cnt = 0 THEN
             skipped := skipped || t || ' ';
             CONTINUE;
