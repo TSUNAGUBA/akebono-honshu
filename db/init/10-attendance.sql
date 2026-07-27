@@ -267,13 +267,21 @@ BEGIN
         INSERT INTO leave_types (tenant_id, name, grant_method, expiry_months, is_statutory, description, display_order)
         SELECT t.tenant_id, '有給休暇', 0, 24, TRUE, '労働基準法 39 条の年次有給休暇 (時効 2 年)', 1
         WHERE NOT EXISTS (
-            -- ガードは不変な is_statutory を基準にする (name / deleted_at は可変)。
-            -- name 基準にすると改名後の再実行で、deleted_at 条件を付けると DB 直操作で
-            -- 論理削除した後の再実行で、それぞれ 2 行目が入る。既存 leave_grants が旧 id を
-            -- 指したまま新 id が有効になり有給残数が分裂するうえ、部分 UNIQUE 索引
-            -- uq_leave_types_tenant_name により復元 (LeaveService.RestoreTypeAsync) も 409 で塞がれる。
+            -- ガードは 2 条件の OR。どちらか片方だけでは冪等性が破れる。
+            --   (1) is_statutory (不変列): 統制有給が既にあれば入れない。name / deleted_at は
+            --       可変なので、name 基準だと改名後の再実行で、deleted_at 条件を付けると DB 直操作で
+            --       論理削除した後の再実行で、それぞれ 2 行目が入る。既存 leave_grants が旧 id を
+            --       指したまま新 id が有効になり有給残数が分裂するうえ、部分 UNIQUE 索引
+            --       uq_leave_types_tenant_name により復元 (LeaveService.RestoreTypeAsync) も 409 で塞がれる。
+            --   (2) name = '有給休暇' AND deleted_at IS NULL: 部分 UNIQUE 索引
+            --       uq_leave_types_tenant_name (tenant_id, name) WHERE deleted_at IS NULL への保護。
+            --       (1) だけにすると「統制行が無く、かつ同名の非統制行が有効で存在する」テナントで
+            --       INSERT が索引違反を起こし、スクリプトが中断する (後続の GRANT / RLS / トリガ配線が
+            --       丸ごと未実行になる)。API は同名の非統制種別の作成を禁じていないため到達し得る
+            --       (LeaveService.ValidateTypeName は空文字と 64 文字超しか弾かない)。
             SELECT 1 FROM leave_types
-             WHERE tenant_id = t.tenant_id AND is_statutory
+             WHERE tenant_id = t.tenant_id
+               AND (is_statutory OR (name = '有給休暇' AND deleted_at IS NULL))
         );
     END LOOP;
 END $$;

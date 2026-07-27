@@ -14,7 +14,19 @@ DECLARE
     other_tenant   UUID := '00000000-0000-4000-8000-000000000002';
     cnt            BIGINT;
     t              TEXT;
+    ref_qual       TEXT;   -- §8b: 既知の正としての brands.tenant_isolation の USING 式
+    ref_check      TEXT;   -- 同 WITH CHECK 式
+    probed         INT;    -- §8c: 実データで分離を実証できた勤怠テーブル数
+    skipped        TEXT;   -- §8c: 行が無く実証できなかった勤怠テーブル
 BEGIN
+    -- §8b で使う参照式を先に取る (brands は §1〜§4 で分離が実証済みの代表表)
+    SELECT qual, with_check INTO ref_qual, ref_check
+      FROM pg_policies
+     WHERE schemaname = 'public' AND tablename = 'brands' AND policyname = 'tenant_isolation';
+    IF ref_qual IS NULL THEN
+        RAISE EXCEPTION 'FAIL: 参照元 brands の tenant_isolation ポリシーが取得できない';
+    END IF;
+
     -- 前提: シード済みの brands にはデータが存在する
     PERFORM set_config('app.tenant_id', honshu_tenant::text, TRUE);
     SELECT count(*) INTO cnt FROM brands;
@@ -128,17 +140,41 @@ BEGIN
         ) THEN
             RAISE EXCEPTION 'FAIL: 勤怠テーブル % の ROW LEVEL SECURITY が未有効または FORCE でない', t;
         END IF;
-    END LOOP;
-    RAISE NOTICE 'PASS: 勤怠 6 テーブルに tenant_isolation + FORCE ROW LEVEL SECURITY が配線済み';
 
-    -- 8c. 勤怠 6 テーブルのテナント分離が実際に効く (フェイルクローズ含む)
-    --     ポリシーの存在だけでは USING 句の中身までは担保できないため、
-    --     他テナント / GUC 空文字の 2 条件で 0 行になることを実データで確認する。
+        -- USING / WITH CHECK の中身が既存 47 表と同一式であること。
+        -- 存在チェックだけでは USING (true) のような無効化を見逃す。勤怠 6 表は初期状態で
+        -- ほぼ空 (leave_types のシード 1 行のみ) のため、行を使う検証 (§8c) では空の 5 表を
+        -- 実証できない。式そのものを既知の正 (brands) と突き合わせて、その穴を埋める。
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies p
+             WHERE p.schemaname = 'public' AND p.tablename = t AND p.policyname = 'tenant_isolation'
+               AND p.qual       IS NOT DISTINCT FROM ref_qual
+               AND p.with_check IS NOT DISTINCT FROM ref_check
+        ) THEN
+            RAISE EXCEPTION 'FAIL: 勤怠テーブル % の tenant_isolation が brands と異なる式 (USING/WITH CHECK の書換または無効化)', t;
+        END IF;
+    END LOOP;
+    RAISE NOTICE 'PASS: 勤怠 6 テーブルに tenant_isolation + FORCE ROW LEVEL SECURITY が配線済み (式も brands と一致)';
+
+    -- 8c. 勤怠テーブルのテナント分離が実データで効く (フェイルクローズ含む)
+    --     §8b は式の一致までしか見ない。ここは実際に行が見えないことを確認する。
+    --     ただし **行が 1 件も無い表では「0 行」という結果に意味が無い** (分離を無効化しても 0 行)。
+    --     そのため自テナントで行が見える表だけを実証済みとして数え、空の表は実証できていないことを
+    --     NOTICE で明示する (原則4: 検証していないものを PASS と断定しない)。
+    probed := 0;
+    skipped := '';
     FOREACH t IN ARRAY ARRAY[
         'attendance_rules', 'punch_records', 'attendance_fix_requests',
         'leave_types', 'leave_grants', 'leave_requests'
     ]
     LOOP
+        PERFORM set_config('app.tenant_id', honshu_tenant::text, TRUE);
+        EXECUTE format('SELECT count(*) FROM %I', t) INTO cnt;
+        IF cnt = 0 THEN
+            skipped := skipped || t || ' ';
+            CONTINUE;
+        END IF;
+
         PERFORM set_config('app.tenant_id', other_tenant::text, TRUE);
         EXECUTE format('SELECT count(*) FROM %I', t) INTO cnt;
         IF cnt <> 0 THEN
@@ -150,8 +186,18 @@ BEGIN
         IF cnt <> 0 THEN
             RAISE EXCEPTION 'FAIL: GUC 未設定で % が % 行見えている (フェイルクローズ違反)', t, cnt;
         END IF;
+
+        probed := probed + 1;
     END LOOP;
-    RAISE NOTICE 'PASS: 勤怠 6 テーブルは他テナント / GUC 未設定のいずれでも 0 行 (フェイルクローズ)';
+
+    IF skipped <> '' THEN
+        RAISE NOTICE 'SKIP: 行が無く実データで実証できない勤怠テーブル: % (配線と式は §8b で検証済み)', rtrim(skipped);
+    END IF;
+    IF probed = 0 THEN
+        RAISE NOTICE 'PASS(限定): 勤怠テーブルは全て空のため、分離は §8b の式一致でのみ担保 (実データ未実証)';
+    ELSE
+        RAISE NOTICE 'PASS: 勤怠 % テーブルで他テナント / GUC 未設定のいずれも 0 行を実データで確認 (フェイルクローズ)', probed;
+    END IF;
 
     -- 9. accounts_receivable (security_invoker VIEW) に基底 RLS が呼出し側適用される
     PERFORM set_config('app.tenant_id', honshu_tenant::text, TRUE);
