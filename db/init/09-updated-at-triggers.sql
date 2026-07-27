@@ -6,9 +6,10 @@
 --       本ファイルは information_schema を走査し、public スキーマの updated_at 列を
 --       持つ全 BASE TABLE (VIEW は除外) へ trg_<table>_set_updated_at
 --       (BEFORE UPDATE FOR EACH ROW) を冪等に配線する。
---       テーブルを列挙しない汎用ループのため、07-ops-data.sql / 08-tenancy-rls.sql
---       など **本ファイルより前に実行される** ファイルで追加されたテーブルは
---       自動的にカバーされる。
+--       テーブルを列挙しない汎用ループのため、02-masters.sql 〜 07-ops-data.sql など
+--       **本ファイルより前に実行され、かつテーブルを作る** ファイルで追加された
+--       テーブルは自動的にカバーされる (08-tenancy-rls.sql はロール作成・GRANT/REVOKE と
+--       RLS 配線のみでテーブルを作らないため、カバー対象の増減には関与しない)。
 -- 適用範囲: 本ファイルは db/init の最後ではない (Iteration 30 で 10-attendance.sql が
 --           追加された)。09 より後に実行されるファイルで作られるテーブルは、本ファイルの
 --           information_schema 走査時点ではまだ存在しないため **カバーされない**。

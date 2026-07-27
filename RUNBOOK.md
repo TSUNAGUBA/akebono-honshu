@@ -33,7 +33,7 @@
 2. **DB 再作成** (tenant_id/RLS/TIMESTAMPTZ は既存ボリュームへ追従適用しない。稼働前 MVP のため再作成):
    ```bash
    docker compose down -v   # akebono-postgres-data ボリューム破棄
-   docker compose up -d     # db/init 01〜09 が番号順に自動適用される
+   docker compose up -d     # db/init 01〜10 が番号順に自動適用される
    ```
 3. **Firebase UID 再紐付け** (§0 手順 4 と同じ):
    ```sql
