@@ -298,10 +298,13 @@
 | `weekly_days` | `NUMERIC(3,1) NOT NULL DEFAULT 5` | **週所定日数（Iteration 30 追加）。有給の比例付与判定に使用。`CHECK (weekly_days BETWEEN 0 AND 7)`** |
 | `weekly_hours` | `NUMERIC(4,1) NOT NULL DEFAULT 40` | **週所定時間（Iteration 30 追加）。有給の比例付与判定に使用。`CHECK (weekly_hours BETWEEN 0 AND 168)`** |
 
-> **既知の課題（Iteration 30、要修正）:** 勤怠列のうち `attendance_rule_id` / `hire_date` / `weekly_days` /
-> `weekly_hours` の 4 件には入力 UI が無い一方、`PATCH /users/{id}` が全項目を無条件で上書きするため、
-> 利用者フォームから保存するたびにこれらが既定値へ巻き戻る。詳細と対処案は
-> `screen-design.md §3.12` の「既知の課題」を参照。
+> **既知の課題（Iteration 30）→ 解消済み（コミット `4c6981e`）:** 当初、勤怠列のうち
+> `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours` の 4 件に入力 UI が無い一方、
+> `PATCH /users/{id}` が全項目を無条件で上書きしていたため、利用者フォームから保存するたびに
+> これらが既定値へ巻き戻る BLOCKER があった。利用者フォームへの 4 項目追加と、
+> `PATCH` の部分更新化（`UserPatchRequest`。`null` = 未指定 = 現在値保持、NULL 許容列は
+> 明示クリアフラグ）の**両方**を実施して解消済み。経緯は `screen-design.md §3.12`、
+> API 契約は `api-design.md §2.7.9` を参照。
 
 > **設計判断:**
 > - 業務 PK は `employee_no`、認証 SoT は `firebase_uid`。両者を持つことで Firebase 不調時にも業務操作のトレースが可能。
