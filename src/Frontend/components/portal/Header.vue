@@ -5,7 +5,8 @@
  * 現在位置（パンくず・戻り先）は useNav が route.path から導出する。
  */
 const { breadcrumbs, parentPath } = useNav()
-const { user, logout } = useAuth()
+const { user, logout, canUseAttendance } = useAuth()
+const route = useRoute()
 
 const onLogout = async () => {
   await logout()
@@ -14,6 +15,11 @@ const onLogout = async () => {
 
 // 先頭「ホーム」はブランドリンクが担うため、パンくず表示は 2 件目以降。
 const trail = computed(() => breadcrumbs.value.slice(1))
+
+// タイムカードモーダル（ヘッダからどの画面でも打刻できる・office に倣う）。
+// 画面遷移したら閉じる（モーダル内の「勤怠管理へ」リンク等で遷移しても開いたまま覆わない）。
+const punchModalOpen = ref(false)
+watch(() => route.path, () => { punchModalOpen.value = false })
 </script>
 
 <template>
@@ -69,9 +75,20 @@ const trail = computed(() => breadcrumbs.value.slice(1))
         </template>
       </nav>
 
-      <!-- 右: ユーザ / ログアウト -->
+      <!-- 右: タイムカード / ユーザ / ログアウト -->
       <div class="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
         <ClientOnly>
+          <!-- タイムカード（勤怠権限がある利用者のみ。どの画面からでも打刻できる） -->
+          <button
+            v-if="user && canUseAttendance"
+            type="button"
+            class="flex min-h-[36px] items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+            aria-label="タイムカードを開いて打刻する"
+            @click="punchModalOpen = true"
+          >
+            <NavIcon name="clock" class="h-4 w-4" />
+            <span class="hidden sm:inline">タイムカード</span>
+          </button>
           <span v-if="user" class="hidden text-sm text-gray-600 md:inline">
             <strong class="font-semibold text-gray-900">{{ user.displayName }}</strong>
           </span>
@@ -87,5 +104,35 @@ const trail = computed(() => breadcrumbs.value.slice(1))
         </ClientOnly>
       </div>
     </div>
+
+    <!-- タイムカードモーダル（打刻カードをそのまま表示・操作。honshu のダイアログ作法 = MasterEditDialog に倣う） -->
+    <Teleport to="body">
+      <div
+        v-if="punchModalOpen"
+        class="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 py-6 sm:items-center"
+        role="dialog"
+        aria-modal="true"
+        aria-label="タイムカード"
+        @click.self="punchModalOpen = false"
+      >
+        <div class="flex max-h-[calc(100vh-3rem)] w-full max-w-md flex-col rounded-lg bg-white shadow-xl">
+          <header class="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
+            <h2 class="flex items-center gap-1.5 text-base font-semibold text-gray-800">
+              <NavIcon name="clock" class="h-4 w-4 text-gray-500" />
+              タイムカード
+            </h2>
+            <button
+              type="button"
+              class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              aria-label="閉じる"
+              @click="punchModalOpen = false"
+            >✕</button>
+          </header>
+          <div class="flex-1 overflow-y-auto px-4 py-3">
+            <AttendancePunchCard />
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </header>
 </template>
