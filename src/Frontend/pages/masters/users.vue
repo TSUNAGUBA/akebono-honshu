@@ -23,8 +23,10 @@ interface UserItem {
   processRecordPermission: number
   // 勤怠 (末尾追加・勤怠移植仕様 §2)。Backend 未更新の環境では欠落し得るため optional。
   // さらに**労務個人情報のためオーナー以外には null で返る** (サーバが応答から落とす)。
-  // 本画面はオーナー専用のため実値が入るが、型は null 許容にそろえ、表示は fail-close
-  // (権限は 0、打刻対象は false) で解釈する。
+  // 本画面は非オーナーも「閲覧のみ」で開けるため、非オーナーでは null が届く。
+  // null を「なし / 未設定」と描くと偽の断定になるので、該当列は一覧では描画しない
+  // (canManageUsers で出し分け)。オーナーが編集フォームを開いたときの解釈のみ
+  // fail-close (権限は 0、打刻対象は false) とする。
   attendancePermission?: number | null
   punchRequired?: boolean | null
   // 勤務体系 (null = 既定ルール **または 取得権限なし**)。入社日は有給の周期自動付与の起算日。
@@ -405,8 +407,10 @@ const remove = async (u: UserItem) => {
             <th class="px-3 py-2 text-left">発注書作成</th>
             <th class="px-3 py-2 text-left">発注情報</th>
             <th class="px-3 py-2 text-left">利用者管理</th>
-            <th class="px-3 py-2 text-left">勤怠</th>
-            <th class="px-3 py-2 text-left">入社日</th>
+            <!-- 勤怠権限・入社日は労務個人情報のため、サーバがオーナー以外には null を返す。
+                 非オーナーに null を描くと「なし」「未設定」という偽の断定になるため列ごと隠す。 -->
+            <th v-if="canManageUsers" class="px-3 py-2 text-left">勤怠</th>
+            <th v-if="canManageUsers" class="px-3 py-2 text-left">入社日</th>
             <th class="px-3 py-2 text-center">状態</th>
             <th class="px-3 py-2 text-right"></th>
           </tr>
@@ -419,14 +423,14 @@ const remove = async (u: UserItem) => {
             <td class="px-3 py-2">{{ labelOf(ORDER_CREATE_OPTS, u.purchaseOrderCreatePermission) }}</td>
             <td class="px-3 py-2">{{ labelOf(YESNO_OPTS, u.purchaseOrderInfoPermission) }}</td>
             <td class="px-3 py-2">{{ labelOf(YESNO_OPTS, u.processRecordPermission) }}</td>
-            <td class="px-3 py-2">
+            <td v-if="canManageUsers" class="px-3 py-2">
               <!-- 応答にフィールドが無い場合の解釈は編集フォーム (startEdit) と揃える。
                    一覧が「更新可能」、フォームが「なし」と食い違うと、開いて保存しただけで
                    権限が変わったように見えるため。権限は常に fail-close 側で表示する。 -->
               {{ labelOf(ATTENDANCE_OPTS, u.attendancePermission ?? 0) }}
               <span v-if="!(u.punchRequired ?? false)" class="ml-1 text-xs text-gray-400">(打刻対象外)</span>
             </td>
-            <td class="whitespace-nowrap px-3 py-2">
+            <td v-if="canManageUsers" class="whitespace-nowrap px-3 py-2">
               <template v-if="u.hireDate">{{ u.hireDate.slice(0, 10) }}</template>
               <span v-else class="text-xs text-gray-400">未設定</span>
             </td>
@@ -443,7 +447,8 @@ const remove = async (u: UserItem) => {
             </td>
           </tr>
           <tr v-if="users.length === 0">
-            <td colspan="10" class="px-3 py-6 text-center text-gray-500">利用者が登録されていません</td>
+            <!-- 勤怠・入社日の 2 列は非オーナーでは描画しないため colspan を連動させる。 -->
+            <td :colspan="canManageUsers ? 10 : 8" class="px-3 py-6 text-center text-gray-500">利用者が登録されていません</td>
           </tr>
         </tbody>
       </table>
