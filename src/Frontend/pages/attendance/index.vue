@@ -16,21 +16,45 @@
  *   打刻の誤りは「打刻修正を申請」から復帰できる旨を UI に明示する。
  */
 import type {
+  AttendanceRuleDto,
   Buckets,
   DaySummary,
   MonthSummary,
   Article36Alert,
+  RequestStatus,
   TimecardRow,
   PunchDto,
   PunchKind,
   LeaveUnit,
 } from '~/composables/useAttendance'
-import { fmtMinutes, fmtHours, PUNCH_KIND_LABELS } from '~/utils/attendance'
+import { emptyBuckets, toJstOffsetString, TIMECARD_RANGE_MAX_DAYS } from '~/composables/useAttendance'
+import {
+  addBizDays,
+  addBizMonths,
+  bizDateKey,
+  bizDaysInMonth,
+  bizWeekday,
+  bucketTextClass,
+  diffBizDays,
+  fmtBizDate,
+  fmtHours,
+  fmtJstHm,
+  fmtMinutes,
+  startOfBizWeek,
+  BUCKET_LABELS,
+  LEAVE_UNIT_LABELS,
+  PUNCH_KIND_LABELS,
+  REQUEST_STATUS_CLASSES,
+  REQUEST_STATUS_LABELS,
+  WEEKDAY_JP,
+} from '~/utils/attendance'
 
 // ------------------------------------------------------------------
 // 1. 依存 (composable) と、本画面ローカルで持つ DTO 型
 // ------------------------------------------------------------------
 // 勤怠 API の呼び出しは useAttendance に集約する (キャッシュ規約は composable 側が SoT)。
+// 勤怠ルール (§5.3 #10〜14) も composable 経由で叩く。ルール変更は所定労働時間・法定休日を通じて
+// 日次集計に効くため、更新後は必ず invalidate() でサマリキャッシュを捨てる。
 const {
   monthSummary,
   daySummaryFromMonth,
@@ -40,6 +64,11 @@ const {
   loadFixRequests,
   requestFix,
   decideFix,
+  attendanceRules,
+  createAttendanceRule,
+  updateAttendanceRule,
+  deleteAttendanceRule,
+  restoreAttendanceRule,
   leaveSummary,
   leaveTypes,
   leaveRequests,
@@ -52,12 +81,9 @@ const {
   invalidate,
 } = useAttendance()
 
-// 勤怠ルール (§5.3 #10〜14) は useAttendance の公開シグネチャ (§6.3) に含まれないため、
-// 本画面から useApi で直接叩く。ルール変更は日次集計 (所定労働時間・法定休日) に効くので、
-// 更新後は必ず invalidate() でサマリキャッシュを捨てる。
-const { apiData, apiFetch } = useApi()
+// メンバー切替・個別付与で使う利用者一覧は既存の /users を再利用する (原則3)。
+const { apiData } = useApi()
 
-// メンバー切替・個別付与で使う利用者一覧 (既存 /users を再利用。原則3)。
 interface MemberOption {
   id: string
   displayName: string
@@ -68,8 +94,6 @@ interface MemberOption {
 // 以下のレスポンス型は API 契約 (§5.2 / §5.4) に対応する本画面ローカル定義。
 // enum 相当の項目は string で受ける (composable 側の型定義と構造的に代入可能な、より広い型にして
 // 契約の細部のブレで画面が壊れないようにする)。表示ラベルは *_LABELS の引き当てで解決する。
-type RequestStatus = string
-
 interface FixRequest {
   id: string
   userId: string
@@ -78,7 +102,7 @@ interface FixRequest {
   kind: string
   requestedAt: string
   reason: string
-  status: RequestStatus
+  status: string
   decidedByUserId: string | null
   decidedByUserName: string | null
   createdAt: string
@@ -103,7 +127,7 @@ interface LeaveRequestItem {
   leaveTypeName: string
   date: string
   unit: string
-  status: RequestStatus
+  status: string
   reason: string
   decidedByUserId: string | null
   decidedByUserName: string | null
@@ -139,7 +163,7 @@ interface LeaveSummaryData {
     leaveTypeId: string
     leaveTypeName: string
     detail: string
-    status: RequestStatus
+    status: string
     days: string
   }[]
 }
@@ -155,32 +179,18 @@ interface LeaveAdminRow {
   lastGrantDate: string | null
 }
 
-interface AttendanceRule {
-  id: string
-  name: string
-  workStart: string
-  workEnd: string
-  breakMinutes: number
-  flexEnabled: boolean
-  flexCoreStart: string | null
-  flexCoreEnd: string | null
-  flexSettlementMonths: number
-  closingDay: number
-  legalHolidayWeekday: number
-  isDefault: boolean
-  isActive: boolean
-  deletedAt: string | null
-}
-
 // ------------------------------------------------------------------
 // 2. 権限 (仕様書 §2)
 // ------------------------------------------------------------------
 // 勤怠権限は既存 4 権限と同じ非単調スケール (0=なし / 1=更新可能 / 2=参照のみ)。
-// 書込判定は必ず `=== 1`。管理系はオーナー権限 (process_record_permission >= 1) に集約する。
-const { user, canUseAttendance } = useAuth()
+// 書込判定は必ず `=== 1`。管理系はオーナー権限 (process_record_permission) に集約する。
+const { user, canUseAttendance, isAttendanceAdmin } = useAuth()
 
-/** 管理操作 (全員のタイムカード / 承認・却下 / 休暇付与 / 勤怠ルール設定) の可否。 */
-const isOwner = computed(() => (user.value?.processRecordPermission ?? 0) >= 1)
+/**
+ * 管理操作 (全員のタイムカード / 承認・却下 / 休暇付与 / 勤怠ルール設定) の可否。
+ * 判定式は useAuth の isAttendanceAdmin が SoT (本画面でオーナー判定を再実装しない・原則3)。
+ */
+const isOwner = isAttendanceAdmin
 /** 勤怠の書込操作 (打刻修正申請・休暇申請) の可否。参照のみ (2) は不可なので `=== 1`。 */
 const canWriteAttendance = computed(() => (user.value?.attendancePermission ?? 0) === 1)
 
@@ -188,102 +198,30 @@ const myUserId = computed(() => user.value?.userId ?? '')
 const myDisplayName = computed(() => user.value?.displayName ?? '')
 
 // ------------------------------------------------------------------
-// 3. 日付ユーティリティ (業務日付 YYYY-MM-DD の演算)
+// 3. 勤怠の定数・表示ラベル (バックエンドの AttendanceCalc / AttendanceService と同値)
 // ------------------------------------------------------------------
-// utils/datetime.ts には「任意の日付を起点にした加算」が無いため本画面ローカルに置く
-// (utils/attendance.ts は別担当のファイルのため触らない)。実行環境 TZ に依存しないよう
-// すべて UTC 0 時基準で計算する。表示用の時刻整形も datetime.ts の関数を使う。
-const DATE_LEN = 10
-/** 'YYYY-MM-DD...' の先頭 10 文字 (DateOnly / ISO どちらで届いても業務日付キーに正規化する)。 */
-const dateKey = (value: string): string => (value ?? '').slice(0, DATE_LEN)
-
-const addDays = (date: string, days: number): string => {
-  const d = new Date(`${dateKey(date)}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, DATE_LEN)
-}
-/** a → b の日数差 (b - a)。両端とも業務日付。 */
-const diffDays = (a: string, b: string): number =>
-  Math.round((Date.parse(`${dateKey(b)}T00:00:00Z`) - Date.parse(`${dateKey(a)}T00:00:00Z`)) / 86400000)
-/** 曜日 (0=日曜)。 */
-const weekdayOf = (date: string): number => new Date(`${dateKey(date)}T00:00:00Z`).getUTCDay()
-/** 週の起点 (日曜) へ丸める。 */
-const startOfWeek = (date: string): string => addDays(date, -weekdayOf(date))
-const addMonths = (month: string, delta: number): string => {
-  const [y, m] = month.split('-').map(Number)
-  const d = new Date(Date.UTC(y, (m - 1) + delta, 1))
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
-}
-const daysInMonth = (month: string): number => {
-  const [y, m] = month.split('-').map(Number)
-  return new Date(Date.UTC(y, m, 0)).getUTCDate()
-}
-const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土']
-/** 業務日付の表示 (例: 7/9(木))。 */
-const fmtDateShort = (date: string): string => {
-  const k = dateKey(date)
-  const [, m, d] = k.split('-')
-  return `${Number(m)}/${Number(d)}(${WEEKDAY_LABELS[weekdayOf(k)]})`
-}
-/**
- * UTC タイムスタンプ → JST の HH:mm (打刻タイムライン用。datetime.ts に時刻のみの整形が無いため)。
- * ロケールに en-GB を使うのは 24 時間制・ゼロ埋め (09:30) を保証するため。この値は表示だけでなく
- * `<input type="time">` の初期値にも渡すので、'9:30' のような非ゼロ埋めだと入力欄が空になる。
- */
-const fmtJstTime = (value: string): string =>
-  new Date(value).toLocaleTimeString('en-GB', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })
-
-// ------------------------------------------------------------------
-// 4. 勤怠の定数・表示ラベル (バックエンドの AttendanceCalc / AttendanceService と同値)
-// ------------------------------------------------------------------
+// 日付演算 (addBizDays / diffBizDays / bizWeekday / startOfBizWeek / addBizMonths / bizDaysInMonth)
+// と表示ラベル・配色は utils/attendance.ts が SoT。本画面でローカル再実装しない (原則3)。
 /** 労基法 32 条 週法定労働時間 (分)。AttendanceCalc.LegalWeeklyMinutes と同値。 */
 const LEGAL_WEEKLY_MINUTES = 40 * 60
 /** 36 協定 原則月上限 (分)。AttendanceCalc.OtMonthlyLimitMinutes と同値。 */
 const OT_MONTHLY_LIMIT_MINUTES = 45 * 60
-/** タイムカードの期間上限 (日)。SoT はバックエンド定数 AttendanceService.TimecardRangeMaxDays。 */
-const TIMECARD_RANGE_MAX_DAYS = 62
 
-/** 6 バケットの表示定義 (仕様書 §6.5)。 */
-const BUCKET_DEFS: { key: keyof Buckets; label: string }[] = [
-  { key: 'scheduled', label: '所定内' },
-  { key: 'statutoryOt', label: '法定内残業' },
-  { key: 'nonStatutoryOt', label: '法定外残業' },
-  { key: 'over60Ot', label: '60h超残業' },
-  { key: 'night', label: '深夜' },
-  { key: 'legalHoliday', label: '法定休日' },
-]
-/** バケット値の配色 (0 以下は淡色、割増の大きいものほど強い色)。 */
-const bucketClass = (key: keyof Buckets, value: number): string => {
-  if (value <= 0) return 'text-gray-400'
-  if (key === 'over60Ot') return 'text-red-600'
-  if (key === 'nonStatutoryOt' || key === 'legalHoliday') return 'text-amber-600'
-  return 'text-gray-800'
-}
-const emptyBuckets = (): Buckets => ({
-  scheduled: 0, statutoryOt: 0, nonStatutoryOt: 0, over60Ot: 0, night: 0, legalHoliday: 0,
-})
-
-const STATUS_LABELS: Record<string, string> = { pending: '承認待ち', approved: '承認済み', rejected: '却下' }
-const STATUS_CLASSES: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-800',
-  approved: 'bg-green-100 text-green-700',
-  rejected: 'bg-gray-200 text-gray-600',
-}
-const statusLabel = (s: string): string => STATUS_LABELS[s] ?? s
-const statusClass = (s: string): string => STATUS_CLASSES[s] ?? 'bg-gray-100 text-gray-600'
-
-const UNIT_LABELS: Record<string, string> = { full: '全日', half: '半日' }
-const unitLabel = (u: string): string => UNIT_LABELS[u] ?? u
-
-// 打刻種別のラベル。契約上は 4 種のみだが、未知値が来ても画面が壊れないよう素の値にフォールバックする。
+// ラベル引き当ては未知値が来ても画面が壊れないよう素の値へフォールバックする
+// (定義そのものは utils/attendance.ts の *_LABELS / *_CLASSES が SoT)。
+const statusLabel = (s: string): string => REQUEST_STATUS_LABELS[s as RequestStatus] ?? s
+const statusClass = (s: string): string => REQUEST_STATUS_CLASSES[s as RequestStatus] ?? 'bg-gray-100 text-gray-600'
+const unitLabel = (u: string): string => LEAVE_UNIT_LABELS[u as LeaveUnit] ?? u
 const kindLabel = (k: string): string => PUNCH_KIND_LABELS[k as PunchKind] ?? k
+
 const PUNCH_KIND_OPTIONS = (['in', 'out', 'breakStart', 'breakEnd'] as PunchKind[])
   .map((k) => ({ value: k, label: PUNCH_KIND_LABELS[k] }))
-const UNIT_OPTIONS = [{ value: 'full', label: '全日' }, { value: 'half', label: '半日' }]
-const WEEKDAY_OPTIONS = WEEKDAY_LABELS.map((label, i) => ({ value: String(i), label: `${label}曜日` }))
+const UNIT_OPTIONS = (['full', 'half'] as LeaveUnit[])
+  .map((u) => ({ value: u, label: LEAVE_UNIT_LABELS[u] }))
+const WEEKDAY_OPTIONS = WEEKDAY_JP.map((label, i) => ({ value: String(i), label: `${label}曜日` }))
 
 // ------------------------------------------------------------------
-// 5. タブ管理 (?tab= と双方向同期)
+// 4. タブ管理 (?tab= と双方向同期)
 // ------------------------------------------------------------------
 const VALID_TABS = ['daily', 'weekly', 'monthly', 'leave', 'requests', 'timecard', 'leave-admin', 'settings'] as const
 type TabKey = (typeof VALID_TABS)[number]
@@ -354,7 +292,7 @@ const selectTab = (tab: TabKey) => {
 }
 
 // ------------------------------------------------------------------
-// 6. 対象メンバー・共通の状態
+// 5. 対象メンバー・共通の状態
 // ------------------------------------------------------------------
 const members = ref<MemberOption[]>([])
 const targetUserId = ref('')
@@ -390,12 +328,12 @@ const goToDaily = (date: string | null, userId?: string) => {
     if (!isOwner.value) return
     targetUserId.value = userId
   }
-  selectedDate.value = dateKey(date)
+  selectedDate.value = bizDateKey(date)
   activeTab.value = 'daily'
 }
 
 // ------------------------------------------------------------------
-// 7. 日次タブ
+// 6. 日次タブ
 // ------------------------------------------------------------------
 // 日付の初期値は必ず todayJst() (UTC 由来の前日ずれ防止)。
 const selectedDate = ref(todayJst())
@@ -444,10 +382,10 @@ const dailyRequiredBreak = computed(() =>
   (dailySummary.value?.breakMinutes ?? 0) + (dailySummary.value?.breakShortage ?? 0))
 
 // ------------------------------------------------------------------
-// 8. 週次タブ (週の起点は日曜)
+// 7. 週次タブ (週の起点は日曜)
 // ------------------------------------------------------------------
-const weekStart = computed(() => startOfWeek(selectedDate.value))
-const weekDates = computed(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart.value, i)))
+const weekStart = computed(() => startOfBizWeek(selectedDate.value))
+const weekDates = computed(() => Array.from({ length: 7 }, (_, i) => addBizDays(weekStart.value, i)))
 const weekDays = ref<(DaySummary | null)[]>([])
 const weeklyLoading = ref(false)
 const weeklyError = ref('')
@@ -476,10 +414,10 @@ const weekLevel = computed<'crit' | 'warn' | 'ok'>(() =>
   weekPercent.value > 100 ? 'crit' : weekPercent.value >= 80 ? 'warn' : 'ok')
 const weekBarClass = computed(() =>
   weekLevel.value === 'crit' ? 'bg-red-500' : weekLevel.value === 'warn' ? 'bg-amber-500' : 'bg-blue-500')
-const shiftWeek = (delta: number) => { selectedDate.value = addDays(selectedDate.value, delta * 7) }
+const shiftWeek = (delta: number) => { selectedDate.value = addBizDays(selectedDate.value, delta * 7) }
 
 // ------------------------------------------------------------------
-// 9. 月次タブ
+// 8. 月次タブ
 // ------------------------------------------------------------------
 const selectedMonth = ref(currentMonthJst())
 const monthData = ref<MonthSummary | null>(null)
@@ -530,10 +468,10 @@ const loadMonthly = async () => {
 
 const monthDayMap = computed(() => {
   const map = new Map<string, DaySummary>()
-  for (const d of monthData.value?.days ?? []) map.set(dateKey(d.date), d)
+  for (const d of monthData.value?.days ?? []) map.set(bizDateKey(d.date), d)
   return map
 })
-const monthLeaveDates = computed(() => new Set(monthLeaves.value.map((r) => dateKey(r.date))))
+const monthLeaveDates = computed(() => new Set(monthLeaves.value.map((r) => bizDateKey(r.date))))
 
 interface CalendarCell {
   date: string | null
@@ -552,9 +490,9 @@ const calendarCells = computed<CalendarCell[]>(() => {
     date: null, day: 0, summary: null, isLegalHoliday: false, isToday: false,
     hasLeave: false, warnBreak: false, warnOver60: false,
   })
-  const lead = weekdayOf(`${month}-01`)
+  const lead = bizWeekday(`${month}-01`)
   for (let i = 0; i < lead; i++) cells.push(blank())
-  const total = daysInMonth(month)
+  const total = bizDaysInMonth(month)
   const today = todayJst()
   for (let d = 1; d <= total; d++) {
     const date = `${month}-${String(d).padStart(2, '0')}`
@@ -563,7 +501,7 @@ const calendarCells = computed<CalendarCell[]>(() => {
       date,
       day: d,
       summary,
-      isLegalHoliday: weekdayOf(date) === legalHolidayWeekday.value || (summary?.buckets.legalHoliday ?? 0) > 0,
+      isLegalHoliday: bizWeekday(date) === legalHolidayWeekday.value || (summary?.buckets.legalHoliday ?? 0) > 0,
       isToday: date === today,
       hasLeave: monthLeaveDates.value.has(date),
       warnBreak: (summary?.breakShortage ?? 0) > 0,
@@ -580,10 +518,10 @@ const monthOtMinutes = computed(() => monthTotals.value.nonStatutoryOt + monthTo
 const monthOtPercent = computed(() => Math.round((monthOtMinutes.value / OT_MONTHLY_LIMIT_MINUTES) * 1000) / 10)
 const monthOtBarClass = computed(() =>
   monthOtPercent.value > 100 ? 'bg-red-500' : monthOtPercent.value >= 80 ? 'bg-amber-500' : 'bg-blue-500')
-const shiftMonth = (delta: number) => { selectedMonth.value = addMonths(selectedMonth.value, delta) }
+const shiftMonth = (delta: number) => { selectedMonth.value = addBizMonths(selectedMonth.value, delta) }
 
 // ------------------------------------------------------------------
-// 10. 休暇タブ
+// 9. 休暇タブ
 // ------------------------------------------------------------------
 const leaveData = ref<LeaveSummaryData | null>(null)
 const leaveTypeItems = ref<LeaveTypeItem[]>([])
@@ -638,7 +576,7 @@ const obligationPercent = computed(() => {
 })
 
 // ------------------------------------------------------------------
-// 11. 申請タブ
+// 10. 申請タブ
 // ------------------------------------------------------------------
 const pendingFixes = ref<FixRequest[]>([])
 const pendingLeaves = ref<LeaveRequestItem[]>([])
@@ -684,7 +622,7 @@ const pendingCount = computed(() => pendingFixes.value.length + pendingLeaves.va
 const approveFix = async (r: FixRequest) => {
   await runWrite(async () => {
     await decideFix(r.id, 'approved')
-    successMessage.value = `${r.userName} さんの打刻修正を承認しました（${dateKey(r.date)} ${kindLabel(r.kind)}）`
+    successMessage.value = `${r.userName} さんの打刻修正を承認しました（${bizDateKey(r.date)} ${kindLabel(r.kind)}）`
     // 承認は打刻列を書き換える = 集計キャッシュが陳腐化するため必ず破棄する。
     invalidate()
     await Promise.all([loadRequests(), reloadActiveSummary()])
@@ -693,7 +631,7 @@ const approveFix = async (r: FixRequest) => {
 const rejectFix = (r: FixRequest) => {
   askConfirm({
     title: '打刻修正を却下しますか？',
-    message: `${r.userName} さん / ${dateKey(r.date)} ${kindLabel(r.kind)} → ${fmtJstTime(r.requestedAt)}`,
+    message: `${r.userName} さん / ${bizDateKey(r.date)} ${kindLabel(r.kind)} → ${fmtJstHm(r.requestedAt)}`,
     note: '却下した申請は元に戻せません。申請者は必要に応じて再申請できます。',
     confirmLabel: '却下する',
     run: async () => {
@@ -708,7 +646,7 @@ const rejectFix = (r: FixRequest) => {
 const approveLeave = async (r: LeaveRequestItem) => {
   await runWrite(async () => {
     await decideLeave(r.id, 'approved')
-    successMessage.value = `${r.userName} さんの休暇申請を承認しました（${dateKey(r.date)}）`
+    successMessage.value = `${r.userName} さんの休暇申請を承認しました（${bizDateKey(r.date)}）`
     invalidate()
     await Promise.all([loadRequests(), reloadActiveSummary()])
   }, '休暇申請の承認に失敗しました')
@@ -716,7 +654,7 @@ const approveLeave = async (r: LeaveRequestItem) => {
 const rejectLeave = (r: LeaveRequestItem) => {
   askConfirm({
     title: '休暇申請を却下しますか？',
-    message: `${r.userName} さん / ${dateKey(r.date)} ${r.leaveTypeName}（${unitLabel(r.unit)}）`,
+    message: `${r.userName} さん / ${bizDateKey(r.date)} ${r.leaveTypeName}（${unitLabel(r.unit)}）`,
     note: '却下した申請は元に戻せません。申請者は必要に応じて再申請できます。',
     confirmLabel: '却下する',
     run: async () => {
@@ -730,7 +668,7 @@ const rejectLeave = (r: LeaveRequestItem) => {
 }
 
 // ------------------------------------------------------------------
-// 12. 全員のタイムカードタブ (オーナー)
+// 11. 全員のタイムカードタブ (オーナー)
 // ------------------------------------------------------------------
 const tcFrom = ref(todayJstPlusDays(-6))
 const tcTo = ref(todayJst())
@@ -739,13 +677,22 @@ const tcRows = ref<TimecardRow[]>([])
 const tcLoading = ref(false)
 const tcError = ref('')
 
-/** from > to は入れ替えて解釈し、期間は上限 62 日にクランプする (サーバの 422 を未然に防ぐ)。 */
+/**
+ * from > to は入れ替えて解釈し、期間は上限 `TIMECARD_RANGE_MAX_DAYS` 日にクランプする
+ * (サーバの 422 を未然に防ぐ)。
+ *
+ * **日数は「両端含み」で数える**: サーバ (`AttendanceService.GetTimecardAsync`) が
+ * `to - from + 1 > TimecardRangeMaxDays` で弾くため、フロントも同じ数え方に揃える。
+ * `diffBizDays` は差分 (両端含みより 1 少ない) を返すので、判定には +1、
+ * クランプ幅は `-(上限 - 1)` になる。ここを揃えないと「画面が自動で縮めた期間が
+ * そのままサーバに 422 で弾かれる」状態になる (/attendance/timecard と同一の式)。
+ */
 const tcRange = computed(() => {
   let from = tcFrom.value || todayJstPlusDays(-6)
   let to = tcTo.value || todayJst()
   if (from > to) [from, to] = [to, from]
-  const capped = diffDays(from, to) > TIMECARD_RANGE_MAX_DAYS
-  if (capped) from = addDays(to, -TIMECARD_RANGE_MAX_DAYS)
+  const capped = diffBizDays(from, to) + 1 > TIMECARD_RANGE_MAX_DAYS
+  if (capped) from = addBizDays(to, -(TIMECARD_RANGE_MAX_DAYS - 1))
   return { from, to, capped }
 })
 
@@ -772,7 +719,7 @@ const resetTimecardFilter = () => {
 }
 
 // ------------------------------------------------------------------
-// 13. 休暇管理タブ (オーナー)
+// 12. 休暇管理タブ (オーナー)
 // ------------------------------------------------------------------
 const leaveAdminRows = ref<LeaveAdminRow[]>([])
 const leaveAdminLoading = ref(false)
@@ -807,9 +754,9 @@ const activeLeaveTypeOptions = computed(() =>
   leaveTypeItems.value.filter((t) => t.isActive).map((t) => ({ id: t.id, name: t.name })))
 
 // ------------------------------------------------------------------
-// 14. 設定タブ (勤怠ルール・オーナー)
+// 13. 設定タブ (勤怠ルール・オーナー)
 // ------------------------------------------------------------------
-const rules = ref<AttendanceRule[]>([])
+const rules = ref<AttendanceRuleDto[]>([])
 const rulesLoading = ref(false)
 const rulesError = ref('')
 const rulesIncludeInactive = ref(false)
@@ -818,7 +765,7 @@ const loadRules = async () => {
   rulesLoading.value = true
   rulesError.value = ''
   try {
-    rules.value = await apiData<AttendanceRule[]>(`/attendance/rules?includeInactive=${rulesIncludeInactive.value}`)
+    rules.value = await attendanceRules(rulesIncludeInactive.value)
   } catch (e) {
     rulesError.value = getApiErrorMessage(e, '勤怠ルールの取得に失敗しました')
     rules.value = []
@@ -829,7 +776,7 @@ const loadRules = async () => {
 watch(rulesIncludeInactive, () => { if (activeTab.value === 'settings') void loadRules() })
 
 // ------------------------------------------------------------------
-// 15. データロードのディスパッチ (タブ・対象メンバー・日付の変化で必要な分だけ取りにいく)
+// 14. データロードのディスパッチ (タブ・対象メンバー・日付の変化で必要な分だけ取りにいく)
 // ------------------------------------------------------------------
 const successMessage = ref('')
 const writeBusy = ref(false)
@@ -893,7 +840,7 @@ const runWrite = async (fn: () => Promise<void>, fallback: string): Promise<bool
 }
 
 // ------------------------------------------------------------------
-// 16. 汎用の確認ダイアログ (却下・論理削除・周期付与の実行など、取り返しの付かない操作の直前確認)
+// 15. 汎用の確認ダイアログ (却下・論理削除・周期付与の実行など、取り返しの付かない操作の直前確認)
 // ------------------------------------------------------------------
 interface ConfirmOptions {
   title: string
@@ -919,7 +866,7 @@ const runConfirm = async () => {
 }
 
 // ------------------------------------------------------------------
-// 17. 打刻修正の申請モーダル
+// 16. 打刻修正の申請モーダル
 // ------------------------------------------------------------------
 const fixModalOpen = ref(false)
 const fixForm = ref({ date: todayJst(), kind: 'in' as PunchKind, time: '09:00', reason: '' })
@@ -931,7 +878,9 @@ const openFixModal = (punch?: PunchDto) => {
     date: selectedDate.value,
     kind: punch?.kind ?? 'in',
     // 既存打刻を指定して開いた場合は、その打刻の現在値を初期値にする (どこを直すのかが一目で分かる)。
-    time: punch ? fmtJstTime(punch.at) : '09:00',
+    // fmtJstHm は 24 時間制・ゼロ埋めの "HH:mm" を返す ('9:30' のような非ゼロ埋めだと
+    // <input type="time"> が値を受け付けず入力欄が空になるため、この保証が要る)。
+    time: punch ? fmtJstHm(punch.at) : '09:00',
     reason: '',
   }
   fixModalOpen.value = true
@@ -941,10 +890,14 @@ const closeFixModal = () => { fixModalOpen.value = false }
 const submitFix = async () => {
   const f = fixForm.value
   if (!f.date) { formError.value = '対象の日付を入力してください'; return }
-  if (!/^\d{2}:\d{2}$/.test(f.time)) { formError.value = '修正後の時刻を HH:mm で入力してください'; return }
+  // 秒付き ("09:00:00") も受ける: <input type="time"> は step 指定やブラウザによって秒を返す。
+  // 送信値は toJstOffsetString が HH:mm へ丸める。
+  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(f.time)) { formError.value = '修正後の時刻を HH:mm で入力してください'; return }
   if (!f.reason.trim()) { formError.value = '修正理由を入力してください（客観的記録の担保）'; return }
   // requestedAt は JST のオフセット付きで送る (サーバは DateTimeOffset で受けて UTC 化する)。
-  const requestedAt = `${f.date}T${f.time}:00+09:00`
+  // 組み立ては toJstOffsetString に任せる: <input type="time"> は環境により "09:00:00" を返すため、
+  // 素朴なテンプレート結合だと "...T09:00:00:00+09:00" になり 422 になる。
+  const requestedAt = toJstOffsetString(f.date, f.time)
   const ok = await runWrite(async () => {
     await requestFix({ date: f.date, kind: f.kind, requestedAt, reason: f.reason.trim() })
     successMessage.value = '打刻修正を申請しました。承認されると打刻に反映されます。'
@@ -956,7 +909,7 @@ const submitFix = async () => {
 }
 
 // ------------------------------------------------------------------
-// 18. 休暇の申請モーダル
+// 17. 休暇の申請モーダル
 // ------------------------------------------------------------------
 const leaveModalOpen = ref(false)
 // unit は 'full' | 'half' に固定する (string へ広げると不正値が API まで素通りするため)。
@@ -997,7 +950,7 @@ const submitLeave = async () => {
 }
 
 // ------------------------------------------------------------------
-// 19. 休暇付与モーダル (個別 / 一括 / 周期実行)
+// 18. 休暇付与モーダル (個別 / 一括 / 周期実行)
 // ------------------------------------------------------------------
 const grantModalOpen = ref(false)
 const grantForm = ref({ userId: '', leaveTypeId: '', grantDate: todayJst(), days: 1 })
@@ -1089,7 +1042,7 @@ const confirmPeriodicRun = () => {
 }
 
 // ------------------------------------------------------------------
-// 20. 勤怠ルールの追加・編集モーダル
+// 19. 勤怠ルールの追加・編集モーダル
 // ------------------------------------------------------------------
 const ruleModalOpen = ref(false)
 const ruleEditingId = ref<string | null>(null)
@@ -1109,7 +1062,7 @@ const emptyRuleForm = () => ({
 })
 const ruleForm = ref(emptyRuleForm())
 
-const openRuleModal = (rule?: AttendanceRule) => {
+const openRuleModal = (rule?: AttendanceRuleDto) => {
   formError.value = ''
   successMessage.value = ''
   if (rule) {
@@ -1176,10 +1129,12 @@ const submitRule = async () => {
   const editingId = ruleEditingId.value
   const ok = await runWrite(async () => {
     if (editingId) {
-      await apiData<AttendanceRule>(`/attendance/rules/${editingId}`, { method: 'PATCH', body })
+      // 全項目を送る「全量更新」。PATCH は部分更新だが、モーダルは全項目を編集させるため
+      // 送っていない項目が既定値で潰れる心配は無い。
+      await updateAttendanceRule(editingId, body)
       successMessage.value = `勤怠ルール「${body.name}」を更新しました`
     } else {
-      await apiData<AttendanceRule>('/attendance/rules', { method: 'POST', body })
+      await createAttendanceRule(body)
       successMessage.value = `勤怠ルール「${body.name}」を追加しました`
     }
     // ルールは所定労働時間・法定休日の判定に効くため、集計キャッシュを破棄して次回再計算させる。
@@ -1189,14 +1144,14 @@ const submitRule = async () => {
   if (ok) closeRuleModal()
 }
 
-const confirmDeleteRule = (rule: AttendanceRule) => {
+const confirmDeleteRule = (rule: AttendanceRuleDto) => {
   askConfirm({
     title: '勤怠ルールを削除しますか？',
     message: `「${rule.name}」を論理削除します。`,
     note: '論理削除のため、一覧の「無効・削除済みを含む」を有効にすればいつでも復元できます。',
     confirmLabel: '削除する',
     run: async () => {
-      await apiFetch<void>(`/attendance/rules/${rule.id}`, { method: 'DELETE' })
+      await deleteAttendanceRule(rule.id)
       successMessage.value = `勤怠ルール「${rule.name}」を削除しました（復元できます）`
       invalidate()
       await loadRules()
@@ -1205,9 +1160,9 @@ const confirmDeleteRule = (rule: AttendanceRule) => {
   })
 }
 
-const restoreRule = async (rule: AttendanceRule) => {
+const restoreRule = async (rule: AttendanceRuleDto) => {
   await runWrite(async () => {
-    await apiFetch<void>(`/attendance/rules/${rule.id}/restore`, { method: 'POST' })
+    await restoreAttendanceRule(rule.id)
     successMessage.value = `勤怠ルール「${rule.name}」を復元しました`
     invalidate()
     await loadRules()
@@ -1317,11 +1272,11 @@ const currentDefaultRuleName = computed(() =>
       <template v-if="activeTab === 'daily'">
         <section class="mb-3 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="flex flex-wrap items-center gap-2">
-            <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="selectedDate = addDays(selectedDate, -1)">← 前日</button>
+            <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="selectedDate = addBizDays(selectedDate, -1)">← 前日</button>
             <button type="button" class="rounded-md border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-700 hover:bg-blue-100" @click="selectedDate = todayJst()">今日</button>
-            <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="selectedDate = addDays(selectedDate, 1)">翌日 →</button>
+            <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="selectedDate = addBizDays(selectedDate, 1)">翌日 →</button>
             <input v-model="selectedDate" type="date" class="rounded-md border border-gray-300 px-2.5 text-sm" aria-label="表示する日付" />
-            <span class="text-sm font-semibold text-gray-700">{{ fmtDateShort(selectedDate) }}</span>
+            <span class="text-sm font-semibold text-gray-700">{{ fmtBizDate(selectedDate) }}</span>
             <button
               v-if="canWriteAttendance && isViewingSelf"
               type="button"
@@ -1358,7 +1313,7 @@ const currentDefaultRuleName = computed(() =>
                   <span
                     class="font-mono text-base"
                     :class="p.superseded ? 'text-gray-400 line-through' : 'text-gray-900'"
-                  >{{ fmtJstTime(p.at) }}</span>
+                  >{{ fmtJstHm(p.at) }}</span>
                   <span v-if="p.superseded" class="rounded-full bg-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-600">修正前</span>
                   <span v-else-if="p.source === 'fix'" class="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700">修正反映</span>
                   <button
@@ -1370,7 +1325,7 @@ const currentDefaultRuleName = computed(() =>
                 </div>
                 <p v-if="p.fixReason" class="mt-1 text-xs text-gray-600">修正理由: {{ p.fixReason }}</p>
                 <p v-if="p.fixedFrom" class="text-xs text-gray-400">
-                  修正前の打刻: {{ fmtJstTime(p.fixedFrom) }}
+                  修正前の打刻: {{ fmtJstHm(p.fixedFrom) }}
                 </p>
               </li>
             </ul>
@@ -1409,9 +1364,9 @@ const currentDefaultRuleName = computed(() =>
 
             <h3 class="mt-3 text-sm font-semibold text-gray-700">労働時間の内訳（6 区分）</h3>
             <dl class="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-              <div v-for="b in BUCKET_DEFS" :key="b.key" class="rounded-md border border-gray-200 px-2 py-1.5">
+              <div v-for="b in BUCKET_LABELS" :key="b.key" class="rounded-md border border-gray-200 px-2 py-1.5">
                 <dt class="text-xs text-gray-500">{{ b.label }}</dt>
-                <dd class="mt-0.5 font-mono text-sm font-semibold" :class="bucketClass(b.key, dailyBuckets[b.key])">
+                <dd class="mt-0.5 font-mono text-sm font-semibold" :class="bucketTextClass(b.key, dailyBuckets[b.key])">
                   {{ fmtMinutes(dailyBuckets[b.key]) }}
                 </dd>
               </div>
@@ -1433,7 +1388,7 @@ const currentDefaultRuleName = computed(() =>
             <button type="button" class="rounded-md border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-700 hover:bg-blue-100" @click="selectedDate = todayJst()">今週</button>
             <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="shiftWeek(1)">翌週 →</button>
             <span class="text-sm font-semibold text-gray-700">
-              {{ fmtDateShort(weekStart) }} 〜 {{ fmtDateShort(addDays(weekStart, 6)) }}
+              {{ fmtBizDate(weekStart) }} 〜 {{ fmtBizDate(addBizDays(weekStart, 6)) }}
             </span>
             <span class="text-xs text-gray-400">週の起点は日曜</span>
           </div>
@@ -1486,13 +1441,13 @@ const currentDefaultRuleName = computed(() =>
                     class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-blue-50"
                     @click="goToDaily(d)"
                   >
-                    <td class="px-3 py-2" :class="weekdayOf(d) === legalHolidayWeekday ? 'text-gray-400' : ''">
-                      {{ fmtDateShort(d) }}
+                    <td class="px-3 py-2" :class="bizWeekday(d) === legalHolidayWeekday ? 'text-gray-400' : ''">
+                      {{ fmtBizDate(d) }}
                     </td>
                     <td class="px-3 py-2 text-right font-mono">{{ fmtMinutes(weekDays[i]?.workMinutes ?? 0) }}</td>
                     <td class="px-3 py-2 text-right font-mono text-gray-600">{{ fmtMinutes(weekDays[i]?.breakMinutes ?? 0) }}</td>
                     <td class="px-3 py-2 text-right font-mono text-gray-600">{{ fmtMinutes(weekDays[i]?.nightMinutes ?? 0) }}</td>
-                    <td class="px-3 py-2 text-right font-mono" :class="bucketClass('nonStatutoryOt', weekDays[i]?.buckets.nonStatutoryOt ?? 0)">
+                    <td class="px-3 py-2 text-right font-mono" :class="bucketTextClass('nonStatutoryOt', weekDays[i]?.buckets.nonStatutoryOt ?? 0)">
                       {{ fmtMinutes(weekDays[i]?.buckets.nonStatutoryOt ?? 0) }}
                     </td>
                     <td class="px-3 py-2">
@@ -1509,15 +1464,15 @@ const currentDefaultRuleName = computed(() =>
               <li v-for="(d, i) in weekDates" :key="d">
                 <button type="button" class="w-full rounded-md border border-gray-200 px-2.5 py-2 text-left hover:bg-blue-50" @click="goToDaily(d)">
                   <div class="flex items-center justify-between">
-                    <span class="text-sm font-semibold" :class="weekdayOf(d) === legalHolidayWeekday ? 'text-gray-400' : 'text-gray-800'">
-                      {{ fmtDateShort(d) }}
+                    <span class="text-sm font-semibold" :class="bizWeekday(d) === legalHolidayWeekday ? 'text-gray-400' : 'text-gray-800'">
+                      {{ fmtBizDate(d) }}
                     </span>
                     <span class="font-mono text-base font-bold text-gray-800">{{ fmtMinutes(weekDays[i]?.workMinutes ?? 0) }}</span>
                   </div>
                   <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
                     <span>休憩 {{ fmtMinutes(weekDays[i]?.breakMinutes ?? 0) }}</span>
                     <span>深夜 {{ fmtMinutes(weekDays[i]?.nightMinutes ?? 0) }}</span>
-                    <span :class="bucketClass('nonStatutoryOt', weekDays[i]?.buckets.nonStatutoryOt ?? 0)">
+                    <span :class="bucketTextClass('nonStatutoryOt', weekDays[i]?.buckets.nonStatutoryOt ?? 0)">
                       法定外残業 {{ fmtMinutes(weekDays[i]?.buckets.nonStatutoryOt ?? 0) }}
                     </span>
                     <span v-if="(weekDays[i]?.breakShortage ?? 0) > 0" class="rounded-full bg-amber-100 px-2 text-amber-800">休憩不足</span>
@@ -1552,7 +1507,7 @@ const currentDefaultRuleName = computed(() =>
           <section class="mb-3 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
             <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">月間カレンダー（日をクリックで日次へ）</h2>
             <div class="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-gray-500">
-              <div v-for="(w, i) in WEEKDAY_LABELS" :key="w" :class="i === legalHolidayWeekday ? 'text-gray-400' : ''">{{ w }}</div>
+              <div v-for="(w, i) in WEEKDAY_JP" :key="w" :class="i === legalHolidayWeekday ? 'text-gray-400' : ''">{{ w }}</div>
             </div>
             <div class="mt-1 grid grid-cols-7 gap-1">
               <div v-for="(c, i) in calendarCells" :key="i">
@@ -1592,9 +1547,9 @@ const currentDefaultRuleName = computed(() =>
             <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
               <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">月次合計（6 区分）</h2>
               <dl class="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                <div v-for="b in BUCKET_DEFS" :key="b.key" class="rounded-md border border-gray-200 px-2 py-1.5">
+                <div v-for="b in BUCKET_LABELS" :key="b.key" class="rounded-md border border-gray-200 px-2 py-1.5">
                   <dt class="text-xs text-gray-500">{{ b.label }}</dt>
-                  <dd class="mt-0.5 font-mono text-sm font-semibold" :class="bucketClass(b.key, monthTotals[b.key])">
+                  <dd class="mt-0.5 font-mono text-sm font-semibold" :class="bucketTextClass(b.key, monthTotals[b.key])">
                     {{ fmtMinutes(monthTotals[b.key]) }}
                   </dd>
                 </div>
@@ -1809,9 +1764,9 @@ const currentDefaultRuleName = computed(() =>
                   <li v-for="r in pendingFixes" :key="r.id" class="rounded-md border border-amber-200 bg-amber-50/40 px-2.5 py-2">
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span class="font-medium text-gray-800">{{ r.userName }}</span>
-                      <span class="font-mono text-sm text-gray-600">{{ dateKey(r.date) }}</span>
+                      <span class="font-mono text-sm text-gray-600">{{ bizDateKey(r.date) }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ kindLabel(r.kind) }}</span>
-                      <span class="font-mono text-sm font-semibold text-gray-800">→ {{ fmtJstTime(r.requestedAt) }}</span>
+                      <span class="font-mono text-sm font-semibold text-gray-800">→ {{ fmtJstHm(r.requestedAt) }}</span>
                     </div>
                     <p class="mt-1 text-sm text-gray-600">理由: {{ r.reason }}</p>
                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
@@ -1830,7 +1785,7 @@ const currentDefaultRuleName = computed(() =>
                   <li v-for="r in pendingLeaves" :key="r.id" class="rounded-md border border-amber-200 bg-amber-50/40 px-2.5 py-2">
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span class="font-medium text-gray-800">{{ r.userName }}</span>
-                      <span class="font-mono text-sm text-gray-600">{{ dateKey(r.date) }}</span>
+                      <span class="font-mono text-sm text-gray-600">{{ bizDateKey(r.date) }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ r.leaveTypeName }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ unitLabel(r.unit) }}</span>
                     </div>
@@ -1867,9 +1822,9 @@ const currentDefaultRuleName = computed(() =>
                   <li v-for="r in myFixes" :key="r.id" class="rounded-md border border-gray-200 px-2.5 py-2">
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="statusClass(r.status)">{{ statusLabel(r.status) }}</span>
-                      <span class="font-mono text-sm text-gray-600">{{ dateKey(r.date) }}</span>
+                      <span class="font-mono text-sm text-gray-600">{{ bizDateKey(r.date) }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ kindLabel(r.kind) }}</span>
-                      <span class="font-mono text-sm text-gray-800">→ {{ fmtJstTime(r.requestedAt) }}</span>
+                      <span class="font-mono text-sm text-gray-800">→ {{ fmtJstHm(r.requestedAt) }}</span>
                       <button type="button" class="ml-auto text-xs text-blue-600 hover:underline" @click="goToDaily(r.date)">その日の勤怠を見る</button>
                     </div>
                     <p class="mt-1 text-sm text-gray-600">理由: {{ r.reason }}</p>
@@ -1887,7 +1842,7 @@ const currentDefaultRuleName = computed(() =>
                   <li v-for="r in myLeaves" :key="r.id" class="rounded-md border border-gray-200 px-2.5 py-2">
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="statusClass(r.status)">{{ statusLabel(r.status) }}</span>
-                      <span class="font-mono text-sm text-gray-600">{{ dateKey(r.date) }}</span>
+                      <span class="font-mono text-sm text-gray-600">{{ bizDateKey(r.date) }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ r.leaveTypeName }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ unitLabel(r.unit) }}</span>
                     </div>
@@ -1966,10 +1921,10 @@ const currentDefaultRuleName = computed(() =>
                     class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-blue-50"
                     @click="goToDaily(r.date, r.userId)"
                   >
-                    <td class="whitespace-nowrap px-3 py-2 font-mono text-gray-600">{{ dateKey(r.date) }}</td>
+                    <td class="whitespace-nowrap px-3 py-2 font-mono text-gray-600">{{ bizDateKey(r.date) }}</td>
                     <td class="px-3 py-2">{{ r.userName }}</td>
-                    <td class="px-3 py-2 text-right font-mono">{{ r.inAt ? fmtJstTime(r.inAt) : '—' }}</td>
-                    <td class="px-3 py-2 text-right font-mono">{{ r.outAt ? fmtJstTime(r.outAt) : '—' }}</td>
+                    <td class="px-3 py-2 text-right font-mono">{{ r.inAt ? fmtJstHm(r.inAt) : '—' }}</td>
+                    <td class="px-3 py-2 text-right font-mono">{{ r.outAt ? fmtJstHm(r.outAt) : '—' }}</td>
                     <td class="px-3 py-2 text-right font-mono text-gray-600">{{ fmtMinutes(r.breakMinutes) }}</td>
                     <td class="px-3 py-2 text-right font-mono font-semibold">{{ fmtMinutes(r.workMinutes) }}</td>
                   </tr>
@@ -1983,11 +1938,11 @@ const currentDefaultRuleName = computed(() =>
                 <button type="button" class="w-full rounded-md border border-gray-200 px-2.5 py-2 text-left hover:bg-blue-50" @click="goToDaily(r.date, r.userId)">
                   <div class="flex items-center justify-between">
                     <span class="text-sm font-semibold text-gray-800">{{ r.userName }}</span>
-                    <span class="font-mono text-xs text-gray-500">{{ dateKey(r.date) }}</span>
+                    <span class="font-mono text-xs text-gray-500">{{ bizDateKey(r.date) }}</span>
                   </div>
                   <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
-                    <span>出勤 <span class="font-mono">{{ r.inAt ? fmtJstTime(r.inAt) : '—' }}</span></span>
-                    <span>退勤 <span class="font-mono">{{ r.outAt ? fmtJstTime(r.outAt) : '—' }}</span></span>
+                    <span>出勤 <span class="font-mono">{{ r.inAt ? fmtJstHm(r.inAt) : '—' }}</span></span>
+                    <span>退勤 <span class="font-mono">{{ r.outAt ? fmtJstHm(r.outAt) : '—' }}</span></span>
                     <span>休憩 <span class="font-mono">{{ fmtMinutes(r.breakMinutes) }}</span></span>
                     <span class="font-semibold">労働 <span class="font-mono">{{ fmtMinutes(r.workMinutes) }}</span></span>
                   </div>
@@ -2131,7 +2086,7 @@ const currentDefaultRuleName = computed(() =>
                       </template>
                       <template v-else>—</template>
                     </td>
-                    <td class="px-3 py-2">{{ WEEKDAY_LABELS[r.legalHolidayWeekday] }}曜日</td>
+                    <td class="px-3 py-2">{{ WEEKDAY_JP[r.legalHolidayWeekday] }}曜日</td>
                     <td class="px-3 py-2 text-right font-mono">{{ r.closingDay === 31 ? '月末' : r.closingDay }}</td>
                     <td class="px-3 py-2 text-center">
                       <span v-if="r.deletedAt" class="rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-600">削除済</span>
@@ -2162,7 +2117,7 @@ const currentDefaultRuleName = computed(() =>
                 <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
                   <span class="font-mono">{{ r.workStart }} – {{ r.workEnd }}</span>
                   <span>休憩 {{ r.breakMinutes }} 分</span>
-                  <span>法定休日 {{ WEEKDAY_LABELS[r.legalHolidayWeekday] }}曜</span>
+                  <span>法定休日 {{ WEEKDAY_JP[r.legalHolidayWeekday] }}曜</span>
                   <span>締め日 {{ r.closingDay === 31 ? '月末' : r.closingDay }}</span>
                   <span v-if="r.flexEnabled">フレックスあり</span>
                 </div>

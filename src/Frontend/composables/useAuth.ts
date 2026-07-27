@@ -211,8 +211,12 @@ export const useAuth = () => {
   /**
    * 勤怠の管理操作 (全員のタイムカード参照 / 各種承認 / 休暇付与 / 勤怠ルール設定) が可能か。
    * office の admin 相当を既存オーナー権限に集約する (§2)。
-   * process_record_permission は 0=なし / 1=あり の 2 値のため、既存 pages/masters/users.vue と
-   * 揃えて >= 1 で判定する。
+   *
+   * **オーナー権限 (process_record_permission) は 0=なし / 1=あり の 2 値**であり、他の 4 カテゴリの
+   * ような非単調スケール (2=参照のみ) を持たない。そのため `>= 1` と `=== 1` は同値になるが、
+   * 判定式は既存 pages/masters/users.vue と揃えて **`>= 1` に統一**する
+   * (同一概念の判定式が画面ごとに違うと、権限値が拡張されたときに片方だけ挙動が変わるため)。
+   * 勤怠の書込権限 (attendancePermission) は非単調スケールなので、こちらは必ず `=== 1` で判定すること。
    */
   const isAttendanceAdmin = computed(() => (auth.value?.processRecordPermission ?? 0) >= 1)
 

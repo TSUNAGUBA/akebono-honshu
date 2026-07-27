@@ -8,8 +8,12 @@
  *
  * datetime.ts に無いものだけをここに置く:
  * - `fmtJstHm` / `nowJstHms` ... 打刻時刻の HH:mm / 現在時刻の HH:mm:ss（datetime.ts は日付・日時のみ）
- * - `addBizDays` / `diffBizDays` / `bizWeekday` / `fmtBizDate` ... 業務日付（YYYY-MM-DD、TZ を持たない）の演算
+ * - `bizDateKey` / `addBizDays` / `diffBizDays` / `bizWeekday` / `fmtBizDate` / `startOfBizWeek` /
+ *   `addBizMonths` / `bizDaysInMonth` ... 業務日付（YYYY-MM-DD、TZ を持たない）の演算
  *   ローカル TZ 依存を避けるため、業務日付は必ず UTC 正午 0 時アンカーで解釈する。
+ *
+ * **本ファイルが勤怠画面の表示ユーティリティの SoT**。/attendance と /attendance/timecard は
+ * ここから auto-import して使う（ページ側でローカル再実装しない。配色の乖離を生むため・原則3）。
  */
 import type { Buckets, LeaveUnit, PunchKind, PunchState, RequestStatus } from '~/composables/useAttendance'
 
@@ -73,11 +77,18 @@ export const nowJstHms = (): string =>
 // ============================================
 
 /**
+ * `'YYYY-MM-DD...'` の先頭 10 文字を取り出して業務日付キーに正規化する。
+ * DateOnly（`2026-07-27`）でも ISO タイムスタンプ（`2026-07-27T00:00:00Z`）でも同じキーになる。
+ * null / undefined は空文字（表示・Map キーとして安全な値）。
+ */
+export const bizDateKey = (value: string | null | undefined): string => (value ?? '').slice(0, 10)
+
+/**
  * 業務日付を UTC 0 時アンカーの Date に変換する（内部ヘルパー）。
  * `new Date('2026-07-27')` は UTC 解釈だが、`new Date('2026-07-27T00:00:00')` は
  * ローカル解釈になり実行環境の TZ で日付がずれる。必ず末尾 Z を付けて固定する。
  */
-const bizDateUtc = (date: string): Date => new Date(`${date.slice(0, 10)}T00:00:00Z`)
+const bizDateUtc = (date: string): Date => new Date(`${bizDateKey(date)}T00:00:00Z`)
 
 /** 業務日付 + N 日 → YYYY-MM-DD（日付ナビの前日/翌日・期間クランプ用）。不正値はそのまま返す。 */
 export const addBizDays = (date: string, days: number): string => {
@@ -94,7 +105,8 @@ export const diffBizDays = (from: string, to: string): number => {
   return Math.round((b.getTime() - a.getTime()) / 86400000)
 }
 
-const WEEKDAY_JP = ['日', '月', '火', '水', '木', '金', '土']
+/** 曜日ラベル（index 0=日曜）。カレンダーのヘッダ・法定休日の曜日選択で共有する。 */
+export const WEEKDAY_JP = ['日', '月', '火', '水', '木', '金', '土']
 
 /** 業務日付の曜日 index（0=日）。法定休日（既定 0=日曜）判定・週次表示に使う。 */
 export const bizWeekday = (date: string): number => {
@@ -107,6 +119,34 @@ export const fmtBizDate = (date: string): string => {
   const d = bizDateUtc(date)
   if (Number.isNaN(d.getTime())) return date
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEKDAY_JP[d.getUTCDay()]})`
+}
+
+/** 業務日付を含む週の起点（**日曜**）へ丸める。週次タブの週境界。 */
+export const startOfBizWeek = (date: string): string => addBizDays(date, -bizWeekday(date))
+
+// ============================================
+// 業務年月（YYYY-MM）の演算
+// ============================================
+
+/** 業務年月を UTC の月初 Date に変換する（内部ヘルパー）。delta で前後の月へずらす。 */
+const bizMonthUtc = (month: string, delta = 0): Date => {
+  const [year, mon] = month.split('-').map(Number)
+  return new Date(Date.UTC(year, (mon - 1) + delta, 1))
+}
+
+/** 業務年月 + N ヶ月 → "YYYY-MM"（月次ナビの前月/翌月）。不正値はそのまま返す。 */
+export const addBizMonths = (month: string, delta: number): string => {
+  const d = bizMonthUtc(month, delta)
+  if (Number.isNaN(d.getTime())) return month
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+/** 業務年月の日数（月末日）。月間カレンダーのセル生成用。不正値は 0。 */
+export const bizDaysInMonth = (month: string): number => {
+  // 翌月 1 日の前日 = 当月の月末日。
+  const d = bizMonthUtc(month, 1)
+  if (Number.isNaN(d.getTime())) return 0
+  return new Date(d.getTime() - 86400000).getUTCDate()
 }
 
 // ============================================
@@ -144,7 +184,10 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
   rejected: '却下',
 }
 
-/** 申請ステータスバッジの配色。 */
+/**
+ * 申請ステータスバッジの配色。**同じ意味のバッジが画面ごとに違う色にならないよう本定義を唯一の SoT とする**
+ * （ページ側でローカル定義を持たない）。
+ */
 export const REQUEST_STATUS_CLASSES: Record<RequestStatus, string> = {
   pending: 'bg-amber-100 text-amber-700',
   approved: 'bg-green-100 text-green-700',

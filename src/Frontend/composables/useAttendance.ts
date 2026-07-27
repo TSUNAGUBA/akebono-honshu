@@ -9,11 +9,17 @@
  * - **書込（打刻・申請・承認・付与）後は必ず関連キャッシュを破棄して再取得**する（原則6: SoT → キャッシュ）。
  * - `dayRaw`（修正前打刻を含むタイムライン）はキャッシュしない。承認で内容が変わるうえ、
  *   日次タブの表示時に毎回最新が要るため。
+ * - **申請一覧（`loadFixRequests` / `leaveRequests`）もキャッシュしない**。承認・却下で内容が変動し、
+ *   画面は「自分の申請」と「承認待ち（全員）」を続けて別条件で読むため、単一スロットでは常にミスする。
+ * - キャッシュ付きの取得は**進行中リクエストへ合流（coalescing）**させる。キャッシュ判定と書込の間に
+ *   `await` が挟まるため、合流が無いと同一キーの並列呼び出し（週次タブの 7 日分など）が
+ *   そのまま重複リクエストになる（`coalesce` 参照）。
  *
  * ## 引数の渡し方
  * 取得系は `(対象を絞る引数..., force?)` の**位置引数**に揃えている。userId は「省略 = 自分」を
  * 表すため先頭に置き、`undefined` / 空文字を渡すと自分の勤怠を取る。
- * 末尾の `force` は真を渡したときだけキャッシュを無視して再取得する。
+ * 末尾の `force` は真を渡したときだけキャッシュを無視して再取得する
+ * （非キャッシュの取得系は `force` を持たない）。
  *
  * ## 状態の持ち方
  * 仕様の「モジュールスコープのキャッシュ」は、Nuxt では `useState` で実現する。
@@ -202,6 +208,8 @@ export interface LeaveTypeDto {
   description: string
   displayOrder: number
   isActive: boolean
+  /** 論理削除日時（UTC）。null = 未削除。`includeInactive=true` の一覧で復元対象を判別する。 */
+  deletedAt: string | null
 }
 
 export interface LeaveNextExpire {
@@ -291,9 +299,14 @@ export interface LeaveBulkGrantInput {
   grantDate?: string
 }
 
-/** 個別付与の結果。既存付与と重複した場合は id=null / skipped=1（冪等・原則2）。 */
+/**
+ * 個別付与の結果（バックエンド `LeaveGrantResultDto(Guid Id, int Skipped)`）。
+ * 同一 (user, 種別, 付与日) の付与が既にある場合は**既存付与の id** と `skipped=1` を返す
+ * （冪等・原則2。既存付与は更新も削除もしない）。`id` は常に非 null のため、
+ * **スキップ判定は必ず `skipped` で行う**（`id === null` は構造上成立しない）。
+ */
 export interface LeaveGrantResult {
-  id: string | null
+  id: string
   skipped: number
 }
 
@@ -318,9 +331,14 @@ export interface LeaveAdminRow {
 // ============================================
 
 /**
- * タイムカード期間の上限日数。
+ * タイムカード期間の上限日数（**両端含み**）。
  * **SoT はバックエンド定数 `AttendanceService.TimecardRangeMaxDays`**（§5.1）。
  * フロントは同値を持ち、超過時はサーバ 422 を待たずに期間を丸めて警告表示する。
+ *
+ * 数え方はサーバの判定式 `to - from + 1 > TimecardRangeMaxDays` に揃える。
+ * `diffBizDays` は両端含みより 1 少ない「差分」を返すため、判定は `diffBizDays(from, to) + 1`、
+ * クランプ幅は `-(TIMECARD_RANGE_MAX_DAYS - 1)` になる。ここがずれると
+ * 「画面が自動で縮めた期間がそのままサーバに 422 で弾かれる」状態になる。
  */
 export const TIMECARD_RANGE_MAX_DAYS = 62
 
@@ -358,7 +376,8 @@ const qs = (params: Record<string, string | number | boolean | undefined | null>
   return parts.length > 0 ? `?${parts.join('&')}` : ''
 }
 
-const emptyBuckets = (): Buckets => ({
+/** 6 バケットの 0 埋め。集計が未取得のときの表示既定値としてページ側も使う。 */
+export const emptyBuckets = (): Buckets => ({
   scheduled: 0, statutoryOt: 0, nonStatutoryOt: 0, over60Ot: 0, night: 0, legalHoliday: 0,
 })
 
@@ -382,6 +401,41 @@ export const toJstOffsetString = (date: string, time: string): string =>
   `${date}T${time.length === 5 ? time : time.slice(0, 5)}:00+09:00`
 
 // ============================================
+// 進行中リクエストの合流（coalescing）
+// ============================================
+
+/**
+ * 進行中の GET を「キー」で共有するためのマップ。
+ *
+ * キャッシュ判定（`cache.value.x[key]`）と書込の間には必ず `await` が挟まるため、
+ * 同一キーを同時に要求されるとキャッシュミスが並列数だけ重なる。実害が出ていたのは週次タブで、
+ * 7 日分を `Promise.all` で射影する際に**同一月の重い `/attendance/month` が 7 本**飛び、
+ * 「日別リクエストを出さない」というキャッシュ規約の意図が無効化されていた。
+ * 進行中の Promise 自体をキーで共有して 1 本に合流させる。
+ *
+ * **client 限定**で使う。module スコープの Map は SSR ではリクエスト間で共有され、
+ * 他ユーザ向けの応答 Promise を掴み得るため（キャッシュ本体を `useState` にしているのと同じ理由）。
+ */
+const inflight = new Map<string, Promise<unknown>>()
+
+/**
+ * `key` の取得が進行中なら、その Promise に合流させる（新規リクエストを出さない）。
+ * `force` のときは合流せず必ず新規に取りに行く（以降の非 force 呼び出しはこの新しい方に合流する）。
+ * 解決・失敗どちらでも登録を解除するので、失敗は次回呼び出しで再試行される。
+ */
+const coalesce = <T>(key: string, force: boolean, run: () => Promise<T>): Promise<T> => {
+  if (!import.meta.client) return run()
+  const running = inflight.get(key) as Promise<T> | undefined
+  if (!force && running) return running
+  const p = run().finally(() => {
+    // force で上書きされた後に古い Promise が解決した場合、新しい登録を消さない。
+    if (inflight.get(key) === p) inflight.delete(key)
+  })
+  inflight.set(key, p)
+  return p
+}
+
+// ============================================
 // キャッシュ
 // ============================================
 
@@ -396,12 +450,13 @@ interface AttendanceCaches {
   leaveSummaries: Record<string, LeaveSummary>
   /** 休暇種別。キー includeInactive の文字列。 */
   leaveTypes: Record<string, LeaveTypeDto[]>
-  /** 打刻修正申請の一覧（最後に読み込んだ条件のみ保持）。 */
-  fixRequests: { key: string; items: FixRequestDto[] } | null
 }
 
-/** `invalidate()` の破棄対象。 */
-export type AttendanceCacheScope = 'all' | 'state' | 'months' | 'alerts' | 'fixRequests' | 'leave'
+/**
+ * `invalidate()` の破棄対象。
+ * 申請一覧（打刻修正・休暇）はキャッシュしない設計のためスコープを持たない（`loadFixRequests` 参照）。
+ */
+export type AttendanceCacheScope = 'all' | 'state' | 'months' | 'alerts' | 'leave'
 
 const emptyCaches = (): AttendanceCaches => ({
   state: null,
@@ -409,7 +464,6 @@ const emptyCaches = (): AttendanceCaches => ({
   alerts: {},
   leaveSummaries: {},
   leaveTypes: {},
-  fixRequests: null,
 })
 
 // ============================================
@@ -430,7 +484,6 @@ export const useAttendance = () => {
     if (hit('state')) cache.value.state = null
     if (hit('months')) cache.value.months = {}
     if (hit('alerts')) cache.value.alerts = {}
-    if (hit('fixRequests')) cache.value.fixRequests = null
     if (hit('leave')) {
       cache.value.leaveSummaries = {}
       cache.value.leaveTypes = {}
@@ -451,9 +504,11 @@ export const useAttendance = () => {
   const loadState = async (force = false): Promise<PunchStateSnapshot> => {
     const cached = cache.value.state
     if (!force && cached) return cached
-    const snapshot = await apiData<PunchStateSnapshot>('/attendance/state')
-    cache.value.state = snapshot
-    return snapshot
+    return await coalesce('state', force, async () => {
+      const snapshot = await apiData<PunchStateSnapshot>('/attendance/state')
+      cache.value.state = snapshot
+      return snapshot
+    })
   }
 
   /**
@@ -479,6 +534,8 @@ export const useAttendance = () => {
    * `GET /attendance/month`。
    * `userId` 省略（undefined / 空文字）で自分、`month` 省略で当月（JST）。
    * 他人を指定できるのはオーナーのみ（サーバが 403 を返す）。
+   *
+   * 週次タブのように同一月を並列に要求されても、進行中のリクエストへ合流して 1 本にまとめる。
    */
   const monthSummary = async (
     userId?: string,
@@ -489,11 +546,13 @@ export const useAttendance = () => {
     const key = `${userId ?? ''}:${targetMonth}`
     const cached = cache.value.months[key]
     if (!force && cached) return cached
-    const summary = await apiData<MonthSummary>(
-      `/attendance/month${qs({ userId, month: targetMonth })}`,
-    )
-    cache.value.months[key] = summary
-    return summary
+    return await coalesce(`month:${key}`, force, async () => {
+      const summary = await apiData<MonthSummary>(
+        `/attendance/month${qs({ userId, month: targetMonth })}`,
+      )
+      cache.value.months[key] = summary
+      return summary
+    })
   }
 
   /**
@@ -556,11 +615,13 @@ export const useAttendance = () => {
     const key = `${userId ?? ''}:${targetMonth}`
     const cached = cache.value.alerts[key]
     if (!force && cached) return cached
-    const items = await apiData<Article36Alert[]>(
-      `/attendance/alerts${qs({ userId, endMonth: targetMonth })}`,
-    )
-    cache.value.alerts[key] = items
-    return items
+    return await coalesce(`alerts:${key}`, force, async () => {
+      const items = await apiData<Article36Alert[]>(
+        `/attendance/alerts${qs({ userId, endMonth: targetMonth })}`,
+      )
+      cache.value.alerts[key] = items
+      return items
+    })
   }
 
   /**
@@ -587,45 +648,36 @@ export const useAttendance = () => {
   // 打刻修正申請
   // ------------------------------------------
 
-  /** 最後に `loadFixRequests()` した一覧。 */
-  const fixRequests = computed<FixRequestDto[]>(() => cache.value.fixRequests?.items ?? [])
-
-  /** `GET /attendance/fix-requests`（createdAt 降順）。`scope='all'` はオーナーのみ。 */
+  /**
+   * `GET /attendance/fix-requests`（createdAt 降順）。`scope='all'` はオーナーのみ。
+   * 承認・却下で内容が変動するうえ、画面は「自分の申請」と「承認待ち（全員）」を
+   * 続けて別条件で読むため、**キャッシュしない**（同じ理由で `leaveRequests` も非キャッシュ）。
+   * 再取得が要るときは呼び出し側が明示的に呼び直す。
+   */
   const loadFixRequests = async (
     scope: RequestScope = 'self',
     status?: RequestStatus,
-    force = false,
-  ): Promise<FixRequestDto[]> => {
-    const key = `${scope}:${status ?? ''}`
-    const cached = cache.value.fixRequests
-    if (!force && cached?.key === key) return cached.items
-    const items = await apiData<FixRequestDto[]>(
-      `/attendance/fix-requests${qs({ status, scope })}`,
-    )
-    cache.value.fixRequests = { key, items }
-    return items
-  }
+  ): Promise<FixRequestDto[]> =>
+    await apiData<FixRequestDto[]>(`/attendance/fix-requests${qs({ status, scope })}`)
 
   /** `POST /attendance/fix-requests`（対象は常に本人）。 */
-  const requestFix = async (input: FixRequestInput): Promise<{ id: string }> => {
-    const result = await apiData<{ id: string }>('/attendance/fix-requests', {
+  const requestFix = async (input: FixRequestInput): Promise<{ id: string }> =>
+    await apiData<{ id: string }>('/attendance/fix-requests', {
       method: 'POST',
       body: input,
     })
-    invalidate('fixRequests')
-    return result
-  }
 
   /**
    * `POST /attendance/fix-requests/{id}/decision`（**オーナーのみ**）。
-   * 承認は打刻列に fix レコードを追記するため、集計・当日状態のキャッシュも破棄する。
+   * 承認は打刻列に fix レコードを追記するため、集計・当日状態のキャッシュを破棄する
+   * （申請一覧自体は非キャッシュのため破棄対象に無い）。
    */
   const decideFix = async (id: string, action: DecisionAction): Promise<{ id: string }> => {
     const result = await apiData<{ id: string }>(`/attendance/fix-requests/${id}/decision`, {
       method: 'POST',
       body: { action },
     })
-    invalidate(['fixRequests', 'months', 'alerts', 'state'])
+    invalidate(['months', 'alerts', 'state'])
     return result
   }
 
@@ -667,9 +719,11 @@ export const useAttendance = () => {
     const key = userId ?? ''
     const cached = cache.value.leaveSummaries[key]
     if (!force && cached) return cached
-    const summary = await apiData<LeaveSummary>(`/attendance/leave/summary${qs({ userId })}`)
-    cache.value.leaveSummaries[key] = summary
-    return summary
+    return await coalesce(`leaveSummary:${key}`, force, async () => {
+      const summary = await apiData<LeaveSummary>(`/attendance/leave/summary${qs({ userId })}`)
+      cache.value.leaveSummaries[key] = summary
+      return summary
+    })
   }
 
   /** `GET /attendance/leave/types`。 */
@@ -677,9 +731,11 @@ export const useAttendance = () => {
     const key = String(includeInactive)
     const cached = cache.value.leaveTypes[key]
     if (!force && cached) return cached
-    const items = await apiData<LeaveTypeDto[]>(`/attendance/leave/types${qs({ includeInactive })}`)
-    cache.value.leaveTypes[key] = items
-    return items
+    return await coalesce(`leaveTypes:${key}`, force, async () => {
+      const items = await apiData<LeaveTypeDto[]>(`/attendance/leave/types${qs({ includeInactive })}`)
+      cache.value.leaveTypes[key] = items
+      return items
+    })
   }
 
   /** `GET /attendance/leave/requests`。`scope='all'` はオーナーのみ。承認で変動するためキャッシュしない。 */
@@ -756,7 +812,6 @@ export const useAttendance = () => {
     dayRaw,
     timecard,
     // 打刻修正申請
-    fixRequests,
     loadFixRequests,
     requestFix,
     decideFix,
