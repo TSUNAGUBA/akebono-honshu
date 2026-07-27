@@ -139,9 +139,12 @@ const startEdit = (u: UserItem) => {
     purchaseOrderCreatePermission: u.purchaseOrderCreatePermission,
     purchaseOrderInfoPermission: u.purchaseOrderInfoPermission,
     processRecordPermission: u.processRecordPermission,
-    // 応答に無い (Backend 未更新) 場合は DB 既定と同じ値を初期表示する。
-    attendancePermission: u.attendancePermission ?? 1,
-    punchRequired: u.punchRequired ?? true,
+    // 応答に無い (Backend 未更新) 場合は **fail-close 側へ倒す** (useAuth と同じ方針)。
+    // 送信は全項目を明示送信する全量 PATCH のため、ここで DB 既定 (1 / true) を補うと、
+    // 権限 0 のユーザを編集画面で開いて保存しただけで 1 (更新可能) へ昇格させてしまう。
+    // DB 既定値の初期表示は新規作成フォーム (emptyForm) の責務なので、そちらは 1 / true のまま。
+    attendancePermission: u.attendancePermission ?? 0,
+    punchRequired: u.punchRequired ?? false,
     attendanceRuleId: u.attendanceRuleId ?? null,
     // hireDate は "YYYY-MM-DD"。<input type="date"> 用に先頭 10 文字だけ使う。
     hireDate: u.hireDate ? u.hireDate.slice(0, 10) : '',
@@ -415,8 +418,11 @@ const remove = async (u: UserItem) => {
             <td class="px-3 py-2">{{ labelOf(YESNO_OPTS, u.purchaseOrderInfoPermission) }}</td>
             <td class="px-3 py-2">{{ labelOf(YESNO_OPTS, u.processRecordPermission) }}</td>
             <td class="px-3 py-2">
-              {{ labelOf(ATTENDANCE_OPTS, u.attendancePermission ?? 1) }}
-              <span v-if="!(u.punchRequired ?? true)" class="ml-1 text-xs text-gray-400">(打刻対象外)</span>
+              <!-- 応答にフィールドが無い場合の解釈は編集フォーム (startEdit) と揃える。
+                   一覧が「更新可能」、フォームが「なし」と食い違うと、開いて保存しただけで
+                   権限が変わったように見えるため。権限は常に fail-close 側で表示する。 -->
+              {{ labelOf(ATTENDANCE_OPTS, u.attendancePermission ?? 0) }}
+              <span v-if="!(u.punchRequired ?? false)" class="ml-1 text-xs text-gray-400">(打刻対象外)</span>
             </td>
             <td class="whitespace-nowrap px-3 py-2">
               <template v-if="u.hireDate">{{ u.hireDate.slice(0, 10) }}</template>

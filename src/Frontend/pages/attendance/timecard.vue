@@ -154,6 +154,10 @@ onMounted(async () => {
 
   if (!canUseAttendance.value) {
     stateLoading.value = false
+    // 一覧も取りにいかないので、初期値 true のローディングを閉じる
+    // （現行の認証フローでは権限なしの分岐で一覧自体を描画しないが、フラグを立てたまま
+    //   抜けると将来テンプレートを触ったときに読み込み中のまま固まる）。
+    listLoading.value = false
     return
   }
   // 打刻状態の取得に失敗しても一覧は表示する（原則4 グレースフルデグラデーション）。
@@ -333,11 +337,13 @@ onBeforeUnmount(() => {
       <div v-if="listLoading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
         読み込み中…
       </div>
-      <div v-else-if="rows.length === 0" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
+      <!-- 空状態もサマリと同じ扱いにする: 取得に失敗しているときは「打刻がありません」と断定しない
+           （エラー帯と矛盾する断定を出さない。勤怠は法定記録であり誤読のコストが高い・原則4） -->
+      <div v-else-if="!listError && rows.length === 0" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
         この期間の打刻がありません
       </div>
 
-      <template v-else>
+      <template v-else-if="!listError">
         <!-- PC: テーブル -->
         <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm md:block">
           <table class="w-full text-sm">

@@ -1856,9 +1856,11 @@ const currentDefaultRuleName = computed(() =>
             <p v-if="pendingNotice" class="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {{ pendingNotice }}
             </p>
-            <p v-if="pendingCount === 0" class="px-2 py-6 text-center text-sm text-gray-500">承認待ちの申請はありません。</p>
+            <!-- 取得に失敗したときは空状態も一覧も描画しない: エラー帯を出しながら「ありません」と
+                 断定すると誤読させる (集計 3 タブ・タイムカードと同じ扱い・原則4) -->
+            <p v-if="!requestsError && pendingCount === 0" class="px-2 py-6 text-center text-sm text-gray-500">承認待ちの申請はありません。</p>
 
-            <div v-else class="space-y-3">
+            <div v-else-if="!requestsError" class="space-y-3">
               <!-- 承認は即時反映で取り消せない。却下のみ確認ダイアログを挟む仕様のため、注記で補う -->
               <p class="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600">
                 <span class="font-semibold">承認した申請は取り消せません。</span>
@@ -1879,8 +1881,10 @@ const currentDefaultRuleName = computed(() =>
                     <p class="mt-1 text-sm text-gray-600">理由: {{ r.reason }}</p>
                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
                       <span class="text-xs text-gray-400">申請 {{ formatJstDateTime(r.createdAt) }}</span>
-                      <button type="button" :disabled="writeBusy" class="ml-auto rounded-md bg-green-600 px-3 py-1 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50" @click="approveFix(r)">承認</button>
-                      <button type="button" :disabled="writeBusy" class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50" @click="rejectFix(r)">却下</button>
+                      <!-- 承認は取り消せない操作。同じカード内の遷移リンクと同様、指で押す前提の
+                           44px 以上のタップ領域を確保する (本タブは PC/モバイル共通のカード一覧・原則8) -->
+                      <button type="button" :disabled="writeBusy" class="ml-auto inline-flex min-h-[44px] items-center justify-center rounded-md bg-green-600 px-3 py-1 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50" @click="approveFix(r)">承認</button>
+                      <button type="button" :disabled="writeBusy" class="inline-flex min-h-[44px] items-center justify-center rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50" @click="rejectFix(r)">却下</button>
                     </div>
                   </li>
                 </ul>
@@ -1900,8 +1904,9 @@ const currentDefaultRuleName = computed(() =>
                     <p v-if="r.reason" class="mt-1 text-sm text-gray-600">理由: {{ r.reason }}</p>
                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
                       <span class="text-xs text-gray-400">申請 {{ formatJstDateTime(r.createdAt) }}</span>
-                      <button type="button" :disabled="writeBusy" class="ml-auto rounded-md bg-green-600 px-3 py-1 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50" @click="approveLeave(r)">承認</button>
-                      <button type="button" :disabled="writeBusy" class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50" @click="rejectLeave(r)">却下</button>
+                      <!-- 打刻修正と同じく、承認・却下に 44px 以上のタップ領域を確保する (原則8) -->
+                      <button type="button" :disabled="writeBusy" class="ml-auto inline-flex min-h-[44px] items-center justify-center rounded-md bg-green-600 px-3 py-1 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50" @click="approveLeave(r)">承認</button>
+                      <button type="button" :disabled="writeBusy" class="inline-flex min-h-[44px] items-center justify-center rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50" @click="rejectLeave(r)">却下</button>
                     </div>
                   </li>
                 </ul>
@@ -1923,11 +1928,12 @@ const currentDefaultRuleName = computed(() =>
               {{ myRequestsNotice }}
             </p>
 
-            <p v-if="myFixes.length === 0 && myLeaves.length === 0" class="px-2 py-6 text-center text-sm text-gray-500">
+            <!-- 承認待ちと同様、取得に失敗したときは空状態・一覧とも描画しない (原則4) -->
+            <p v-if="!requestsError && myFixes.length === 0 && myLeaves.length === 0" class="px-2 py-6 text-center text-sm text-gray-500">
               申請はまだありません。
             </p>
 
-            <div v-else class="space-y-3">
+            <div v-else-if="!requestsError" class="space-y-3">
               <div v-if="myFixes.length > 0">
                 <h3 class="mb-1.5 text-sm font-semibold text-gray-700">打刻修正</h3>
                 <ul class="space-y-1.5">
@@ -2006,15 +2012,17 @@ const currentDefaultRuleName = computed(() =>
         <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-1.5">
             <h2 class="font-semibold">全員のタイムカード</h2>
-            <span class="text-sm text-gray-600">
+            <!-- 取得に失敗したときは件数・合計を出さない (0 件 / 0:00 を実績と誤読させない・原則4) -->
+            <span v-if="!tcError" class="text-sm text-gray-600">
               {{ tcRows.length }} 件 / 実労働合計 <span class="font-mono font-semibold">{{ fmtMinutes(tcTotalMinutes) }}</span>
             </span>
           </div>
 
           <div v-if="tcLoading" class="p-8 text-center text-gray-500">読み込み中…</div>
-          <p v-else-if="tcRows.length === 0" class="px-2 py-8 text-center text-sm text-gray-500">この期間の打刻がありません。</p>
+          <!-- 同上: 失敗時は空状態も一覧も描画しない -->
+          <p v-else-if="!tcError && tcRows.length === 0" class="px-2 py-8 text-center text-sm text-gray-500">この期間の打刻がありません。</p>
 
-          <template v-else>
+          <template v-else-if="!tcError">
             <div class="hidden overflow-x-auto md:block">
               <table class="w-full text-sm">
                 <thead class="border-b border-gray-200 bg-gray-50 text-xs uppercase text-gray-600">
@@ -2089,13 +2097,15 @@ const currentDefaultRuleName = computed(() =>
         <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="mb-2 flex items-center justify-between border-b border-gray-100 pb-1.5">
             <h2 class="font-semibold">メンバー × 種別の付与・取得・残</h2>
-            <span class="text-xs text-gray-500">{{ filteredLeaveAdminRows.length }} 件</span>
+            <!-- 取得に失敗したときは件数を出さない (0 件を「該当なし」と誤読させない・原則4) -->
+            <span v-if="!leaveAdminError" class="text-xs text-gray-500">{{ filteredLeaveAdminRows.length }} 件</span>
           </div>
 
           <div v-if="leaveAdminLoading" class="p-8 text-center text-gray-500">読み込み中…</div>
-          <p v-else-if="filteredLeaveAdminRows.length === 0" class="px-2 py-8 text-center text-sm text-gray-500">表示できる休暇情報がありません。</p>
+          <!-- 同上: 失敗時は空状態も一覧も描画しない -->
+          <p v-else-if="!leaveAdminError && filteredLeaveAdminRows.length === 0" class="px-2 py-8 text-center text-sm text-gray-500">表示できる休暇情報がありません。</p>
 
-          <template v-else>
+          <template v-else-if="!leaveAdminError">
             <div class="hidden overflow-x-auto md:block">
               <table class="w-full text-sm">
                 <thead class="border-b border-gray-200 bg-gray-50 text-xs uppercase text-gray-600">
@@ -2159,18 +2169,21 @@ const currentDefaultRuleName = computed(() =>
             <input v-model="rulesIncludeInactive" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
             無効・削除済みを含む
           </label>
-          <span class="ml-auto text-xs text-gray-500">{{ rules.length }} 件</span>
+          <!-- 取得に失敗したときは件数を出さない (0 件を「未登録」と誤読させない・原則4) -->
+          <span v-if="!rulesError" class="ml-auto text-xs text-gray-500">{{ rules.length }} 件</span>
         </div>
 
         <div v-if="rulesError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ rulesError }}</div>
 
         <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div v-if="rulesLoading" class="p-8 text-center text-gray-500">読み込み中…</div>
-          <p v-else-if="rules.length === 0" class="px-2 py-8 text-center text-sm text-gray-500">
+          <!-- 取得に失敗したときは「未登録」と断定しない。この空状態は集計仕様 (所定 8 時間・法定休日は日曜)
+               まで言い切るため、通信失敗時に出すと誤誘導になる (原則4) -->
+          <p v-else-if="!rulesError && rules.length === 0" class="px-2 py-8 text-center text-sm text-gray-500">
             勤怠ルールが登録されていません。「+ ルールを追加」から作成してください（未登録の場合は所定 8 時間・法定休日は日曜として集計します）。
           </p>
 
-          <template v-else>
+          <template v-else-if="!rulesError">
             <div class="hidden overflow-x-auto md:block">
               <table class="w-full text-sm">
                 <thead class="border-b border-gray-200 bg-gray-50 text-xs uppercase text-gray-600">
