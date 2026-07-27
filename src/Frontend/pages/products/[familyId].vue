@@ -6,9 +6,7 @@ import type { MasterItem } from '~/composables/useMasters'
 const route = useRoute()
 // 第二段階契約: family id は uuid 文字列。数値変換せず文字列のまま使う。
 const familyId = computed(() => String(route.params.familyId))
-const { user, canEditMaster } = useAuth()
-// 操作導線（次アクション）の権限: 生産指示・発注書の作成は発注書作成権限が必要。
-const canCreateOrder = computed(() => (user.value?.purchaseOrderCreatePermission ?? 0) === 1)
+const { canEditMaster } = useAuth()
 const {
   getFamily, updateFamily, deleteFamily,
   addSupplierPrice, uploadImage, deleteImage,
@@ -376,40 +374,6 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
         {{ successMessage }}
       </div>
 
-      <!-- 次のアクション（操作導線）: この商品からの業務の次工程へ直接遷移する -->
-      <section
-        v-if="canEditMaster || canCreateOrder"
-        class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm"
-      >
-        <h2 class="mb-3 text-sm font-semibold text-gray-700">次のアクション</h2>
-        <div class="flex flex-wrap gap-2">
-          <NuxtLink
-            v-if="canEditMaster"
-            :to="`/production/bom/${familyId}`"
-            class="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 no-underline transition hover:bg-amber-100"
-          >
-            <NavIcon name="layers" class="h-4 w-4" />
-            素材構成(BOM)を編集
-          </NuxtLink>
-          <NuxtLink
-            v-if="canCreateOrder"
-            :to="`/production/instructions/new?familyId=${familyId}`"
-            class="inline-flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800 no-underline transition hover:bg-blue-100"
-          >
-            <NavIcon name="file-text" class="h-4 w-4" />
-            生産指示を作成
-          </NuxtLink>
-          <NuxtLink
-            v-if="canCreateOrder"
-            to="/orders/new"
-            class="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-800 no-underline transition hover:bg-indigo-100"
-          >
-            <NavIcon name="clipboard" class="h-4 w-4" />
-            発注書を作成
-          </NuxtLink>
-        </div>
-      </section>
-
       <!-- 企画情報 -->
       <section class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
         <h2 class="mb-2 border-b border-gray-100 pb-1.5 font-semibold">企画情報</h2>
@@ -756,7 +720,6 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
               <th class="px-2 py-1.5 text-left">サイズ</th>
               <th class="px-2 py-1.5 text-right">仕入単価</th>
               <th class="px-2 py-1.5 text-right">為替レート</th>
-              <th class="px-2 py-1.5 text-right">見積単価</th>
               <th class="px-2 py-1.5 text-right">仕入原価</th>
               <th class="px-2 py-1.5 text-right">税率</th>
               <th class="px-2 py-1.5 text-left">有効開始</th>
@@ -773,14 +736,13 @@ const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
               </td>
               <td class="px-2 py-1.5 text-right font-mono">{{ p.currencyCode }} {{ p.unitPrice.toLocaleString() }}</td>
               <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.exchangeRate != null ? p.exchangeRate.toLocaleString() : '—' }}</td>
-              <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.estimateUnitPrice != null ? p.estimateUnitPrice.toLocaleString() : '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.purchaseCost != null ? p.purchaseCost.toLocaleString() : '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono text-gray-500">{{ p.taxRate != null ? `${p.taxRate}%` : '—' }}</td>
               <td class="px-2 py-1.5">{{ p.effectiveFrom }}</td>
               <td class="px-2 py-1.5">{{ p.decidedAt }}</td>
             </tr>
             <tr v-if="detail.currentSupplierPrices.length === 0">
-              <td colspan="9" class="px-2 py-4 text-center text-gray-500">単価が登録されていません</td>
+              <td colspan="8" class="px-2 py-4 text-center text-gray-500">単価が登録されていません</td>
             </tr>
           </tbody>
         </table>

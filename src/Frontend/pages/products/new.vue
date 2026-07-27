@@ -254,7 +254,7 @@ const removeSetComponent = (idx: number) => {
   setComponents.value.splice(idx, 1)
 }
 
-// ⑤ 仕入単価 (Part4)。仕入先ごとの「基準仕入単価」(全サイズ共通)。サイズ別単価は④で入力する (Part3)。
+// ⑤ 仕入単価 (Part4)。仕入先ごとの「基準仕入単価」(全サイズ共通)。サイズ別単価も⑤内で入力する (Part3)。
 // 通貨は選択した仕入先の適用通貨 (Supplier.currencyCode) から自動決定。為替マスタから適用レートを解決し、
 // 円換算・仕入原価・仕入利益率・ドレー代を自動計算する。有効開始日は本日固定 (列廃止 Part4)。
 const today0 = todayJst() // 業務日付は JST 基準
@@ -273,7 +273,7 @@ const addPriceRow = () => {
 }
 const removePriceRow = (idx: number) => { if (supplierPrices.value.length > 1) supplierPrices.value.splice(idx, 1) }
 
-// ④ サイズ別仕入単価 (Part3)。選択サイズごとの仕入単価 (sizeId -> 単価)。空/0 = 「基準単価(⑤先頭)を使用」。
+// ⑤ サイズ別仕入単価 (Part3)。選択サイズごとの仕入単価 (sizeId -> 単価)。空/0 = 「基準単価(⑤先頭)を使用」。
 // 代表仕入先 = ⑤ 先頭行の仕入先に紐づける (サイズ別単価は仕入先ごとの ProductSupplierPrice(size 指定) として保存)。
 const sizePrices = ref<Record<string, number | null>>({})
 const primaryPriceRow = computed<PriceRow | null>(() => supplierPrices.value[0] ?? null)
@@ -283,7 +283,7 @@ interface ExchangeRateItem { yearMonth: string; currencyCode: string; rate: numb
 const exchangeRates = ref<ExchangeRateItem[]>([])
 
 // 仕入先の適用通貨/ドレー代を参照するヘルパー (suppliers は MasterItem[]、拡張列を動的保持)。
-// 基本形は (supplierId, unitPrice) を受け取り、④サイズ別単価の算出でも再利用する。
+// 基本形は (supplierId, unitPrice) を受け取り、サイズ別単価の算出でも再利用する。
 const supplierById = (id: string) => suppliers.value.find((s) => s.id === id)
 const currencyOf = (supplierId: string): string => (supplierById(supplierId)?.currencyCode as string) || 'JPY'
 const drayageOf = (supplierId: string): number | null => {
@@ -437,7 +437,7 @@ const onCopyFromReference = async () => {
     expansion.value.colorIds = [...new Set(liveProducts.map((p) => p.colorId))]
     expansion.value.sizeIds = [...new Set(liveProducts.map((p) => p.sizeId))]
 
-    // (3) 仕入単価をコピー (Part3/4)。基準単価 (size=null) を⑤へ、サイズ別単価 (size 指定) を④の sizePrices へ。
+    // (3) 仕入単価をコピー (Part3/4)。基準単価 (size=null) を⑤へ、サイズ別単価 (size 指定) を⑤の sizePrices へ。
     //     通貨/為替/税率/仕入原価/利益率/ドレー代は自動算出のため、コピーするのは supplier/単価/決定日のみ。
     //     税率 (Part5) は仕入先の適用通貨 → 為替マスタ から再解決するためコピーしない。
     const prices = src.currentSupplierPrices
@@ -535,7 +535,7 @@ const toggleSize = (id: string) => {
 }
 
 const skuCount = computed(() => expansion.value.colorIds.length * expansion.value.sizeIds.length)
-// ④ サイズ別仕入単価 (Part3) 用。選択済サイズをマスタ表示順で列挙する。
+// ⑤ サイズ別仕入単価 (Part3) 用。選択済サイズをマスタ表示順で列挙する。
 const selectedSizesList = computed(() => sizes.value.filter((s) => expansion.value.sizeIds.includes(s.id)))
 
 // ⑤ 仕入単価行の妥当性 (review 対応)。問題があればユーザ向けメッセージ、無ければ null。
@@ -558,7 +558,7 @@ const priceRowIssue = computed<string | null>(() => {
   return null
 })
 
-// 仕入単価ペイロード 1 件を組み立てる (⑤基準単価・④サイズ別単価で共用)。通貨/レート/円換算/原価/利益率/
+// 仕入単価ペイロード 1 件を組み立てる (⑤の基準単価・サイズ別単価で共用)。通貨/レート/円換算/原価/利益率/
 // ドレー代は仕入先と単価から算出する。税率(%) は仕入先の適用通貨 → 為替マスタ から自動解決する (Part5、手入力なし)。
 // 有効開始日は本日固定 (Part4)。
 const buildPriceEntry = (supplierId: string, unitPrice: number, decidedAt: string, sizeId: string | null) => {
@@ -617,7 +617,7 @@ const onSubmit = async () => {
   }
   submitting.value = true
   try {
-    // 仕入単価ペイロード: ⑤ 基準単価 (size=null) を仕入先ごとに。加えて ④ サイズ別単価 (>0) を
+    // 仕入単価ペイロード: ⑤ 基準単価 (size=null) を仕入先ごとに。加えて ⑤ サイズ別単価 (>0) を
     // 代表仕入先 (⑤ 先頭) に紐づく size 指定行として追加する (Part3/4)。0/空は基準単価を使用 = 行を作らない。
     const priceEntries = supplierPrices.value.map((r) => buildPriceEntry(r.supplierId, Number(r.unitPrice), r.decidedAt, null))
     const primary = primaryPriceRow.value
@@ -664,7 +664,7 @@ const onSubmit = async () => {
         colorIds: [...expansion.value.colorIds],
         sizeIds: [...expansion.value.sizeIds],
       },
-      // ⑤ 仕入単価 (Part4): 仕入先ごとの基準単価 (size=null) + ④ サイズ別単価 (Part3、代表仕入先=⑤先頭に紐づく)。
+      // ⑤ 仕入単価 (Part4): 仕入先ごとの基準単価 (size=null) + サイズ別単価 (Part3、代表仕入先=⑤先頭に紐づく)。
       // 通貨/為替/仕入原価/仕入利益率/ドレー代は選択仕入先・為替マスタ・ブランド費・納品価格から算出。
       supplierPrices: priceEntries,
       // アソート/セット明細 (PR3)。子品番が空の行は除外 (未入力行を送らない)。
@@ -1043,32 +1043,14 @@ const onSubmit = async () => {
             </div>
           </div>
 
-          <!-- サイズ別仕入単価 (Part3)。選択サイズごとに仕入単価を入力できる。代表仕入先 = ⑤ の先頭行に紐づく。
-               空欄のサイズは ⑤ の基準単価を使用する。金額は代表仕入先の適用通貨。 -->
-          <div v-if="expansion.sizeIds.length > 0" class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
-            <div class="mb-1 flex flex-wrap items-baseline justify-between gap-x-2">
-              <span class="text-sm font-medium">サイズ別仕入単価 <span class="text-xs font-normal text-gray-500">(任意)</span></span>
-              <span class="text-xs text-gray-500">
-                代表仕入先: <span class="font-semibold">{{ primaryPriceRow && primaryPriceRow.supplierId ? (supplierById(primaryPriceRow.supplierId)?.name ?? '?') : '（⑤ で仕入先を選択）' }}</span>
-                <span v-if="primaryPriceRow && primaryPriceRow.supplierId"> / 通貨 {{ currencyOf(primaryPriceRow.supplierId) }}</span>
-              </span>
-            </div>
-            <p class="mb-2 text-xs text-gray-500">空欄のサイズは ⑤ の基準単価を使用します。サイズ別に単価が異なる場合のみ入力してください。</p>
-            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-              <label v-for="s in selectedSizesList" :key="s.id" class="flex flex-col gap-1">
-                <span class="text-xs font-medium text-gray-700">{{ s.code }} {{ s.name }}</span>
-                <input v-model.number="sizePrices[s.id]" type="number" min="0" step="0.01" placeholder="基準単価を使用" class="rounded-md border border-gray-300 px-2 py-1 text-sm" />
-              </label>
-            </div>
-          </div>
         </section>
 
-        <!-- Section 5: 仕入単価 (Part4)。仕入先ごとの基準単価 (全サイズ共通)。サイズ別単価は④で入力。
+        <!-- Section 5: 仕入単価 (Part4)。仕入先ごとの基準単価 (全サイズ共通) とサイズ別仕入単価 (Part3)。
              通貨は仕入先の適用通貨から自動決定し、為替マスタで円換算・仕入原価・仕入利益率・ドレー代を自動計算する。 -->
         <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="mb-3 flex flex-col gap-2 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">
-              ⑤ 仕入単価 <span class="ml-2 text-xs font-normal text-gray-500">(仕入先ごとの基準単価。サイズ別は④で入力。通貨・為替・税率・仕入原価・仕入利益率・ドレー代は自動計算)</span>
+              ⑤ 仕入単価 <span class="ml-2 text-xs font-normal text-gray-500">(仕入先ごとの基準単価とサイズ別仕入単価。通貨・為替・税率・仕入原価・仕入利益率・ドレー代は自動計算)</span>
             </h2>
             <button type="button" class="self-start rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="addPriceRow">+ 仕入先を追加</button>
           </div>
@@ -1127,11 +1109,33 @@ const onSubmit = async () => {
             </div>
           </div>
 
+          <!-- サイズ別仕入単価 (Part3)。選択サイズごとに仕入単価を入力できる。代表仕入先 = 先頭行の仕入先に紐づく。
+               空欄のサイズは基準単価を使用する。金額は代表仕入先の適用通貨。 -->
+          <div v-if="expansion.sizeIds.length > 0" class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+            <div class="mb-1 flex flex-wrap items-baseline justify-between gap-x-2">
+              <span class="text-sm font-medium">サイズ別仕入単価 <span class="text-xs font-normal text-gray-500">(任意)</span></span>
+              <span class="text-xs text-gray-500">
+                代表仕入先: <span class="font-semibold">{{ primaryPriceRow && primaryPriceRow.supplierId ? (supplierById(primaryPriceRow.supplierId)?.name ?? '?') : '（先頭行で仕入先を選択）' }}</span>
+                <span v-if="primaryPriceRow && primaryPriceRow.supplierId"> / 通貨 {{ currencyOf(primaryPriceRow.supplierId) }}</span>
+              </span>
+            </div>
+            <p class="mb-2 text-xs text-gray-500">空欄のサイズは基準単価を使用します。サイズ別に単価が異なる場合のみ入力してください。</p>
+            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              <label v-for="s in selectedSizesList" :key="s.id" class="flex flex-col gap-1">
+                <span class="text-xs font-medium text-gray-700">{{ s.code }} {{ s.name }}</span>
+                <input v-model.number="sizePrices[s.id]" type="number" min="0" step="0.01" placeholder="基準単価を使用" class="rounded-md border border-gray-300 px-2 py-1 text-sm" />
+              </label>
+            </div>
+          </div>
+          <p v-else class="mt-3 text-xs text-gray-500">
+            サイズ別仕入単価は「④ 色 × サイズ展開」でサイズを選択すると入力できます。
+          </p>
+
           <p class="mt-2 text-xs text-gray-500">
             通貨は仕入先マスタの「適用通貨」、ドレー代は仕入先マスタの「ドレー代」から自動反映します。為替レートと税率は
             <NuxtLink to="/masters/exchange-rates" class="text-blue-600 hover:underline">為替マスタ</NuxtLink>
             で登録し、選択した仕入先の適用通貨 × 登録時点の年月で自動解決します。仕入原価 = 円換算仕入単価 + ブランド費 + ドレー代、仕入利益率 = 仕入原価 ÷ 納品価格。
-            サイズ別の仕入単価は「④ 色 × サイズ展開」で入力できます。見積単価・ロス費など原価明細は登録後の詳細画面で追加できます。
+            見積単価・ロス費など原価明細は登録後の詳細画面で追加できます。
           </p>
         </section>
 

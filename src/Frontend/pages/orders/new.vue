@@ -80,57 +80,116 @@ interface LineRow {
   // 分納 (納期列マトリクス)。列 id → その納期の発注数。分納列が無ければ空 = 単一発注数 (quantity) を使う。
   deliveryQtys: Record<number, number | null>
 }
-const lines = ref<LineRow[]>([
-  { productId: '', quantity: 1, unitPriceSnapshot: 0, currencyCodeSnapshot: 'JPY', packQuantity: null, remark: null, deliveryQtys: {} },
-])
+// 明細は空から始める (§改修 2026-07)。ユーザが「+ 明細追加」で明示的に行を追加する。
+const lines = ref<LineRow[]>([])
 
-// 分納 (納期列マトリクス)。「分納入力」で納期列を追加し、SKU 明細行ごとに納期別の発注数を入力する。
-// 列は全明細で共有 (2 枚目キャプチャの日付列)。列が 1 つ以上あるとき分納モード = 発注数は各列の合計。
+// 分納 (納期列マトリクス)。「分納設定」モーダルで納期 (日付) 列を管理し、SKU 明細行ごとに
+// 納期別の発注数を入力する。列は全明細で共有。列が 1 つ以上あるとき分納モード = 発注数は各列の合計。
 interface DeliveryColumn { id: number; date: string }
 const deliveryColumns = ref<DeliveryColumn[]>([])
 const nextDeliveryColId = ref(1)
 const deliveryMode = computed(() => deliveryColumns.value.length > 0)
 
-const addDeliveryColumn = () => {
+// 納期列を 1 列追加する。date 省略時は空 (ユーザがモーダルの列ヘッダで日付を選ぶ)。
+const addDeliveryColumn = (date = '') => {
   const colId = nextDeliveryColId.value++
   const isFirst = deliveryColumns.value.length === 0
-  // 既定の納期は取引先納入日。ユーザは列ヘッダで変更する。
-  deliveryColumns.value.push({ id: colId, date: form.value.dueDate || '' })
+  deliveryColumns.value.push({ id: colId, date })
   // 最初の納期列を追加したとき、各明細の現在の発注数をこの列に移す (合計を維持)。
   if (isFirst) {
     for (const l of lines.value) l.deliveryQtys[colId] = Number(l.quantity) || 0
   }
 }
+// 納期列を 1 列削除する。入力済みの数量は失わない (原則2/7):
+// 残り列があれば先頭の残存列へ数量を合算、最後の 1 列なら合計を単一発注数へ戻して分納解除。
 const removeDeliveryColumn = (colId: number) => {
-  const willBeEmpty = deliveryColumns.value.length <= 1
-  // 分納モードを抜けるときは各明細の単一発注数へ合計を戻す (入力を失わない)。
-  if (willBeEmpty) {
-    for (const l of lines.value) l.quantity = lineMatrixTotal(l)
+  const remaining = deliveryColumns.value.filter((c) => c.id !== colId)
+  if (remaining.length === 0) {
+    clearDeliveryColumns()
+    return
   }
-  deliveryColumns.value = deliveryColumns.value.filter((c) => c.id !== colId)
-  for (const l of lines.value) delete l.deliveryQtys[colId]
+  const fallbackId = remaining[0].id
+  for (const l of lines.value) {
+    const q = Number(l.deliveryQtys[colId]) || 0
+    if (q > 0) l.deliveryQtys[fallbackId] = (Number(l.deliveryQtys[fallbackId]) || 0) + q
+    delete l.deliveryQtys[colId]
+  }
+  deliveryColumns.value = remaining
+}
+// 分納を解除する。全納期列を削除し、各明細の合計を単一発注数へ戻す (入力を失わない)。
+const clearDeliveryColumns = () => {
+  for (const l of lines.value) {
+    l.quantity = lineMatrixTotal(l)
+    l.deliveryQtys = {}
+  }
+  deliveryColumns.value = []
+  showDeliveryModal.value = false
 }
 // 明細の分納合計 (全納期列の数量合計)。
 const lineMatrixTotal = (l: LineRow): number =>
   deliveryColumns.value.reduce((s, c) => s + (Number(l.deliveryQtys[c.id]) || 0), 0)
 
-// 納期列が4つ以上になると左側の商品情報 (SKU〜備考) が横スクロールで隠れて操作不能になるため、
-// その場合は左6列 (SKU/発注数/入数/仕入単価/通貨/備考) を固定 (position: sticky) して横スクロールさせる。
-// 3列までは列固定せず従来どおり (テーブル幅が画面内に収まるため)。
-const stickyMode = computed(() => deliveryColumns.value.length >= 4)
-// 固定する左6列の幅 (px)。sticky の left は先行列の累積幅で計算する (auto 幅では left を確定できないため固定幅)。
-const FROZEN_WIDTHS = [208, 96, 96, 112, 96, 152]
-const frozenLeft = (i: number): number => FROZEN_WIDTHS.slice(0, i).reduce((s, w) => s + w, 0)
-// 固定列 (th/td 共通) のインラインスタイル。stickyMode でないときは空 = 従来の auto 幅。
-// i は左からの列インデックス (0=SKU 〜 5=備考)。z-index はスクロールする納期列より前面に出す。
-const frozenColStyle = (i: number): Record<string, string> => {
-  if (!stickyMode.value) return {}
-  const w = `${FROZEN_WIDTHS[i]}px`
-  const style: Record<string, string> = { position: 'sticky', left: `${frozenLeft(i)}px`, width: w, minWidth: w, maxWidth: w, zIndex: '2' }
-  // 最右の固定列 (備考) に右影を付け、固定領域とスクロール領域の境界を視覚化する。
-  if (i === FROZEN_WIDTHS.length - 1) style.boxShadow = '4px 0 6px -2px rgba(0,0,0,0.12)'
-  return style
+// --- 分納設定モーダル (§改修 2026-07) ---
+// 分納は④明細のインライン列ではなくモーダルで設定する。品番/色/サイズ/品名を固定列 (sticky) で
+// 表示し、日付列は横スクロール領域に置く。初回オープン時は日付列 5 列をデフォルト配置する。
+const DELIVERY_DEFAULT_COLS = 5
+const showDeliveryModal = ref(false)
+const openDeliveryModal = () => {
+  if (lines.value.length === 0) return
+  if (deliveryColumns.value.length === 0) {
+    // 先頭列は取引先納入日を既定にし (従来挙動)、残りは空 = ユーザが日付を選ぶ。
+    // 最初の列追加で各明細の発注数が先頭列へ移り、合計は維持される (addDeliveryColumn)。
+    for (let i = 0; i < DELIVERY_DEFAULT_COLS; i++) {
+      addDeliveryColumn(i === 0 ? (form.value.dueDate || '') : '')
+    }
+  }
+  showDeliveryModal.value = true
 }
+// 末尾の日付列を削除する (モーダルの「− 列を削除」)。最後の 1 列はボタンから消さない
+// (分納の解除は「分納を解除」で明示的に行う)。
+const removeLastDeliveryColumn = () => {
+  if (deliveryColumns.value.length <= 1) return
+  removeDeliveryColumn(deliveryColumns.value[deliveryColumns.value.length - 1].id)
+}
+// 固定表示する明細の識別列 (品番/色/サイズ/品名)。lg 未満では sticky を外して通常の横スクロールに
+// する (狭幅で固定すると日付入力列が画面外になるため。原則8)。left は先行列の累積幅。
+const DELIVERY_FIXED_COLS = [
+  { key: 'sku', label: '品番', cls: 'w-[124px] min-w-[124px] lg:sticky lg:left-0' },
+  { key: 'color', label: '色', cls: 'w-[88px] min-w-[88px] lg:sticky lg:left-[124px]' },
+  { key: 'size', label: 'サイズ', cls: 'w-[72px] min-w-[72px] lg:sticky lg:left-[212px]' },
+  { key: 'name', label: '品名', cls: 'w-[168px] min-w-[168px] lg:sticky lg:left-[284px]' },
+] as const
+// SKU 参照は明細行 × 固定列 4 つ分だけ引くため、線形探索を避けて Map で解決する。
+const skuMap = computed(() => new Map(skus.value.map((s) => [s.id, s])))
+// 固定列のセル表示値。SKU 未選択の明細は「—」(モーダルからは SKU を選ばせない)。
+const deliveryFixedText = (l: LineRow, key: string): string => {
+  const s = skuMap.value.get(l.productId)
+  if (!s) return '—'
+  if (key === 'sku') return s.sku
+  if (key === 'color') return s.colorName
+  if (key === 'size') return s.sizeName
+  return s.productName
+}
+// 日付列ごとの数量合計 (モーダルのフッタ集計)。
+const deliveryColumnTotal = (colId: number): number =>
+  lines.value.reduce((s, l) => s + (Number(l.deliveryQtys[colId]) || 0), 0)
+// 数量が入っているのに納期日付が未設定の列。送信時 deliveryDate=null になるため注意喚起する。
+const deliveryColumnsMissingDate = computed(() =>
+  deliveryColumns.value.filter((c) => !c.date && deliveryColumnTotal(c.id) > 0),
+)
+// モーダル表示中は Escape で閉じられるようにする (U-5 アクセシビリティ)。表示中のみリスナを張る。
+const onDeliveryModalKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape') showDeliveryModal.value = false
+}
+watch(showDeliveryModal, (open) => {
+  if (import.meta.server) return
+  if (open) window.addEventListener('keydown', onDeliveryModalKeydown)
+  else window.removeEventListener('keydown', onDeliveryModalKeydown)
+})
+onBeforeUnmount(() => {
+  if (import.meta.server) return
+  window.removeEventListener('keydown', onDeliveryModalKeydown)
+})
 
 // --- オートコンプリート選択肢（マスタ参照を部分一致検索可能に） ---
 const userOptions = computed(() => users.value.map((u) => ({ id: u.id, label: `${u.displayName} (${u.loginId})` })))
@@ -183,12 +242,8 @@ onMounted(async () => {
       form.value.ordererUserId = usrRes[0].id
       form.value.managerUserId = usrRes[0].id
     }
-    if (skus.value.length) lines.value[0].productId = skus.value[0].id
-
-    // 分納入力をデフォルトにする (Part7)。納期列を 1 つ用意して分納モードで開始する。
-    // addDeliveryColumn は最初の列追加時に各明細の発注数 (既定 1) を列へ移すため、合計は維持される。
-    // ユーザは列ヘッダの納期を変更・列を追加できる。全列を × で削除すれば単一発注数入力へ戻る。
-    if (deliveryColumns.value.length === 0) addDeliveryColumn()
+    // 明細は空から始める (§改修 2026-07)。SKU の自動選択・分納列の自動作成は行わない。
+    // 分納はユーザが「分納設定」モーダルを開いたときに日付列 5 列をデフォルト配置する。
   } catch (e) {
     errorMessage.value = 'マスタ情報の取得に失敗しました'
   } finally {
@@ -202,8 +257,10 @@ const addLine = () => {
   //  分納なしモードでは quantity=1 が既定で有効。)
   const deliveryQtys: Record<number, number | null> = {}
   if (deliveryColumns.value.length > 0) deliveryQtys[deliveryColumns.value[0].id] = 1
+  // SKU は自動選択しない (§改修 2026-07: 明細は空から始め、ユーザが明示的に選ぶ)。
+  // 単価サジェストは SKU 選択時 (onLineProductChange) に行う。
   lines.value.push({
-    productId: skus.value[0]?.id ?? '',
+    productId: '',
     quantity: 1,
     unitPriceSnapshot: 0,
     currencyCodeSnapshot: 'JPY',
@@ -211,13 +268,10 @@ const addLine = () => {
     remark: null,
     deliveryQtys,
   })
-  // 追加直後の明細にも現単価を補完する (reviewer M-1)。既定選択された SKU に対し size-aware に
-  // サジェスト (force=true)。supplier 未選択や現単価なしなら applyPriceSuggestion 内で no-op。
-  applyPriceSuggestion(lines.value.length - 1, true)
 }
 
+// 明細は 0 件まで削除できる (§改修 2026-07: 初期状態が空のため、最後の 1 行の削除も許可)。
 const removeLine = (idx: number) => {
-  if (lines.value.length <= 1) return
   lines.value.splice(idx, 1)
 }
 
@@ -308,6 +362,8 @@ const canSubmit = computed(() =>
   form.value.warehouseId !== '' &&
   form.value.ordererUserId !== '' &&
   form.value.managerUserId !== '' &&
+  // 明細は空から始まるため 1 件以上を必須にする (空配列だと every が常に true になるのを防ぐ)。
+  lines.value.length > 0 &&
   lines.value.every((l) => l.productId !== '' && lineQuantityValid(l) && l.unitPriceSnapshot >= 0) &&
   !submitting.value)
 
@@ -538,19 +594,25 @@ const onSubmit = async () => {
           </div>
         </section>
 
-        <!-- ④ 明細。分納は「分納入力」で納期 (日付) 列を追加し、SKU 明細行ごとに納期別の発注数を
-             入力する (2 枚目キャプチャの日付マトリクス)。納期列が無ければ単一の発注数を使う。
+        <!-- ④ 明細。初期状態は空で「+ 明細追加」から行を追加する (§改修 2026-07)。
+             分納は「分納設定」モーダルで納期 (日付) 列を管理し、SKU × 納期の数量を入力する。
+             分納設定済みのとき発注数は納期列の合計 (読取表示)。納期列が無ければ単一の発注数を使う。
              合計は通貨ごとに集計して表示する (選択通貨と表示を一致させる)。 -->
         <!-- overflow-x-auto は「テーブルのみ」を包む内側 div に付ける。セクション自体には付けない
-             ことで、見出し・ボタン (分納入力/明細追加)・説明文は横スクロールしても固定される
-             (以前はセクション全体がスクロール領域となりボタン等も一緒に動いてしまっていた)。 -->
+             ことで、見出し・ボタン (分納設定/明細追加)・説明文は横スクロールしても固定される。 -->
         <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="mb-3 flex items-center justify-between border-b border-gray-100 pb-2">
             <h2 class="font-semibold">④ 明細 ({{ lines.length }} 件、合計 {{ totalSummary }})</h2>
             <div class="flex items-center gap-2">
-              <!-- 分納入力: 納期 (日付) 列を 1 つ追加する。列を 1 つ以上追加すると分納モードになり、
-                   各 SKU の発注数は納期列の合計になる (「+ 明細追加」の左に配置)。 -->
-              <button type="button" class="rounded-md border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-700 hover:bg-blue-100" @click="addDeliveryColumn">+ 分納入力</button>
+              <!-- 分納設定: モーダルを開いて納期 (日付) 列と SKU × 納期の数量を入力する。
+                   明細が無いときは設定対象が無いため非活性 (「+ 明細追加」の左に配置)。 -->
+              <button
+                type="button"
+                :disabled="lines.length === 0"
+                :title="lines.length === 0 ? '先に明細を追加してください' : undefined"
+                class="rounded-md border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-700 hover:bg-blue-100 disabled:opacity-40"
+                @click="openDeliveryModal"
+              >分納設定{{ deliveryMode ? ` (${deliveryColumns.length} 列)` : '' }}</button>
               <button type="button" class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="addLine">+ 明細追加</button>
             </div>
           </div>
@@ -560,64 +622,57 @@ const onSubmit = async () => {
           <div class="overflow-x-auto rounded-md border border-gray-200">
           <table class="w-full border-separate border-spacing-0 text-sm">
             <thead class="bg-gray-50 text-gray-600">
-              <!-- stickyMode (納期列4つ以上) では左6列を固定表示 (frozenColStyle + bg で背景を塗り、
-                   スクロールする納期列がすり抜けて見えないようにする)。 -->
               <tr>
-                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(0)">SKU</th>
-                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(1)">発注数</th>
-                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(2)">入数</th>
-                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(3)">仕入単価</th>
-                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(4)">通貨</th>
-                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold" :class="stickyMode && 'bg-gray-50'" :style="frozenColStyle(5)">備考</th>
-                <!-- 分納 納期列 (全明細共通)。各列ヘッダで納期の日付を編集、× でその列を削除する。 -->
-                <th v-for="col in deliveryColumns" :key="col.id" class="border-b border-r border-gray-200 px-1 py-1 text-center font-semibold">
-                  <div class="flex items-center justify-center gap-1">
-                    <input v-model="col.date" type="date" class="rounded border border-gray-200 bg-white px-1 text-xs" />
-                    <button type="button" class="text-base leading-none text-red-500 hover:text-red-700" title="この納期列を削除" @click="removeDeliveryColumn(col.id)">×</button>
-                  </div>
-                </th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold">SKU</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold">発注数</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold">入数</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold">仕入単価</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold">通貨</th>
+                <th class="border-b border-r border-gray-200 px-2 py-1 text-left font-semibold">備考</th>
                 <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold">小計</th>
                 <th class="border-b border-r border-gray-200 px-2 py-1 text-right font-semibold"></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(l, idx) in lines" :key="idx">
-                <td class="border-b border-r border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(0)">
+                <td class="border-b border-r border-gray-200 p-0">
                   <!-- サイズ別仕入単価 (PR2): SKU 選択時に単価をサジェスト補完 (onLineProductChange)。 -->
                   <MasterSelect :model-value="l.productId" :items="skuOptions" borderless placeholder="SKU・品名で検索…" @update:model-value="(v) => onLineProductChange(idx, v)" />
                 </td>
-                <td class="border-b border-r border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(1)">
-                  <!-- 分納モード (納期列あり) は発注数 = 各納期列の合計を読取表示。分納なしは単一入力。 -->
+                <td class="border-b border-r border-gray-200 p-0 text-right">
+                  <!-- 分納設定済み (納期列あり) は発注数 = 各納期列の合計を読取表示。分納なしは単一入力。 -->
                   <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="sheet-input h-8 text-right" />
-                  <span v-else class="block w-full px-2 text-right font-mono leading-8 text-gray-700" title="納期列の合計">{{ lineQuantity(l).toLocaleString() }}</span>
+                  <span v-else class="block w-full px-2 text-right font-mono leading-8 text-gray-700" title="納期列の合計 (変更は「分納設定」から)">{{ lineQuantity(l).toLocaleString() }}</span>
                 </td>
-                <td class="border-b border-r border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(2)">
+                <td class="border-b border-r border-gray-200 p-0 text-right">
                   <input v-model.number="l.packQuantity" type="number" min="0" placeholder="—" class="sheet-input h-8 text-right" />
                 </td>
-                <td class="border-b border-r border-gray-200 p-0 text-right" :class="stickyMode && 'bg-white'" :style="frozenColStyle(3)">
+                <td class="border-b border-r border-gray-200 p-0 text-right">
                   <input v-model.number="l.unitPriceSnapshot" type="number" min="0" step="0.01" class="sheet-input h-8 text-right" />
                 </td>
-                <td class="border-b border-r border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(4)">
+                <td class="border-b border-r border-gray-200 p-0">
                   <AutoComplete :model-value="l.currencyCodeSnapshot" :options="[{ value: 'JPY', label: 'JPY' }, { value: 'USD', label: 'USD' }, { value: 'CNY', label: 'CNY' }]" :allow-empty="false" borderless @update:model-value="(v) => l.currencyCodeSnapshot = v" />
                 </td>
-                <td class="border-b border-r border-gray-200 p-0" :class="stickyMode && 'bg-white'" :style="frozenColStyle(5)">
+                <td class="border-b border-r border-gray-200 p-0">
                   <input v-model="l.remark" type="text" maxlength="255" placeholder="—" class="sheet-input h-8" />
-                </td>
-                <!-- 納期列ごとの発注数セル (SKU × 納期のマトリクス)。空欄は 0 扱い。 -->
-                <td v-for="col in deliveryColumns" :key="col.id" class="border-b border-r border-gray-200 p-0 text-right">
-                  <input v-model.number="l.deliveryQtys[col.id]" type="number" min="0" placeholder="0" class="sheet-input h-8 text-right" />
                 </td>
                 <!-- 小計は行の通貨を前置して表示 (選択通貨とサマリ表示を一致させる)。 -->
                 <td class="whitespace-nowrap border-b border-r border-gray-200 px-2 py-1 text-right font-mono">{{ l.currencyCodeSnapshot }} {{ lineSubtotal(l).toLocaleString() }}</td>
                 <td class="border-b border-r border-gray-200 px-2 py-1 text-center">
-                  <button type="button" :disabled="lines.length <= 1" class="text-xs text-red-600 hover:underline disabled:opacity-30" @click="removeLine(idx)">削除</button>
+                  <button type="button" class="text-xs text-red-600 hover:underline" @click="removeLine(idx)">削除</button>
+                </td>
+              </tr>
+              <!-- 空状態 (初期表示)。明細は空から始まるため、追加導線を明示する。 -->
+              <tr v-if="lines.length === 0">
+                <td colspan="8" class="px-2 py-6 text-center text-gray-500">
+                  明細がありません。「+ 明細追加」で SKU を追加してください。
                 </td>
               </tr>
             </tbody>
           </table>
           </div>
           <p v-if="deliveryMode" class="mt-2 text-xs text-gray-500">
-            分納モード: 各 SKU の発注数は納期列の合計です。納期列を全て × で削除すると単一発注数の入力に戻ります (入力済みの合計は発注数に引き継がれます)。
+            分納設定済み: 各 SKU の発注数は納期列の合計です。数量・納期の変更は「分納設定」から行います。「分納を解除」すると単一発注数の入力に戻ります (入力済みの合計は発注数に引き継がれます)。
           </p>
         </section>
 
@@ -665,6 +720,141 @@ const onSubmit = async () => {
           </button>
         </div>
       </form>
+
+      <!-- 分納設定モーダル (§改修 2026-07)。日付ごとの数量を入力する。
+           品番/色/サイズ/品名は固定表示 (lg 以上で sticky)、日付列は横スクロール。
+           列の増減はヘッダのボタン (+ 列を追加 / − 列を削除) と各列の × で行う。
+           MasterEditDialog と同じ Teleport + ヘッダ/フッタ固定・本文スクロールの構成。 -->
+      <Teleport to="body">
+        <div
+          v-if="showDeliveryModal"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delivery-modal-title"
+          @click.self="showDeliveryModal = false"
+        >
+          <div class="flex max-h-[calc(100vh-3rem)] w-full max-w-6xl flex-col rounded-lg bg-white shadow-xl">
+            <header class="shrink-0 border-b border-gray-200 px-5 py-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h2 id="delivery-modal-title" class="text-base font-semibold">分納設定</h2>
+                  <p class="mt-0.5 text-xs text-gray-500">
+                    納期 (日付) ごとの発注数を入力します。品番・色・サイズ・品名は固定表示、日付列は横スクロールします。明細の発注数は各日付列の合計になります。
+                  </p>
+                </div>
+                <button type="button" class="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-sm hover:bg-gray-50" @click="showDeliveryModal = false">閉じる</button>
+              </div>
+              <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs text-gray-500">日付列 {{ deliveryColumns.length }} 列 (既定 {{ DELIVERY_DEFAULT_COLS }} 列)</span>
+                <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    :disabled="deliveryColumns.length <= 1"
+                    title="末尾の日付列を削除します (数量は先頭の列へ移します)"
+                    class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50 disabled:opacity-40"
+                    @click="removeLastDeliveryColumn"
+                  >− 列を削除</button>
+                  <button
+                    type="button"
+                    class="rounded-md border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-700 hover:bg-blue-100"
+                    @click="addDeliveryColumn()"
+                  >+ 列を追加</button>
+                </div>
+              </div>
+            </header>
+
+            <div class="flex-1 overflow-auto px-5 py-3">
+              <table class="w-full border-separate border-spacing-0 text-sm">
+                <thead class="bg-gray-50 text-gray-600">
+                  <tr>
+                    <!-- 固定表示列 (品番/色/サイズ/品名)。lg 以上で sticky、背景を塗って日付列がすり抜けないようにする。 -->
+                    <th
+                      v-for="c in DELIVERY_FIXED_COLS"
+                      :key="c.key"
+                      class="border-b border-r border-gray-200 bg-gray-50 px-2 py-1 text-left font-semibold lg:z-[2]"
+                      :class="c.cls"
+                    >{{ c.label }}</th>
+                    <!-- 日付列。ヘッダで納期を編集、× でその列を削除する。 -->
+                    <th
+                      v-for="col in deliveryColumns"
+                      :key="col.id"
+                      class="w-[128px] min-w-[128px] border-b border-r border-gray-200 px-1 py-1 text-center font-semibold"
+                    >
+                      <div class="flex items-center justify-center gap-1">
+                        <input v-model="col.date" type="date" class="w-full rounded border border-gray-300 bg-white px-1 text-xs" :aria-label="`納期 ${deliveryColumns.indexOf(col) + 1} 列目`" />
+                        <button
+                          type="button"
+                          class="shrink-0 text-base leading-none text-red-500 hover:text-red-700"
+                          :title="deliveryColumns.length <= 1
+                            ? 'この列を削除して分納を解除します (合計は発注数に引き継がれます)'
+                            : 'この日付列を削除します (入力済みの数量は先頭の列へ移します)'"
+                          @click="removeDeliveryColumn(col.id)"
+                        >×</button>
+                      </div>
+                    </th>
+                    <th class="w-[88px] min-w-[88px] border-b border-gray-200 px-2 py-1 text-right font-semibold">合計</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(l, idx) in lines" :key="idx">
+                    <td
+                      v-for="c in DELIVERY_FIXED_COLS"
+                      :key="c.key"
+                      class="truncate border-b border-r border-gray-200 bg-white px-2 py-1 lg:z-[2]"
+                      :class="c.cls"
+                      :title="deliveryFixedText(l, c.key)"
+                    >{{ deliveryFixedText(l, c.key) }}</td>
+                    <!-- 日付列ごとの発注数セル (SKU × 納期のマトリクス)。空欄は 0 扱い。 -->
+                    <td v-for="col in deliveryColumns" :key="col.id" class="border-b border-r border-gray-200 p-0 text-right">
+                      <input
+                        v-model.number="l.deliveryQtys[col.id]"
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                        class="sheet-input h-8 text-right"
+                        :aria-label="`${deliveryFixedText(l, 'sku')} の ${col.date || '納期未設定'} の発注数`"
+                      />
+                    </td>
+                    <td class="border-b border-gray-200 px-2 py-1 text-right font-mono">{{ lineMatrixTotal(l).toLocaleString() }}</td>
+                  </tr>
+                </tbody>
+                <tfoot class="bg-gray-50 text-gray-600">
+                  <tr>
+                    <td
+                      v-for="(c, i) in DELIVERY_FIXED_COLS"
+                      :key="c.key"
+                      class="border-t border-r border-gray-200 bg-gray-50 px-2 py-1 font-semibold lg:z-[2]"
+                      :class="c.cls"
+                    >{{ i === 0 ? '列合計' : '' }}</td>
+                    <td v-for="col in deliveryColumns" :key="col.id" class="border-t border-r border-gray-200 px-2 py-1 text-right font-mono">
+                      {{ deliveryColumnTotal(col.id).toLocaleString() }}
+                    </td>
+                    <td class="border-t border-gray-200 px-2 py-1 text-right font-mono font-semibold">
+                      {{ lines.reduce((s, l) => s + lineMatrixTotal(l), 0).toLocaleString() }}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <footer class="shrink-0 border-t border-gray-200 px-5 py-3">
+              <p v-if="deliveryColumnsMissingDate.length > 0" class="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                数量が入力されているのに納期が未設定の列が {{ deliveryColumnsMissingDate.length }} 列あります。納期なしのまま登録すると、その分納行は納期未定として保存されます。
+              </p>
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  class="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                  title="全ての日付列を削除し、明細の発注数を単一入力に戻します (合計は引き継がれます)"
+                  @click="clearDeliveryColumns"
+                >分納を解除</button>
+                <button type="button" class="rounded-md bg-blue-600 px-5 py-1.5 text-sm font-semibold text-white hover:bg-blue-700" @click="showDeliveryModal = false">完了</button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      </Teleport>
     </template>
   </main>
 </template>
