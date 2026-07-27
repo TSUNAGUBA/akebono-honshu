@@ -27,12 +27,21 @@ export const useNav = () => {
 
   /**
    * リンクのアクセス可否。requires 省略時は認証済みの全ユーザ可。
-   * 'owner' は工程実績管理権限（processRecordPermission === 1）を要求する
-   * （旧 AppNav の「データ移行」表示条件を踏襲）。
+   * 'owner' は工程実績管理権限（processRecordPermission）を要求する
+   * （旧 AppNav の「データ移行」表示条件を踏襲）。オーナー権限は 0=なし / 1=あり の 2 値で
+   * 非単調スケールを持たないため、判定式は useAuth の isAttendanceAdmin・pages/masters/users.vue と
+   * 揃えて `>= 1` に統一する（同一概念の判定式が画面ごとに違うと、権限値が拡張されたときに
+   * ナビだけリンクが消える）。
+   * 'attendance' は勤怠権限（1=更新可能 / 2=参照のみ）を要求する。0=なし には勤怠カテゴリを出さない
+   * （勤怠移植仕様 §6.2）。**勤怠の権限スケールは非単調のため、こちらは >= では判定しない。**
    */
   const canAccess = (requires?: NavGuard): boolean => {
     if (!requires) return true
-    if (requires === 'owner') return (user.value?.processRecordPermission ?? 0) === 1
+    if (requires === 'owner') return (user.value?.processRecordPermission ?? 0) >= 1
+    if (requires === 'attendance') {
+      const p = user.value?.attendancePermission ?? 0
+      return p === 1 || p === 2
+    }
     return true
   }
 

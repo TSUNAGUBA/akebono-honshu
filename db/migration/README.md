@@ -28,6 +28,11 @@
 > 既存(稼働中)DB へ反映するシードです（`db/init/06-demo-data.sql` を `\ir` で取り込む単一 SoT、
 > 全 INSERT 冪等）。スキーマ変更ではありませんが、`init` は既存 DB で中止されるため、
 > 同じく `action=migrate` で適用されます。`iter7-ops-data.sql`（業務拡張モジュール: 販売管理/出荷/在庫管理のテーブル + サンプルデータ、`db/init/07-ops-data.sql` を `\ir` で取り込む）も同方式・冪等です。
+>
+> `iter30-attendance.sql`（勤怠管理・タイムカード、**akebono-office からの移植**）もスキーマ系のため
+> `action=migrate` で自動適用されます。ただし**テナントスコープ表（`leave_types`）へのシードを含む**ため
+> テナントコンテキストが必要で、その扱いが `mig-3-*.sql` と異なります。詳細は本書
+> 「勤怠マイグレーション (`iter30-attendance.sql`) の適用」を参照してください。
 
 ---
 
@@ -177,6 +182,129 @@ COMMIT;
 Backend (`src/Backend/Application/Migration/LegacyImportService.cs`) は
 `mig-3-pre-patch.sql` / `step-01` / `step-02` / `step-03` を **Embedded Resource** として
 参照し、`db/migration/` を Single Source of Truth として 1 元管理しています。
+
+---
+
+## 勤怠マイグレーション (`iter30-attendance.sql`) の適用
+
+> **本節の位置づけ:** 本書の主題である MIG-3 (CSV データ取込) とは別系統の**スキーマ系マイグレーション**です。
+> 通常は自動適用されるため手動操作は不要ですが、**テナントスコープ表へのシードを含む**点が
+> `mig-3-*.sql` と異なるため、その扱いを明記します。
+>
+> **移植元:** **akebono-office** の勤怠管理・タイムカード機能 (打刻・勤怠集計・36 協定アラート・
+> 打刻修正申請・休暇) を akebono-honshu へ移植したもの (Iteration 30)。
+
+### 何が入るか
+
+`db/init/10-attendance.sql`（新規 DB 初期化用）と**等価**の内容を、既に初期化済みの DB へ追加適用します。
+
+| 節 | 内容 |
+|---|---|
+| §1 | `users` への勤怠列 6 本 (`attendance_permission` / `punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`) + CHECK 制約 |
+| §2 | 6 テーブル作成 (`attendance_rules` / `punch_records` / `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`) |
+| §3 | `users.attendance_rule_id → attendance_rules(id)` の FK + 部分インデックス |
+| §4 | **法定有給 (`有給休暇`) の休暇種別シード（全テナント）** |
+| §5 | アプリロール `akebono_app` への権限付与（`punch_records` は追記のみのため `UPDATE` / `DELETE` を REVOKE）|
+| §6 | RLS ポリシー配線（標準形: `USING` + `WITH CHECK` + `FORCE ROW LEVEL SECURITY`）|
+| §7 | `updated_at` トリガ配線（`punch_records` は `updated_at` 列を持たないため対象外）|
+
+テーブル定義の詳細は `.ai-native/outputs/phase5/data-design.md §14` を参照。
+
+### 適用手順（推奨: 自動）
+
+GitHub Actions **「DB Init / Migrate (RDS)」を `action=migrate`** で実行します。
+`run-migrations.sh` が `db/migration/*.sql`（`mig-3-*` を除く）を `find | sort` で探索し、
+`schema_migrations` 台帳に基づき未適用のものだけを順に適用します（**前進専用・二重適用防止**）。
+手順は `deploy/README.md §3.2` と同一で、本ファイル固有の追加操作はありません。
+
+- **新規 DB（`action=init` / docker 初回起動）では不要**です。`db/init/10-attendance.sql` が同じ内容を適用し、
+  `init` は全投入後に現行のスキーママイグレーションを「適用済み」として `schema_migrations` に記録するため、
+  後から `migrate` を流しても二重適用されません。
+- **適用順序の注意:** `find | sort` は辞書順のため `iter30-attendance.sql` は `iter4-*`〜`iter9-*` より**前**に
+  並びます。本ファイルが依存するのは `01-schema.sql` の `tenant` / `users` と、**同じく `01-schema.sql` で
+  定義される**共通トリガ関数 `set_updated_at()` のみで、`iter4`〜`iter29` とは独立しているため、
+  この並び順で問題ありません。
+  （`09-updated-at-triggers.sql` は既存テーブルへのトリガ配線のみを行うファイルであり、
+  `set_updated_at()` の定義元ではありません。適用が `function set_updated_at() does not exist` で
+  失敗した場合に確認すべきは `01-schema.sql` の投入状況です。）
+
+### テナントコンテキスト（`SET app.tenant_id`）の扱い
+
+本書冒頭の注意にあるとおり、**テナントスコープ表のデータを操作する migration は
+`SET app.tenant_id` が必要**です（`FORCE ROW LEVEL SECURITY` によりテーブル所有者にも RLS が適用され、
+`tenant_id` 列の DEFAULT もこの GUC から解決されるため）。`iter30-attendance.sql` は §4 で
+`leave_types` にシードを投入するため、この条件に該当します。
+
+**ただし本ファイルは、テナントコンテキストを自ら設定します。** シードブロックが
+`tenant` 表を走査し、テナントごとに `PERFORM set_config('app.tenant_id', t.tenant_id::text, true)` を
+実行してから INSERT します。
+
+```sql
+FOR t IN SELECT tenant_id FROM tenant LOOP
+    PERFORM set_config('app.tenant_id', t.tenant_id::text, true);
+    INSERT INTO leave_types (...) SELECT ... WHERE NOT EXISTS (...);
+END LOOP;
+```
+
+したがって:
+
+- **実行前に手動で `SET app.tenant_id` を行う必要はありません**（`mig-3-*.sql` との違い。
+  `mig-3-*.sql` はアプリ経由実行でも使う共有 SQL のためテナント GUC を埋め込まず、psql 実行時は
+  セッション冒頭での手動設定が必須でした）。
+- 単一テナントだけでなく **`tenant` 表の全テナントに**シードが入ります（マルチテナント対応）。
+- `set_config` の第 3 引数が `true`（トランザクションローカル）で、ファイル全体が `BEGIN` 〜 `COMMIT` で
+  囲まれているため、**COMMIT 後にセッションの GUC が汚れません**。
+- §2 のテーブル作成時点では GUC が未設定でも問題ありません（`tenant_id` の DEFAULT が評価されるのは
+  行を INSERT するときのみで、DDL では評価されないため）。
+
+### フォールバック: psql / GUI から直接適用
+
+`\ir` 等の psql メタコマンドを使っていないため、`psql` でも pgAdmin 等の GUI クライアントでも
+そのまま実行できます。ファイル全体が単一トランザクションです。
+
+```bash
+psql -v ON_ERROR_STOP=1 -h <host> -U <user> -d akebono_honshu \
+     -f db/migration/iter30-attendance.sql
+```
+
+手動実行した場合は `schema_migrations` 台帳に記録されないため、後続の `action=migrate` が
+同ファイルを再実行します。全処理が冪等なので**再実行しても安全**です
+（記録が必要な場合は台帳へ手動 INSERT するか、そのまま再実行させてください）。
+
+### 冪等性・下位互換（CLAUDE.md 原則 2 / 原則 7）
+
+- `ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` /
+  `DROP POLICY IF EXISTS` → `CREATE POLICY` / `DROP TRIGGER IF EXISTS` → `CREATE TRIGGER`。
+  CHECK 制約と FK は `pg_constraint` を確認して未作成のときだけ追加します。
+- シードは `NOT EXISTS` ガード付き INSERT。**再実行しても既存の休暇種別を更新・削除しません。**
+- **記録系（`punch_records` / `leave_grants`）への UPDATE・DELETE は一切行いません。**
+- `users` への追加列はすべて**末尾追加 + NOT NULL DEFAULT** のため、既存行は DEFAULT で自動的に妥当な値になり、
+  **データ更新パッチは不要**です。`attendance_permission=1` / `punch_required=TRUE` により、
+  既存ユーザは適用直後からそのまま打刻できます。既存テーブル・既存列・既存データは一切変更しません。
+
+### ロールバック
+
+**提供しません**（前進専用）。本ファイルは追加のみで既存データを変更しないため、適用によって
+既存業務が壊れることはありません。稼働後に勤怠テーブルを削除すると打刻・休暇付与という
+**記録系データを失う**ため、巻き戻しは行わない前提です。勤怠機能を止める必要が生じた場合は、
+テーブル削除ではなく利用者の `attendance_permission = 0` で運用停止してください。
+
+### 移植の除外スコープ
+
+| 除外した office の機能 | 理由 |
+|---|---|
+| 祝日マスタ・営業日計算 | 翌営業日計算専用であり、honshu には翌営業日計算を使う機能が無い。法定休日は `attendance_rules.legal_holiday_weekday`（曜日）で判定するため不要 |
+| AI 参照範囲・チャットボット・日報連携・通知・エスカレーション | honshu に対応機能が無い |
+| 権限ルールマトリクスエンジン | honshu の 4+1 権限カテゴリ方式に置換（`users.attendance_permission` + オーナー権限 `process_record_permission`）|
+| 雇用区分（`employment_type`）| 勤怠ルールは既定ルール方式、有給付与は `users.weekly_days` / `weekly_hours` で判定するため不要 |
+
+### 未検証事項
+
+- 本改修を行った環境では **.NET SDK を取得できず、バックエンドをローカルでコンパイル検証できていません**。
+- `docs/api/openapi.json` は**未再生成**です。CI の `regen-openapi` ワークフロー
+  （main 向け PR で自動再生成し、生成物を head ブランチへ自動コミットする）に委ねます。
+- 本 SQL 自体は PostgreSQL 上での実行検証を行っていないため、初回適用はステージング環境で
+  実施し、`\d+ punch_records` 等で列・制約・RLS ポリシー・トリガの作成結果を確認してください。
 
 ---
 

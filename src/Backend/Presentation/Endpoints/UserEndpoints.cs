@@ -6,6 +6,10 @@ namespace Akebono.Api.Endpoints;
 /// <summary>
 /// 利用者マスタ (Part5) エンドポイント。
 ///   - GET (list/single) は認証必須 (発注/商品フォームの担当者候補にも使用)。
+///     ただし**労務個人情報 (勤怠権限・打刻要否・勤務体系・入社日・週所定日数/時間) は
+///     オーナーにのみ返す**。入社日と週所定は有給の比例付与判定に直結するため、
+///     認証のみで全在籍者分を列挙できてはならない
+///     (UserQueryService.WithoutLaborInfo が応答から落として null にする)。
 ///   - POST/PATCH/DELETE/Restore は利用者管理権限 (オーナー = process_record_permission >= 1) 必須
 ///     (AuthEndpoints.CheckUserAdminAsync)。
 /// </summary>
@@ -26,9 +30,10 @@ public static class UserEndpoints
 
         group.MapGet("/{id:guid}", async (HttpContext http, Guid id, UserQueryService svc, CancellationToken ct) =>
         {
-            if (!AuthEndpoints.TryGetUserId(http, out _))
+            if (!AuthEndpoints.TryGetUserId(http, out var actorId))
                 return AuthEndpoints.UnauthorizedError(http);
-            var user = await svc.GetAsync(id, ct);
+            // 一覧と同じ規則で労務個人情報を落とす (オーナー以外には null で返る)。
+            var user = await svc.GetForActorAsync(id, actorId, ct);
             return user is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, user);
         });
 
@@ -41,8 +46,11 @@ public static class UserEndpoints
             return ApiEnvelope.Created(http, $"/api/maker/v1/users/{created.Id}", created);
         });
 
+        // 部分更新。**送られていないフィールドは既存値を保持する** (UserPatchRequest)。
+        // 作成用の UserWriteRequest を受けると、未指定の勤怠列が record の既定値で
+        // 上書きされ入社日等が消えるため、更新は必ず patch 用 record で受けること。
         group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
-                                              UserQueryService svc, Guid id, UserWriteRequest req, CancellationToken ct) =>
+                                              UserQueryService svc, Guid id, UserPatchRequest req, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckUserAdminAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

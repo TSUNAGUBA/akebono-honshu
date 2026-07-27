@@ -34,6 +34,10 @@ END $$ LANGUAGE plpgsql;
 
 -- 各テーブルへのトリガ配線は 09-updated-at-triggers.sql で一括実施
 -- (information_schema 走査により updated_at 列を持つ全 BASE TABLE を自動カバー)。
+-- ただし自動カバーの対象は **09 より前に実行されるファイルで作られたテーブル** に限る。
+-- 09 より後に実行されるファイル (10-attendance.sql 等) で作られるテーブルは、09 の走査時点では
+-- まだ存在しないため対象外。その場合は自ファイル内で set_updated_at() の BEFORE UPDATE トリガを
+-- 配線すること (実装例: 10-attendance.sql §5)。
 
 -- ─────────────────────────────────────────────────
 -- tenant — テナントレジストリ (ローカル投影)
@@ -85,6 +89,16 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_tenant ON users (tenant_id);
 CREATE INDEX idx_users_active ON users (is_active) WHERE deleted_at IS NULL;
+
+-- users の拡張列について (追加場所の索引):
+--   §3.18 の Phase 5 全カラム (firebase_uid / email / 権限 4 列 / 監査列 / legacy_id) は
+--     02-masters.sql の ALTER TABLE users で追加する。
+--   勤怠 (Iteration 30) の 6 列 (attendance_permission / punch_required / attendance_rule_id /
+--     hire_date / weekly_days / weekly_hours) は 10-attendance.sql で追加する。
+--     ※ ここ (01) ではなく 10 で追加する理由: attendance_rule_id の FK 先 attendance_rules が
+--        10 で作られること、および **列の並び順を db/migration/iter30-attendance.sql を適用した
+--        既存 DB と一致させる**ため (既存 DB では 02 の列より後ろにしか追加できない)。
+--        init 経路と migration 経路でスキーマが等価になる。
 
 -- ─────────────────────────────────────────────────
 -- audit_logs (Phase 5 §6.1、Iteration 0 用に最小列のみ)

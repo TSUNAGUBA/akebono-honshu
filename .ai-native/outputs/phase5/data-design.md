@@ -62,7 +62,7 @@
        │  uid                  │ users                                 │
        └─────────────────────► │ - firebase_uid (UNIQUE)               │
                                │ - employee_no (UNIQUE)                │
-                               │ - permissions (4 権限ロール)          │
+                               │ - permissions (5 権限ロール)          │
                                └───────────────┬───────────────────────┘
                                                │ created_by / updated_by
                                                ▼
@@ -118,6 +118,32 @@
                              │ audit_logs (INSERT 専用、3ヶ月で S3 へ)│
                              │ - actor_user_id, action, entity, ... │
                              └──────────────────────────────────────┘
+
+ [勤怠 (Iteration 30、akebono-office から移植。詳細は §14)]
+ ┌──────────────────────────────────────┐
+ │ users (勤怠列 6 本を末尾追加)          │
+ │ - attendance_permission (0/1/2)       │
+ │ - punch_required                      │
+ │ - attendance_rule_id ─────────────┐   │
+ │ - hire_date, weekly_days/hours    │   │
+ └───────┬───────────────────────────┼───┘
+         │ user_id                   │ NULL = 既定ルール
+         │                           ▼
+         │                 ┌──────────────────────────────────────┐
+         │                 │ attendance_rules (勤務体系マスタ)      │
+         │                 │ - work_start / work_end / break_minutes│
+         │                 │ - legal_holiday_weekday / closing_day  │
+         │                 │ - is_default (テナント内 高々 1 件)    │
+         │                 └──────────────────────────────────────┘
+         │
+         ├──► punch_records (打刻。記録系・追記のみ、at=UTC / date=JST)
+         │      ▲ source=2(Fix) の行の fixed_from が旧打刻の at を指し論理置換
+         │      │
+         ├──► attendance_fix_requests (打刻修正申請。承認で punch_records へ追記)
+         │
+         ├──► leave_grants ────┐  (付与。UNIQUE(tenant,user,type,grant_date) で冪等)
+         │                     ├─► leave_types (休暇種別マスタ。法定有給をシード)
+         └──► leave_requests ──┘  (申請。status=1(Approved) のみ残数を消化)
 ```
 
 > Mermaid ERD は README/ドキュメント整備時に変換する（Arch-6 と同じ判断）。
@@ -265,6 +291,20 @@
 | `is_deleted` | `BOOLEAN NOT NULL DEFAULT FALSE` | 論理削除（マスタの `delete_flag` 命名に統一すべきだが、Firebase 連携の `disabled` 概念と区別するため明示的に `is_deleted`）|
 | `is_active` | `BOOLEAN NOT NULL DEFAULT TRUE` | Firebase Auth `disabled` と同期（false = Firebase 側も disabled）|
 | `created_at` / `created_by_user_id` / `updated_at` / `updated_by_user_id` / `legacy_id` | 共通基底 | 自己参照を許容（初回ブートストラップは `0` または `NULL` 許容後に修正、Migration で対応）|
+| `attendance_permission` | `SMALLINT NOT NULL DEFAULT 1` | **勤怠権限（Iteration 30 追加）。0=なし, 1=更新可能, 2=参照のみ。既存 4 権限と同じ非単調スケールのため、書込判定は `== 1`（`>= 1` は「参照のみ」に書込を許すバグ）。`CHECK (attendance_permission BETWEEN 0 AND 2)`** |
+| `punch_required` | `BOOLEAN NOT NULL DEFAULT TRUE` | **打刻対象か（Iteration 30 追加）。役員・外注等は false。打刻 API は `attendance_permission == 1` かつ本列が true のときのみ許可** |
+| `attendance_rule_id` | `UUID NULL REFERENCES attendance_rules(id)` | **個別に割り当てた勤務体系（Iteration 30 追加）。NULL = 既定ルール（§14.1 の `is_default`）を使用。`fk_users_attendance_rule` / 部分インデックス `idx_users_attendance_rule ... WHERE attendance_rule_id IS NOT NULL`** |
+| `hire_date` | `DATE NULL` | **入社日（Iteration 30 追加）。有給の周期自動付与の起算日（`hire_date + 6ヶ月`、以降 1 年ごと）。NULL のユーザは周期自動付与の対象外** |
+| `weekly_days` | `NUMERIC(3,1) NOT NULL DEFAULT 5` | **週所定日数（Iteration 30 追加）。有給の比例付与判定に使用。`CHECK (weekly_days BETWEEN 0 AND 7)`** |
+| `weekly_hours` | `NUMERIC(4,1) NOT NULL DEFAULT 40` | **週所定時間（Iteration 30 追加）。有給の比例付与判定に使用。`CHECK (weekly_hours BETWEEN 0 AND 168)`** |
+
+> **既知の課題（Iteration 30）→ 解消済み（コミット `4c6981e`）:** 当初、勤怠列のうち
+> `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours` の 4 件に入力 UI が無い一方、
+> `PATCH /users/{id}` が全項目を無条件で上書きしていたため、利用者フォームから保存するたびに
+> これらが既定値へ巻き戻る BLOCKER があった。利用者フォームへの 4 項目追加と、
+> `PATCH` の部分更新化（`UserPatchRequest`。`null` = 未指定 = 現在値保持、NULL 許容列は
+> 明示クリアフラグ）の**両方**を実施して解消済み。経緯は `screen-design.md §3.12`、
+> API 契約は `api-design.md §2.7.9` を参照。
 
 > **設計判断:**
 > - 業務 PK は `employee_no`、認証 SoT は `firebase_uid`。両者を持つことで Firebase 不調時にも業務操作のトレースが可能。
@@ -670,8 +710,237 @@
 
 ---
 
-## 14. 変更履歴
+## 14. 勤怠関連エンティティ（Iteration 30、akebono-office からの移植）
+
+> **移植元:** **akebono-office** の勤怠管理・タイムカード機能。打刻・勤怠集計（労基法 32/34/37 条）・
+> 36 協定アラート（労基法 36 条）・打刻修正申請・休暇（労基法 39 条）を honshu へ移植した。
+> **章番号について:** 本章は §7〜§13 への既存クロスリファレンス（`data-design §7.1` / `§7.2` /
+> `§6.1` 等、コードコメント・他ドキュメントから多数参照）を壊さないため、既存章を再採番せず
+> 変更履歴の直前に追加している。
+>
+> **実装 SoT:** `db/init/10-attendance.sql`（新規 DB 初期化）/ `db/migration/iter30-attendance.sql`
+> （既存 DB への追加適用、両者は等価）/ `src/Backend/Infrastructure/Persistence/AkebonoDbContext.cs`
+> （EF Core マッピング）/ `src/Backend/Domain/Attendance/`（エンティティ・ドメインロジック）。
+> API は `api-design.md §2.7`、画面は `screen-design.md §3.14 / §3.15` を参照。
+
+### 14.0 共通事項
+
+**共通基底（勤怠 6 テーブル全件）** — §1.2 命名規約の初版（`id BIGSERIAL` / `TIMESTAMP` JST naive）ではなく、
+プラットフォーム統合改修（2026-07-09）以降の現行規約に従う:
+
+| カラム | 型 | 補足 |
+|---|---|---|
+| `id` | `UUID PRIMARY KEY DEFAULT gen_random_uuid()` | サロゲート PK |
+| `tenant_id` | `UUID NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id)` | テナント分離。RLS（`USING` + `WITH CHECK` + `FORCE ROW LEVEL SECURITY`）を 6 テーブル全件に配線 |
+| `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | UTC 格納 |
+| `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | `set_updated_at()` トリガで自動更新。**`punch_records` のみ本列を持たない**（追記のみのため） |
+
+C# 側は全エンティティが `ITenantScoped` を実装し、`tenant_id` 列マッピングとグローバルクエリフィルタは
+`AkebonoDbContext.OnModelCreating` の一括配線が担う。enum は `HasConversion<short>()` で `SMALLINT` 列へ写像する
+（既存 `OrderStatus` と同方式、D-9「enum は SMALLINT」に整合）。
+
+> **時刻の扱い（`src/Backend/Domain/Common/SystemTime.cs` が SoT）:**
+> - 打刻時刻 `punch_records.at` ・ 申請時刻 `attendance_fix_requests.requested_at` は
+>   **`TIMESTAMPTZ` に UTC を格納**する（C# は `DateTime` / `Kind=Utc`、採番は `SystemTime.UtcNow`）。
+> - 業務日付 `date` / `grant_date` / `expire_date` は **JST の日付**を `DATE` で持つ（採番は `SystemTime.TodayJst`）。
+> - 深夜帯（22時〜5時）判定・時刻表示は必ず `SystemTime.ToJst(at)` で JST 変換してから行う
+>   （UTC 値の `Hour` を直接使わない）。
+> - `db/migration/iter4-tz-to-jst-naive.sql`（§1.2 が参照する JST naive 方式）は**廃止済みの旧方式**であり、
+>   勤怠テーブルは従わない。
+
+**RLS とロール権限:** `db/init/10-attendance.sql` は `08-tenancy-rls.sql`（RLS 一括配線）・
+`09-updated-at-triggers.sql`（トリガ一括配線）より後（番号 10）に実行されるため、自ファイル末尾で
+RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロール `akebono_app` には
+`punch_records` のみ `SELECT, INSERT` を付与し **`UPDATE` / `DELETE` を明示 REVOKE** する
+（`audit_logs` と同方針、DP-6 の考え方を記録系へ拡張）。
+
+### 14.1 `attendance_rules` — 勤務体系マスタ
+
+所定労働時間・法定休日曜日・締め日・フレックスを保持する設定系マスタ。
+ルール解決は「既定ルール方式」（`AttendanceCalc.ResolveRule`）: ① `users.attendance_rule_id` が指す有効ルール →
+② 有効かつ `is_default` のルール → ③ 一覧の先頭（`ORDER BY name, id`） → ④ いずれも無ければ null
+（所定 480 分・法定休日=日曜 として扱う）。
+
+| カラム | 型 | 補足 |
+|---|---|---|
+| `name` | `VARCHAR(128) NOT NULL` | 勤務体系名。アプリ層で 128 文字以内を検証 |
+| `work_start` | `VARCHAR(5) NOT NULL DEFAULT '09:00'` | 始業 `'HH:mm'`（JST 壁時計）。ゼロ埋め固定長のため序数比較で前後判定可 |
+| `work_end` | `VARCHAR(5) NOT NULL DEFAULT '18:00'` | 終業 `'HH:mm'`。`work_start < work_end` をアプリ層で強制 |
+| `break_minutes` | `INTEGER NOT NULL DEFAULT 60` | 所定休憩（分）。`CHECK (break_minutes BETWEEN 0 AND 240)` |
+| `flex_enabled` | `BOOLEAN NOT NULL DEFAULT FALSE` | フレックスタイム制。office の `flex` JSON を平坦化（`jsonb` を使わない）|
+| `flex_core_start` | `VARCHAR(5) NULL` | コアタイム開始 `'HH:mm'`。`flex_enabled=true` のとき必須 |
+| `flex_core_end` | `VARCHAR(5) NULL` | コアタイム終了 `'HH:mm'`。同上、`start < end` |
+| `flex_settlement_months` | `INTEGER NOT NULL DEFAULT 1` | 清算期間（月）。`CHECK (flex_settlement_months BETWEEN 1 AND 3)` |
+| `closing_day` | `INTEGER NOT NULL DEFAULT 31` | 締め日（31 = 月末）。`CHECK (closing_day BETWEEN 1 AND 31)` |
+| `legal_holiday_weekday` | `INTEGER NOT NULL DEFAULT 0` | 法定休日の曜日（0=日曜 〜 6=土曜、`DayOfWeek` の数値と一致）。`CHECK (... BETWEEN 0 AND 6)` |
+| `is_default` | `BOOLEAN NOT NULL DEFAULT FALSE` | 既定ルール。**テナント内で高々 1 件**（DB 制約ではなく `AttendanceRuleService` の排他制御。既定に設定すると同一 `SaveChanges` 内で他ルールの `is_default` を落とす = 中間状態を作らない）|
+| `is_active` | `BOOLEAN NOT NULL DEFAULT TRUE` | 無効化（削除ではない）|
+| `deleted_at` | `TIMESTAMPTZ NULL` | 論理削除（第二段階規約: `deleted_at` に統一）。論理削除時は `is_default` も false に落とす |
+| 共通基底（§14.0）| | |
+
+**UNIQUE 制約:** `uq_attendance_rules_tenant_name (tenant_id, name) WHERE deleted_at IS NULL`（部分インデックス）。
+**インデックス:** `idx_attendance_rules_tenant (tenant_id)`。
+
+### 14.2 `punch_records` — 打刻（記録系・**追記のみ**）
+
+| カラム | 型 | 補足 |
+|---|---|---|
+| `user_id` | `UUID NOT NULL REFERENCES users(id)` | 打刻者 |
+| `date` | `DATE NOT NULL` | **JST の業務日付**。集計はこの日付で束ねる |
+| `kind` | `SMALLINT NOT NULL` | 0=In（出勤）, 1=Out（退勤）, 2=BreakStart（休憩開始）, 3=BreakEnd（休憩終了）。`CHECK (kind BETWEEN 0 AND 3)` |
+| `at` | `TIMESTAMPTZ NOT NULL` | 打刻時刻（**UTC 格納**）。表示・深夜帯判定は `SystemTime.ToJst` を通す |
+| `source` | `SMALLINT NOT NULL DEFAULT 0` | 0=Web, 1=Mobile, 2=Fix（修正申請の承認による追記）。`CHECK (source BETWEEN 0 AND 2)` |
+| `fixed_from` | `TIMESTAMPTZ NULL` | 置換した旧打刻の `at`（UTC）。NULL = 通常打刻 |
+| `fix_reason` | `VARCHAR(512) NULL` | 修正理由（客観的記録の担保）。修正打刻のみ |
+| `approved_by_user_id` | `UUID NULL REFERENCES users(id)` | 修正を承認したオーナー。修正打刻のみ |
+| `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | **`updated_at` は持たない**（追記のみのため §14.0） |
+| 共通基底の `id` / `tenant_id` | | |
+
+**インデックス:** `idx_punch_records_user_date (tenant_id, user_id, date)`, `idx_punch_records_date (tenant_id, date)`。
+
+> **設計判断（記録系の保護、CLAUDE.md 原則2 / DP-6）:**
+> - **本テーブルは追記のみ。UPDATE / DELETE を行わない。** 訂正は打刻修正申請の承認による**論理置換**で表現する:
+>   `source=2(Fix)` の行を**追記**し、`fixed_from` に置換対象の旧打刻の `at` を入れる。**元打刻は削除しない。**
+> - そのため `updated_at` 列を持たず（`09-updated-at-triggers.sql` の対象外）、アプリロールからも
+>   `UPDATE` / `DELETE` を REVOKE している（DB レベルの二重防壁）。
+> - 「いま有効な打刻列」は `AttendanceCalc.EffectivePunches` が導出する（**レコード Id 単位で 1 件だけ無効化**する
+>   アルゴリズム。`at` でのグルーピングでは修正の連鎖・元時刻への差戻しで破綻するため）。
+>   有効打刻は SoT から毎回導出する派生値であり、DB には持たない。
+> - 打刻の直列化（二重打刻防止）は `users` 行の悲観ロック（`SELECT 1 FROM users WHERE id = {0} FOR UPDATE`、
+>   パラメータ化必須）で行う。office の `pg_advisory_xact_lock` 相当。
+
+### 14.3 `attendance_fix_requests` — 打刻修正申請
+
+| カラム | 型 | 補足 |
+|---|---|---|
+| `user_id` | `UUID NOT NULL REFERENCES users(id)` | 申請者（常に本人。API は body で他人を指定させない）|
+| `date` | `DATE NOT NULL` | 修正対象の業務日付（JST）|
+| `kind` | `SMALLINT NOT NULL` | 修正対象の打刻種別（§14.2 と同じ値域）。`CHECK (kind BETWEEN 0 AND 3)` |
+| `requested_at` | `TIMESTAMPTZ NOT NULL` | 修正後の打刻時刻（**UTC 格納**。API はタイムゾーン付き文字列で受け取り UTC 化）|
+| `reason` | `VARCHAR(512) NOT NULL` | 修正理由（必須。空白のみは 422）|
+| `status` | `SMALLINT NOT NULL DEFAULT 0` | 0=Pending, 1=Approved, 2=Rejected。`CHECK (status BETWEEN 0 AND 2)` |
+| `decided_by_user_id` | `UUID NULL REFERENCES users(id)` | 承認/却下したオーナー |
+| 共通基底（§14.0）| | |
+
+**インデックス:** `idx_afr_status (tenant_id, status)`, `idx_afr_user_date (tenant_id, user_id, date)`。
+
+> **設計判断:** 承認処理はトランザクション内で `SELECT ... FOR UPDATE`（本テーブル行の悲観ロック）→
+> `status` 再確認 → `punch_records` へ修正打刻を**追記** → 申請の `status` 更新、の順で行う。
+> `status != Pending` の 409 判定を必ずトランザクション内で行うことで二重承認を防ぐ。
+> 監査ログ（`AttendanceFixRequest.Approve` / `.Reject`）は commit 後に記録する。
+
+### 14.4 `leave_types` — 休暇種別マスタ
+
+| カラム | 型 | 補足 |
+|---|---|---|
+| `name` | `VARCHAR(64) NOT NULL` | 種別名 |
+| `grant_method` | `SMALLINT NOT NULL DEFAULT 1` | 0=Periodic（周期自動付与）, 1=Manual（手動付与）。`CHECK (grant_method BETWEEN 0 AND 1)`。Periodic の種別は手動付与不可（422）|
+| `expiry_months` | `INTEGER NULL` | 失効までの月数。**NULL = 無期限**。`CHECK (expiry_months IS NULL OR expiry_months BETWEEN 1 AND 120)` |
+| `is_statutory` | `BOOLEAN NOT NULL DEFAULT FALSE` | 法定有給（労基法 39 条）。**API では受け取らない**（改竄防止）。true の種別は作成・編集・論理削除を禁止（409）|
+| `description` | `VARCHAR(255) NOT NULL DEFAULT ''` | 説明 |
+| `display_order` | `INTEGER NOT NULL DEFAULT 1` | 表示順（一覧・サマリの並び順の第 1 キー）|
+| `is_active` | `BOOLEAN NOT NULL DEFAULT TRUE` | 無効化 |
+| `deleted_at` | `TIMESTAMPTZ NULL` | 論理削除 |
+| 共通基底（§14.0）| | |
+
+**UNIQUE 制約:** `uq_leave_types_tenant_name (tenant_id, name) WHERE deleted_at IS NULL`。
+**インデックス:** `idx_leave_types_tenant (tenant_id)`。
+
+**シード（`db/init/10-attendance.sql` §2 / `iter30-attendance.sql` §4、全テナント・冪等）:**
+法定有給を 1 件だけ投入する — `name='有給休暇'`, `grant_method=0`(Periodic), `expiry_months=24`（時効 2 年）,
+`is_statutory=true`, `description='労働基準法 39 条の年次有給休暇 (時効 2 年)'`, `display_order=1`。
+`NOT EXISTS` ガード付き INSERT のため、再実行しても既存行を更新・削除しない。
+
+> **ガードは 2 条件の OR（2026-07-27 訂正、第 11・第 12 イテレーション、原則2）:**
+> ```sql
+> WHERE NOT EXISTS (
+>     SELECT 1 FROM leave_types
+>      WHERE tenant_id = t.tenant_id
+>        AND (is_statutory OR (name = '有給休暇' AND deleted_at IS NULL))
+> )
+> ```
+> **どちらか片方だけでは冪等性が破れる**（両方とも実機で再現確認済み）。
+>
+> | 条件 | 無いとどうなるか |
+> |---|---|
+> | `is_statutory`（不変列）| 当初のガードは `name = '有給休暇' AND deleted_at IS NULL` のみで、**判定列がどちらも可変**だった。統制有給を DB 直操作で論理削除した後、あるいは改名した後に再実行すると**別 id の 2 行目が入る**。既存 `leave_grants.leave_type_id` が旧 id を指したまま新 id が有効になり**有給残数が分裂**し、さらに部分 UNIQUE 索引 `uq_leave_types_tenant_name` により**復元（`LeaveService.RestoreTypeAsync`）も 409 で塞がれる** |
+> | `name = '有給休暇' AND deleted_at IS NULL` | 第 11 イテレーションで `is_statutory` 単独ガードにしたところ、**「統制行が無く、かつ同名の非統制行が有効で存在する」テナントで INSERT が部分 UNIQUE 索引に抵触し、スクリプトが中断する**。シードは GRANT・RLS 配線・トリガ配線より**前**にあるため、中断は後続節を丸ごと未実行にする。後から追加したテナントには統制行が無く、`LeaveService.ValidateTypeName` は空文字と 64 文字超しか弾かない（`'有給休暇'` を予約していない）ため、管理者が同名を作る経路は実在する |
+>
+> `db/migration/README.md` は「全処理が冪等なので再実行しても安全」と明記して psql / pgAdmin からの
+> 直接実行を推奨しているため、いずれの経路も現実に踏まれ得る。init / migration の両ファイルを同時に修正済み。
+> なお **統制有給の作成・更新・論理削除は API 経由では起きない**（`EnsureNotStatutory` が 409 で弾く）。
+
+### 14.5 `leave_grants` — 休暇の付与（個別 / 一括 / 周期自動）
+
+| カラム | 型 | 補足 |
+|---|---|---|
+| `user_id` | `UUID NOT NULL REFERENCES users(id)` | 付与対象 |
+| `leave_type_id` | `UUID NOT NULL REFERENCES leave_types(id)` | 休暇種別 |
+| `grant_date` | `DATE NOT NULL` | 付与日（JST）。**冪等キーの一部** |
+| `days` | `NUMERIC(4,1) NOT NULL` | 付与日数（0.5 刻み）。`CHECK (days > 0)` |
+| `kind` | `SMALLINT NOT NULL DEFAULT 2` | 0=Normal（通常付与）, 1=Proportional（比例付与）, 2=Special（特別付与 = 手動付与）。`CHECK (kind BETWEEN 0 AND 2)` |
+| `expire_date` | `DATE NOT NULL` | 失効日（この日以降は引当不可）。**無期限は `9999-12-31`** |
+| `granted_by_user_id` | `UUID NULL REFERENCES users(id)` | 付与操作をしたオーナー。**NULL = 周期自動付与**（履歴表示の「通常付与」「比例付与」の判定に使う）|
+| 共通基底（§14.0）| | |
+
+**UNIQUE 制約:** `uq_leave_grants_tenant_user_type_date (tenant_id, user_id, leave_type_id, grant_date)`。
+**インデックス:** `idx_leave_grants_user (tenant_id, user_id, leave_type_id)`。
+
+> **設計判断（冪等一意制約の意図、CLAUDE.md 原則2）:**
+> `(tenant_id, user_id, leave_type_id, grant_date)` の UNIQUE は、**周期自動付与
+> （`POST /attendance/leave/periodic-grants/run`）を何度実行しても二重付与が発生しない**ことを DB レベルで保証する
+> ための冪等キーである。「入社日 + 6ヶ月、以降 1 年ごと」という付与日は入社日から決定論的に再計算できるため、
+> 付与日を冪等キーに含めれば再実行が自然に冪等になる。
+> - 付与処理は**挿入のみ**。既存の付与行を更新・削除しない（記録系保護）。重複は `skipped` として件数だけ返す。
+> - EF Core からは `ON CONFLICT` を直接発行できないため、主経路は「既存の (user_id, leave_type_id, grant_date) を
+>   事前 SELECT して除外してから `AddRange`」。DB の UNIQUE は競合時の最終防壁。
+> - 個別付与（`POST /leave/grants`）も同じ判定を行い、既存があれば**既存レコードの Id** と `skipped=1` を返す。
+
+### 14.6 `leave_requests` — 休暇申請（1 行 = 1 日分）
+
+| カラム | 型 | 補足 |
+|---|---|---|
+| `user_id` | `UUID NOT NULL REFERENCES users(id)` | 申請者（常に本人）|
+| `leave_type_id` | `UUID NOT NULL REFERENCES leave_types(id)` | 休暇種別 |
+| `date` | `DATE NOT NULL` | 取得日（JST）|
+| `unit` | `SMALLINT NOT NULL DEFAULT 0` | 0=Full（全日 1.0 日）, 1=Half（半日 0.5 日）。`CHECK (unit BETWEEN 0 AND 1)` |
+| `status` | `SMALLINT NOT NULL DEFAULT 0` | 0=Pending, 1=Approved, 2=Rejected。**残数を消化するのは Approved のみ**。`CHECK (status BETWEEN 0 AND 2)` |
+| `reason` | `VARCHAR(255) NOT NULL DEFAULT ''` | 理由（任意）|
+| `decided_by_user_id` | `UUID NULL REFERENCES users(id)` | 承認/却下したオーナー |
+| 共通基底（§14.0）| | |
+
+**インデックス:** `idx_leave_requests_user_date (tenant_id, user_id, date)`, `idx_leave_requests_status (tenant_id, status)`。
+
+> **設計判断:** 残数は `leave_grants`（付与）と Approved の `leave_requests`（消化）から
+> **FIFO 引当で毎回導出**する（`LeaveCalc`）。残数列は持たない（SoT からの導出値をキャッシュしない）。
+> 同一利用者・同一日付で Pending / Approved の申請が既にある場合は 409（種別は問わない）。
+> Rejected は再申請をブロックしない。
+
+### 14.7 移植の除外スコープと未検証事項
+
+**除外スコープ（honshu に対応機能が無い / 別基盤依存のため移植しない）:**
+
+| 除外した office の機能 | 理由 |
+|---|---|
+| 祝日マスタ・営業日計算（内閣府 CSV 取込、`workingWeekdays` / `holidayAware`）| 翌営業日計算専用の機能であり、honshu には翌営業日計算を使う機能が無い。日次集計の法定休日判定は**曜日**（`attendance_rules.legal_holiday_weekday`）で行うため不要。外部 HTTP 依存を増やさない判断も含む |
+| AI 参照範囲（`ai-scope`）・チャットボット・日報連携・通知（`notifyAdmins`）・エスカレーション | honshu に対応機能が無い |
+| 権限ルールマトリクスエンジン（subjectKind × resource × field の allow/deny）| honshu の 4+1 権限カテゴリ方式に置換。勤怠権限 `users.attendance_permission`（0/1/2）を 5 つ目のカテゴリとして追加し、管理系は既存のオーナー権限 `process_record_permission >= 1` に集約した（office の hr 中間ロールは作らない = 権限を緩めない方向で統合）|
+| 雇用区分（`employment_type`）| 勤怠ルールの解決を「既定ルール方式」（§14.1）に、有給の付与判定を `users.weekly_days` / `weekly_hours` による比例付与判定に置き換えたため、区分マスタが不要になった |
+
+**未検証事項:**
+- 本改修を行った環境では **.NET SDK を取得できず、バックエンドをローカルでコンパイル検証できていない**。
+  既存コードの記述パターンを逐語的に踏襲することで代替している（型・API の検証は CI に委ねる）。
+- `docs/api/openapi.json` は**未再生成**。CI の `regen-openapi` ワークフロー
+  （main 向け PR で自動再生成し、生成物を head ブランチへ自動コミットする）に委ねる。
+
+---
+
+## 15. 変更履歴
 
 | 日付 | 内容 |
 |---|---|
 | 2026-05-19 | 初版作成（18 マスタ + 商品 4 + 発注 3 + 監査 1 = 計 26 テーブル、機能要件 21 全対応）|
+| 2026-07-27 | Iteration 30: 勤怠 6 テーブル（`attendance_rules` / `punch_records` / `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）を §14 に追加。§3.18 `users` に勤怠列 6 本（`attendance_permission` / `punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追記、§2 ERD 概観に勤怠エンティティ群を追加（akebono-office からの移植）|
+| 2026-07-27 | **第 9 イテレーション修正コミット `bd1a96e` を §3.18 へ反映（原則5）:** `users` の勤怠 4 列（`attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）について「入力 UI が無く `PATCH /users/{id}` の全項目上書きで既定値へ巻き戻る」と**解消済みの BLOCKER を未解決として宣言し続けていた**記述を、`4c6981e` で解消済み（利用者フォームへの 4 項目追加 ＋ `UserPatchRequest` による部分更新化）へ訂正。`screen-design.md §3.12` / `api-design.md §2.7.9` と食い違ったまま放置すると、存在しない給与・法定関連の重大欠陥を SoT が宣言し、完了済み改修の再着手を誘導するため |
+| 2026-07-27 | **第 11 イテレーション監査の指摘対応（原則2 / 原則5）:** §14.4 `leave_types` のシードガードを `name` + `deleted_at`（可変）から **`is_statutory`（不変）** 基準へ変更。旧ガードは統制有給を DB 直操作で論理削除・改名した後の再実行で **2 行目を作り**、`leave_grants` が旧 id を指したまま有給残数が分裂し、部分 UNIQUE 索引により復元も 409 で塞がれた（実機で再現確認）。`db/init/10-attendance.sql` / `db/migration/iter30-attendance.sql` を同時修正し、**両経路の `pg_dump -s` 一致（7,026 行）とシード内容一致を再検証済み** |
+| 2026-07-27 | **第 12 イテレーション: 第 11 イテレーションの修正が開けた穴を塞いだ（原則2）。** `leave_types` のシードガードを `is_statutory` 単独 → **`is_statutory OR (name = '有給休暇' AND deleted_at IS NULL)` の 2 条件 OR** へ。単独ガードは「統制行が無く、同名の非統制行が有効で存在する」テナントで**部分 UNIQUE 索引違反によりスクリプトが中断**し、シードより後段の GRANT・RLS 配線・トリガ配線が丸ごと未実行になる（実機で再現）。3 シナリオ（同名非統制行が有効 / 統制行を論理削除 / 改名）すべてで exit 0・1 行維持を確認し、両経路の `pg_dump -s` 一致（7,026 行）も再検証 |

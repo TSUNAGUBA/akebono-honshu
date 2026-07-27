@@ -1,3 +1,4 @@
+using Akebono.Domain.Attendance;
 using Akebono.Domain.Entities;
 using Akebono.Domain.Orders;
 using Akebono.Domain.Production;
@@ -61,6 +62,15 @@ public interface IAkebonoDbContext
     DbSet<ProductionInstructionLine> ProductionInstructionLines { get; }
     DbSet<MaterialOrder> MaterialOrders { get; }
     DbSet<MaterialOrderLine> MaterialOrderLines { get; }
+
+    // 勤怠・休暇 (Iteration 30、db/init/10-attendance.sql)
+    DbSet<AttendanceRule> AttendanceRules { get; }
+    // 記録系・追記のみ (UPDATE/DELETE しない。updated_at 列を持たない)
+    DbSet<PunchRecord> PunchRecords { get; }
+    DbSet<AttendanceFixRequest> AttendanceFixRequests { get; }
+    DbSet<LeaveType> LeaveTypes { get; }
+    DbSet<LeaveGrant> LeaveGrants { get; }
+    DbSet<LeaveRequest> LeaveRequests { get; }
 
     /// <summary>ジェネリック DbSet 取得 (MasterService&lt;TEntity&gt; 用)。DbContext.Set&lt;T&gt;() の暗黙実装。</summary>
     DbSet<T> Set<T>() where T : class;

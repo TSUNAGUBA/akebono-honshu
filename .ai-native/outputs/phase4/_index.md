@@ -31,7 +31,7 @@
 | フロント | Nuxt 3 SPA（Vue 3 + TS, `nuxt generate`）/ TailwindCSS + Reka UI + lucide-icons / Pinia / Firebase JS SDK（Auth） |
 | バック | .NET 8 + ASP.NET Core Web API / EF Core 8 + Npgsql / FluentValidation / Serilog / ClosedXML / Firebase Admin SDK for .NET（ID Token 検証 + Custom Claims）|
 | DB / ストレージ | Amazon RDS for PostgreSQL 16 Multi-AZ / Amazon S3（画像5GB・監査ログ3年アーカイブ Glacier IR）|
-| **認証認可** | **Firebase Authentication（Email/Password）+ ID Token + Custom Claims**。**RDS users = 業務情報・権限 SoT、Firebase Auth = ID/Email SoT、Custom Claims = 権限キャッシュ**。ASP.NET Core Authorization Policies で 4 権限評価 |
+| **認証認可** | **Firebase Authentication（Email/Password）+ ID Token + Custom Claims**。**RDS users = 業務情報・権限 SoT、Firebase Auth = ID/Email SoT、Custom Claims = 権限キャッシュ**。ASP.NET Core Authorization Policies で 5 権限評価（2026-07-27 更新: 初版 4 + 勤怠 `attendance_permission`）|
 | **フロント配信** | **Firebase Hosting**（一本化、CDN + プレビューチャネル）|
 | バック実行基盤 | AWS App Runner（VPC コネクタで RDS 接続、CORS で Firebase Hosting ドメイン許可）|
 | シークレット | AWS Secrets Manager + KMS（Firebase サービスアカウント鍵も含む）|
@@ -56,4 +56,4 @@
 
 ## 主要キーワード
 
-Nuxt3 SPA, Vue3, TailwindCSS, Reka UI, Headless UI Vue, lucide-icons, Pinia, Firebase JS SDK, .NET8, ASP.NET Core Web API, EF Core 8, Npgsql, FluentValidation, Serilog, ClosedXML, Firebase Admin SDK for .NET, JwtBearer + Firebase JWKS, Custom Claims, AWS Tokyo, ap-northeast-1, App Runner, VPC コネクタ, CORS Firebase Hosting, RDS for PostgreSQL 16 Multi-AZ, S3 Glacier IR (監査ログ3年), AWS Secrets Manager, KMS, CloudWatch, X-Ray, Firebase Console, SNS アラート, Firebase Authentication, Email/Password, scrypt, ID Token (1h), Refresh Token, RDS users SoT + Firebase Custom Claims キャッシュ, setCustomUserClaims, 4権限ポリシー, Firebase Hosting, プレビューチャネル, firebase.json, GitHub Actions, AWS OIDC, Firebase CLI, EF Core Migration, Dependabot, Trivy, KMS保存時暗号化(Phase5再評価), 完全手動同期, legacy_id, Feature Toggle, NFR §4.2 部分矛盾許容, リスク14件(R-2削除/R-8〜R-15追加), Firebase Auth/RDS 同期(R-11), ベンダーロックイン(R-12), ユーザ識別情報海外配置(R-13), CORS/CSP(R-14), サービスアカウント鍵漏洩(R-15)
+Nuxt3 SPA, Vue3, TailwindCSS, Reka UI, Headless UI Vue, lucide-icons, Pinia, Firebase JS SDK, .NET8, ASP.NET Core Web API, EF Core 8, Npgsql, FluentValidation, Serilog, ClosedXML, Firebase Admin SDK for .NET, JwtBearer + Firebase JWKS, Custom Claims, AWS Tokyo, ap-northeast-1, App Runner, VPC コネクタ, CORS Firebase Hosting, RDS for PostgreSQL 16 Multi-AZ, S3 Glacier IR (監査ログ3年), AWS Secrets Manager, KMS, CloudWatch, X-Ray, Firebase Console, SNS アラート, Firebase Authentication, Email/Password, scrypt, ID Token (1h), Refresh Token, RDS users SoT + Firebase Custom Claims キャッシュ, setCustomUserClaims, 4権限ポリシー(2026-07-27: 勤怠を加え5権限), Firebase Hosting, プレビューチャネル, firebase.json, GitHub Actions, AWS OIDC, Firebase CLI, EF Core Migration, Dependabot, Trivy, KMS保存時暗号化(Phase5再評価), 完全手動同期, legacy_id, Feature Toggle, NFR §4.2 部分矛盾許容, リスク14件(R-2削除/R-8〜R-15追加), Firebase Auth/RDS 同期(R-11), ベンダーロックイン(R-12), ユーザ識別情報海外配置(R-13), CORS/CSP(R-14), サービスアカウント鍵漏洩(R-15)

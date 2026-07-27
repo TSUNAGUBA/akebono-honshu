@@ -456,11 +456,23 @@ COMMENT ON COLUMN exchange_rates.quote_currency_code IS '相手通貨コード�
 
 ### 4.4 利用者マスタ → app_user 昇格（M5）
 
-継承実装の `users` テーブル（`employee_no`/`login_id`/`display_name` + 4 権限カテゴリ）は、プラットフォームでは Control Plane の `app_user`（37 所有）へ集約する（ブリーフ §5「ユーザ業務情報/権限は RDS Control Plane が SoT」）。
+継承実装の `users` テーブル（`employee_no`/`login_id`/`display_name` + **5 権限カテゴリ**。2026-07-27 更新: 初版 4 + 勤怠）は、プラットフォームでは Control Plane の `app_user`（37 所有）へ集約する（ブリーフ §5「ユーザ業務情報/権限は RDS Control Plane が SoT」）。
 
 - メーカー OLTP は `app_user` を**参照のみ**とし、監査列（`created_by_user_id`/`updated_by_user_id`）と発注担当者（`orderer_user_id` 等）で `REFERENCES app_user(id)` を張る。
-- 継承実装の 4 権限カテゴリ（品番台帳管理 / 発注書作成 / 発注情報管理 / 工程実績管理）は、Control Plane の `role`/`permission`（37）へマッピングする。メーカー固有権限のコード体系は 37 と [05 メーカーサービス](../basic-design/05-service-manufacturer.md) で確定する。
+- 継承実装の **5 権限カテゴリ**（品番台帳管理 / 発注書作成 / 発注情報管理 / 工程実績管理 / **勤怠**）は、Control Plane の `role`/`permission`（37）へマッピングする。メーカー固有権限のコード体系は 37 と [05 メーカーサービス](../basic-design/05-service-manufacturer.md) で確定する。
+  > **2026-07-27 更新（4 → 5、マッピング漏れ注意）:** 継承実装は Iteration 30 で 5 つ目の `users.attendance_permission`（勤怠、`0=なし / 1=更新可能 / 2=参照のみ`）と勤怠付随列（`punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追加済み。**品番台帳・発注書作成・勤怠は非単調エンコード**（「参照のみ」が「更新可能」より大きい値）のため、`role`/`permission` へ写す際に `>=` による序列化を行うと権限が緩む。なお勤怠の**管理系**（承認・付与・設定）は、**勤怠権限（1 or 2）と工程実績管理権限（オーナー）の AND** で判定する点もマッピング時に落とさないこと（**オーナー単独では不可**。2026-07-27 訂正 — 当初「勤怠権限ではなく工程実績管理権限に集約」と記載していたが、`CheckAttendanceAdminAsync` が参照権限を内包する形へ是正済み。旧記述のまま移送すると『勤怠権限 0 のオーナーが全員の労務情報を読める』穴が別リポジトリへ複製される）。
 - 移行: `users` 行を `app_user` へ移送（`employee_no`→ビジネスキー、`login_id`→Firebase Email 連携キー）。旧メーカー DB 内 `users` は移行後に廃止し、全 FK を `app_user(id)` へ張り替える。
+
+> **勤怠 6 テーブルは本ドキュメントの台帳（§4.1 / §3）に載せていない（2026-07-27）:**
+> Iteration 30 で継承実装に追加した勤怠 6 テーブル（`attendance_rules` / `punch_records` /
+> `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）は、
+> **akebono-honshu ローカルの拡張であり、プラットフォーム OLTP スキーマとしては未確定**である。
+> 本ドキュメントは旧版（現行 SoT は akebono-scm-platform リポジトリ側 → `docs/platform-design/README.md`）であり、
+> **プラットフォームが勤怠を所有するか、Control Plane（37）側へ寄せるかは未決**のため、
+> ここで台帳へ登録すると未確定の所有関係を既定事実にしてしまう。
+> 継承実装側の正は `db/init/10-attendance.sql` と
+> `.ai-native/outputs/phase5/data-design.md §14`。**上の 5 権限カテゴリの記述だけが先に更新されている
+> のはこの理由による**（権限マッピングは移行時に必ず必要になるため先行して記録した）。
 
 ---
 
@@ -1403,7 +1415,7 @@ flowchart LR
 | Q2 | `customer_party_id` の物理化 | (a) canonical への論理参照 + xref 解決 / (b) メーカー内ローカル customer マスタを新設し FK | (a)。B2B 販売先は canonical_party（34）で名寄せ。ローカル customer は作らず delivery_destinations で代替 |
 | Q3 | 在庫を SKU 粒度 or family 粒度で持つか | SKU 粒度は精緻だが行数増、family 粒度は集計容易だが色サイズ別在庫を失う | SKU 粒度（`inventory_stocks` は product_id）。分析は DWH で family へロールアップ |
 | Q4 | `product_year=9999`（通年）の DWH 表現 | dim_date の特殊行 or 属性フラグ | 22/35 で確定。OLTP は 9999 を保持 |
-| Q5 | 利用者マスタの権限モデル移行粒度 | 継承 4 権限カテゴリを (a) そのまま role へ / (b) permission へ分解 | 37/05 で確定。32 は FK 参照のみ |
+| Q5 | 利用者マスタの権限モデル移行粒度 | 継承 **5** 権限カテゴリ（2026-07-27 更新: 4 + 勤怠）を (a) そのまま role へ / (b) permission へ分解 | 37/05 で確定。32 は FK 参照のみ |
 | Q6 | 明細テーブルへの `tenant_id` 冗長化 | (a) 冗長保持で RLS 独立評価（本設計） / (b) 親経由の RLS で省略 | (a)。フェイルクローズと RLS 性能を優先（§10）。30 の複合 FK 回避方針とは別軸 |
 | Q7 | `suppliers` の工場兼用の将来分離 | MVP は兼用（`supplier_type`）/ 将来 `factories` 分離 | 兼用維持。分離時は品番 7 桁目のソースを factory へ移す（honshu-master §4-1） |
 

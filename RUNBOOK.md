@@ -33,7 +33,7 @@
 2. **DB 再作成** (tenant_id/RLS/TIMESTAMPTZ は既存ボリュームへ追従適用しない。稼働前 MVP のため再作成):
    ```bash
    docker compose down -v   # akebono-postgres-data ボリューム破棄
-   docker compose up -d     # db/init 01〜09 が番号順に自動適用される
+   docker compose up -d     # db/init 01〜10 が番号順に自動適用される
    ```
 3. **Firebase UID 再紐付け** (§0 手順 4 と同じ):
    ```sql
@@ -198,7 +198,7 @@ docker compose ps
 docker compose exec postgres psql -U akebono_honshu -d akebono_honshu -c "SELECT id, login_id, display_name FROM users;"
 ```
 
-`./db/init/01-schema.sql` が docker-compose の初期化スクリプトとして自動投入され、ロール + DB + Seed が一度に揃います。
+`docker-compose.yml` は `./db/init` を**ディレクトリごと** `/docker-entrypoint-initdb.d` にマウントするため、`01-schema.sql` だけでなく **`01`〜`10` の全ファイルが番号順に自動投入され**、ロール + DB + Seed + 勤怠テーブルまでが一度に揃います（初期化は**初回のみ**＝空ボリュームのときだけ実行されます）。
 
 #### 選択肢 C: AWS RDS PostgreSQL を使う (Iter 4 本番移行 段階 A)
 
@@ -224,10 +224,13 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 ##### Step 2. スキーマ初期化 (db/init/*.sql を番号順に投入)
 
 ```bash
-# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..09)
+# 新規 DB に接続し直し、初期化スクリプトを番号順に投入 (01..10)
 # ※プラットフォーム統合改修後は 08-tenancy-rls.sql (テナント分離 RLS + アプリロール
 #   akebono_app) と 09-updated-at-triggers.sql (updated_at トリガ汎用配線) まで
 #   必ず適用すること。アプリの接続ユーザは akebono_app (§0-P 参照)。
+# ※Iteration 30 (2026-07-27) で 10-attendance.sql (勤怠 6 テーブル + users への勤怠列追加) を
+#   追加。08/09 より後に流れるため RLS と updated_at トリガは 10 が自ら配線する (ファイル冒頭の
+#   コメント参照)。**投入し忘れると勤怠画面が全滅する**ので必ず 10 まで流すこと。
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
@@ -262,10 +265,19 @@ psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=re
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/09-updated-at-triggers.sql
 
+# 勤怠管理・タイムカード 6 テーブル + users への勤怠列追加 (Iteration 30)。冪等 (再実行可)
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -f db/init/10-attendance.sql
+
 # 動作確認
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -c "SELECT id, login_id, display_name FROM users;"
 # → owner / planner / sales の 3 件が表示されれば OK
+
+# 勤怠 (10-attendance.sql) の投入確認
+psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
+  -c "SELECT login_id, attendance_permission, punch_required FROM users;"
+# → 3 件とも attendance_permission=1 / punch_required=true (DEFAULT) なら OK
 ```
 
 > パスワードは `PGPASSWORD` 環境変数で渡すと自動化しやすい (`PGPASSWORD=xxx psql ...`)。
@@ -517,6 +529,37 @@ pnpm dev
    ```
    期待: 初回出力は `is_first_export=true`、テンプレ版 `ordersheet-v1`
 
+### 3.4 Iteration 30 追加シナリオ (勤怠・タイムカード)
+
+> **前提:** `db/init/10-attendance.sql`（新規初期化）または `db/migration/iter30-attendance.sql`（既存 DB）を投入済みであること。
+> **投入し忘れると勤怠画面が全滅する**（§2 の警告参照）。利用者の `attendance_permission` は DDL 既定が `1`（更新可能）。
+
+1. **打刻 (T-01):** `http://localhost:3000/attendance/timecard` → 「出勤」→ 状態バッジが「勤務中」へ変わり、出退勤一覧に当日の行が出る
+   → 「休憩開始」→「休憩終了」→「退勤」。**同じ打刻を続けて押すと 409 `AKB-SYS-007`**（状態機械が拒否）
+2. **日次集計:** `/attendance?tab=daily` → 左に打刻タイムライン、右に実労働 / 休憩 / 深夜の KPI 3 枚と 6 区分の内訳
+   → 6 時間超で休憩なしなら**休憩不足警告**（労基法 34 条）が出る
+3. **週次・月次:** `?tab=weekly`（週の起点は日曜、週 40 時間のプログレスバー）／`?tab=monthly`
+   （カレンダー + 36 協定の月 45 時間ゲージ。超過が無ければ緑帯「現時点で 36 協定に関するアラートはありません。」）
+4. **打刻修正の申請 → 承認:** 日次タブの「打刻修正を申請」→ 日付・種別・修正後時刻（`+09:00` 付き）・理由を入力して申請
+   → **オーナー**（`process_record_permission >= 1`）で `?tab=requests` →「承認待ち」に出る → 「承認」
+   → 日次タブで**修正前打刻に取消線 +「修正前」バッジ**、修正打刻に「修正反映」バッジが付く
+   （**承認は取り消せない**。誤承認はあらためて修正申請で直す → §3.14 の注記）
+5. **休暇:** `?tab=leave` で有給残数・年 5 日取得義務トラッカー →「休暇を申請」→ オーナーが `?tab=requests` で承認
+   → 月次カレンダーに「休暇」バッジが付く
+6. **オーナー専用 3 タブ:** `?tab=timecard`（全員のタイムカード、既定 = 直近 7 日・上限 62 日）/
+   `?tab=leave-admin`（付与・一括付与・周期付与）/ `?tab=settings`（勤怠ルール）が**オーナーにだけ**表示される
+7. **権限の確認:** `attendance_permission = 2`（参照のみ）の利用者では**打刻ボタンと申請ボタンが出ない**（`== 1` 判定）、
+   `0` では `/attendance` 本体を描画せず「勤怠機能の利用権限がありません。」+「ホームへ戻る」
+8. **記録系保護の確認:** `akebono_app` ロールで接続して実行する（スーパーユーザは剥奪の対象外なので不可）。
+   ```sql
+   -- どちらも ERROR: permission denied for table punch_records となること
+   UPDATE punch_records SET kind = 1 WHERE FALSE;
+   DELETE FROM punch_records WHERE FALSE;
+   ```
+   期待: **両方とも権限エラー**（`WHERE FALSE` なので権限があった場合でも行は変わらない）。
+   打刻は追記のみで、誤登録を削除して復旧する手段は無い（訂正は `source=2`(Fix) の追記による論理置換）。
+   `db/verify/rls-smoke.sql §8` が同じ検査を恒久的に行う
+
 ---
 
 ## 4. 想定エンドポイント
@@ -526,32 +569,106 @@ pnpm dev
 | GET | `/health` | ヘルスチェック | なし | – |
 | GET | `/swagger` | Swagger UI (API ドキュメント + 動作確認画面) | なし | – |
 | POST | `/api/maker/v1/auth/sync` | Firebase Auth ログイン直後の業務情報同期 (Iter 4 段階 B、`/auth/login` から置換) | Bearer (Firebase ID Token) | – |
-| GET | `/api/maker/v1/auth/me` | 現在のユーザ情報 + 4 権限 | Bearer (Firebase ID Token) | – |
+| GET | `/api/maker/v1/auth/me` | 現在のユーザ情報 + 5 権限 (品番台帳 / 発注書作成 / 発注情報 / 工程実績=オーナー / **勤怠**) | Bearer (Firebase ID Token) | – |
 | GET | `/api/maker/v1/users` | ユーザ一覧 | Bearer | – |
 | GET | `/api/maker/v1/masters/{master}` | マスタ一覧 (17 種) | Bearer | – |
-| POST/PATCH/DELETE | `/api/maker/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission >= 1` |
-| POST | `/api/maker/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission >= 1` |
+| POST/PATCH/DELETE | `/api/maker/v1/masters/{master}[/{id}]` | マスタ CRUD | Bearer | `product_ledger_permission == 1` |
+| POST | `/api/maker/v1/masters/{master}/{id}/restore` | 論理削除取消 | Bearer | `product_ledger_permission == 1` |
 | GET | `/api/maker/v1/products/families` | 商品企画一覧 (P-04) | Bearer | – |
 | GET | `/api/maker/v1/products/families/{id}` | 商品企画詳細 (P-05) | Bearer | – |
-| POST | `/api/maker/v1/products/families/complete` | バルク登録 (P-01〜P-03) | Bearer | `product_ledger_permission >= 1` |
-| PATCH | `/api/maker/v1/products/families/{id}` | 企画更新 (P-05) | Bearer | `product_ledger_permission >= 1` |
-| DELETE | `/api/maker/v1/products/families/{id}` | 企画論理削除 (配下 SKU 連動) | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/products/families/complete` | バルク登録 (P-01〜P-03) | Bearer | `product_ledger_permission == 1` |
+| PATCH | `/api/maker/v1/products/families/{id}` | 企画更新 (P-05) | Bearer | `product_ledger_permission == 1` |
+| DELETE | `/api/maker/v1/products/families/{id}` | 企画論理削除 (配下 SKU 連動) | Bearer | `product_ledger_permission == 1` |
 | GET | `/api/maker/v1/products/families/{id}/supplier-prices` | 仕入単価履歴 | Bearer | – |
-| POST | `/api/maker/v1/products/families/{id}/supplier-prices` | 新単価追加 (BR-04) | Bearer | `product_ledger_permission >= 1` |
-| POST | `/api/maker/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission >= 1` |
-| PATCH | `/api/maker/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission >= 1` |
-| DELETE | `/api/maker/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission >= 1` |
+| POST | `/api/maker/v1/products/families/{id}/supplier-prices` | 新単価追加 (BR-04) | Bearer | `product_ledger_permission == 1` |
+| POST | `/api/maker/v1/products/families/{id}/images` | 画像アップロード (P-06、IFormFile) | Bearer | `product_ledger_permission == 1` |
+| PATCH | `/api/maker/v1/products/families/{id}/images/reorder` | 画像順序変更 | Bearer | `product_ledger_permission == 1` |
+| DELETE | `/api/maker/v1/products/families/{id}/images/{imageId}` | 画像論理削除 | Bearer | `product_ledger_permission == 1` |
 | GET | `/uploads/product-images/{familyId}/{filename}` | 画像配信 (Local モード時のみ。S3 モード時は Pre-signed URL 経由で `https://<bucket>.s3.<region>.amazonaws.com/...` から直接配信) | なし | – |
 | GET | `/api/maker/v1/orders` | 発注書一覧 (O-03) | Bearer | – |
 | GET | `/api/maker/v1/orders/{id}` | 発注書詳細 (O-04) | Bearer | – |
-| POST | `/api/maker/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission >= 1` |
-| PATCH | `/api/maker/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/maker/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/maker/v1/orders/{id}/export` | 帳票出力フォーム (O-06、発注日/出荷指示番号/発注番号 を手入力 + 帳票選択。初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission >= 1` |
-| POST | `/api/maker/v1/orders/bulk-export` | 一括ダウンロード (#3b、発注書 ZIP / 管理表 xlsx / 両方 ZIP) | Bearer | `purchase_order_create_permission >= 1` |
+| POST | `/api/maker/v1/orders` | 新規発注書 (O-01) | Bearer | `purchase_order_create_permission == 1` |
+| PATCH | `/api/maker/v1/orders/{id}` | 発注書編集 (O-04、`editReason` 5 値必須 F-16) | Bearer | `purchase_order_create_permission == 1` |
+| POST | `/api/maker/v1/orders/{id}/cancel` | 中止 (O-05) | Bearer | `purchase_order_create_permission == 1` |
+| POST | `/api/maker/v1/orders/{id}/export` | 帳票出力フォーム (O-06、発注日/出荷指示番号/発注番号 を手入力 + 帳票選択。初回 snapshot 凍結 F-22) | Bearer | `purchase_order_create_permission == 1` |
+| POST | `/api/maker/v1/orders/bulk-export` | 一括ダウンロード (#3b、発注書 ZIP / 管理表 xlsx / 両方 ZIP) | Bearer | `purchase_order_create_permission == 1` |
 | GET | `/api/maker/v1/orders/communication-suggestions` | 連絡文章テンプレ (O-07) | Bearer | – |
 
+> **2026-07-27 訂正（権限判定は `>= 1` ではなく `== 1`）:** 上表の権限列は当初 `>= 1` と記載していたが、
+> `product_ledger_permission`（0=なし / 1=更新可能 / 2=参照のみ / 3=参照のみ(制限)）と
+> `purchase_order_create_permission`（0=なし / 1=更新可能 / 2=参照のみ）は **非単調エンコード**であり、
+> 実装（`src/Backend/Presentation/Endpoints/AuthEndpoints.cs` の `CheckMasterEditAsync` / `CheckOrderEditAsync`）は
+> **`== 1`（更新可能）のみ書込を許可**する。`>= 1` と書くと「参照のみ」ユーザに書込を許すバグになる。
+> 同じ規則が §4.1 の勤怠権限にも適用される。
+
 `{master}` は: brands / sizes / functions / countries / suppliers / departments / product-types / product-seasons / product-groups / colors / materials / material-classifications / warehouses / delivery-destinations / document-template-purchases / document-template-confirmations / document-text-purchases
+
+### 4.1 勤怠 (Iteration 30、27 エンドポイント)
+
+> **権限の読み方（重要）:** 勤怠権限 `attendance_permission` は **非単調エンコード**（`0=なし / 1=更新可能 / 2=参照のみ`）。
+> 「値が大きい = 高権限」ではないため、書込は `>= 1` ではなく **`== 1`** で判定する。
+> 表中の **オーナー** は `process_record_permission >= 1`（工程実績管理権限。0/1 の 2 値なので `>= 1` で正しい）。
+> 管理系（全員のタイムカード・承認/却下・休暇付与・各種設定・`scope=all`）は、**勤怠参照権限（1 or 2）かつオーナー**の **AND** で判定する
+> （`CheckAttendanceAdminAsync` が参照権限を内包する。**オーナーだけでは足りない** — 2026-07-27 訂正）。
+> 他人の勤怠を参照する `?userId` 指定もオーナーが必要（省略時は常に自分）。
+> 詳細な I/F は `.ai-native/outputs/phase5/api-design.md §2.7`（`#` 番号は同節と一致）。
+>
+> **一覧のページング（2026-07-27 追記）:** 申請一覧 2 本（#8 打刻修正申請 / #21 休暇申請）は
+> キーセットページング（`?limit`（1〜200）/ `?cursor`、続きの有無は `meta.page.hasMore`、不正は 400 `AKB-SYS-011`）。
+> **この 2 本だけ `limit` 省略時の既定が 200**（§0-P の全体既定 50 とは異なる。フロントがまだ `limit` /
+> `cursor` を送らないため、既定 50 では申請が黙って欠落するのを避ける措置）。curl 疎通時は
+> `meta.page.nextCursor` を辿ること。
+>
+> **利用者数の上限（2026-07-27 追記）:** #6 タイムカードは 200 人、#27 休暇管理一覧は 500 人を超えると
+> **422 `AKB-SYS-002`**「対象の利用者が多すぎます（一度に集計できるのは {N} 人までです）」。
+> #6 は `q`（氏名の部分一致）で絞り込む（**期間を短くしても利用者数は減らない**）、#27 は #20 の個人別サマリで確認する。
+
+**打刻・集計 (#1〜#6) — `src/Backend/Presentation/Endpoints/AttendanceEndpoints.cs`**
+
+| # | メソッド | パス | 概要 | 認証 | 権限 |
+|---|---|---|---|---|---|
+| 1 | POST | `/api/maker/v1/attendance/punches` | 打刻 (対象は常に本人) | Bearer | `attendance_permission == 1` かつ `punch_required` |
+| 2 | GET | `/api/maker/v1/attendance/state` | 当日の打刻状態 (打刻ウィジェット用) | Bearer | `attendance_permission` 1 or 2 |
+| 3 | GET | `/api/maker/v1/attendance/day` | 日次サマリ (`?userId&date&raw`) | Bearer | 1 or 2 (他人は 1 or 2 **かつオーナー**) |
+| 4 | GET | `/api/maker/v1/attendance/month` | 月次サマリ (`?userId&month`) | Bearer | 1 or 2 (他人は 1 or 2 **かつオーナー**) |
+| 5 | GET | `/api/maker/v1/attendance/alerts` | 36 協定アラート (`?userId&endMonth`、直近 6 ヶ月) | Bearer | 1 or 2 (他人は 1 or 2 **かつオーナー**) |
+| 6 | GET | `/api/maker/v1/attendance/timecard` | 全員のタイムカード (`?from&to&q`、期間上限 62 日 = 両端含み、利用者数上限 200 人)。並びは日付降順 → 氏名昇順 → 利用者 ID 昇順 | Bearer | 1 or 2 **かつオーナー** |
+
+**打刻修正申請 (#7〜#9)**
+
+| # | メソッド | パス | 概要 | 認証 | 権限 |
+|---|---|---|---|---|---|
+| 7 | POST | `/api/maker/v1/attendance/fix-requests` | 修正申請 (対象は常に本人、理由必須) | Bearer | `attendance_permission == 1` |
+| 8 | GET | `/api/maker/v1/attendance/fix-requests` | 申請一覧 (`?status&scope&limit&cursor`) | Bearer | 1 or 2 / `scope=all` は 1 or 2 **かつオーナー** |
+| 9 | POST | `/api/maker/v1/attendance/fix-requests/{id}/decision` | 承認 / 却下 (元打刻は削除せず修正打刻を追記) | Bearer | 1 or 2 **かつオーナー** |
+
+**勤怠ルール = 勤務体系マスタ (#10〜#14)**
+
+| # | メソッド | パス | 概要 | 認証 | 権限 |
+|---|---|---|---|---|---|
+| 10 | GET | `/api/maker/v1/attendance/rules` | 一覧 (`?includeInactive`、既定 false) | Bearer | 1 or 2 |
+| 11 | POST | `/api/maker/v1/attendance/rules` | 新規作成 | Bearer | 1 or 2 **かつオーナー** |
+| 12 | PATCH | `/api/maker/v1/attendance/rules/{id}` | 部分更新 (null のフィールドは現在値を保持。ただし `flexEnabled=false` を受けるとコアタイムは指定値に関わらず null になる) | Bearer | 1 or 2 **かつオーナー** |
+| 13 | DELETE | `/api/maker/v1/attendance/rules/{id}` | 論理削除 | Bearer | 1 or 2 **かつオーナー** |
+| 14 | POST | `/api/maker/v1/attendance/rules/{id}/restore` | 論理削除の取消 (同名の有効なルールがあると 409) | Bearer | 1 or 2 **かつオーナー** |
+
+**休暇 (#15〜#27) — `src/Backend/Presentation/Endpoints/AttendanceLeaveEndpoints.cs`**
+
+| # | メソッド | パス | 概要 | 認証 | 権限 |
+|---|---|---|---|---|---|
+| 15 | GET | `/api/maker/v1/attendance/leave/types` | 休暇種別 一覧 (`?includeInactive`) | Bearer | 1 or 2 |
+| 16 | POST | `/api/maker/v1/attendance/leave/types` | 休暇種別 作成 (法定有給は作成不可。**名称 `有給休暇` は予約名のため 422**。作成時のみの制限で、既存種別の更新・復元は妨げない) | Bearer | 1 or 2 **かつオーナー** |
+| 17 | PATCH | `/api/maker/v1/attendance/leave/types/{id}` | 休暇種別 部分更新 (法定有給は 409) | Bearer | 1 or 2 **かつオーナー** |
+| 18 | DELETE | `/api/maker/v1/attendance/leave/types/{id}` | 休暇種別 論理削除 (付与・申請の実績は残す) | Bearer | 1 or 2 **かつオーナー** |
+| 19 | POST | `/api/maker/v1/attendance/leave/types/{id}/restore` | 休暇種別 復元 (同名の有効な種別があると 409) | Bearer | 1 or 2 **かつオーナー** |
+| 20 | GET | `/api/maker/v1/attendance/leave/summary` | 残数・年 5 日義務・履歴 (`?userId`) | Bearer | 1 or 2 (他人は 1 or 2 **かつオーナー**) |
+| 21 | GET | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 (`?scope&status&from&to&limit&cursor`)。`from` / `to` は取得日の範囲 (両端含み・片側のみ可・**両方省略時は全期間**、上限 366 日) | Bearer | 1 or 2 / `scope=all` は 1 or 2 **かつオーナー** |
+| 22 | POST | `/api/maker/v1/attendance/leave/requests` | 休暇申請 (対象は常に本人) | Bearer | `attendance_permission == 1` |
+| 23 | POST | `/api/maker/v1/attendance/leave/requests/{id}/decision` | 承認 / 却下 (処理済みの再操作は 409) | Bearer | 1 or 2 **かつオーナー** |
+| 24 | POST | `/api/maker/v1/attendance/leave/grants` | 個別付与 (同一 user × 種別 × 付与日は `skipped=1`) | Bearer | 1 or 2 **かつオーナー** |
+| 25 | POST | `/api/maker/v1/attendance/leave/grants/bulk` | 一括付与 (`target=all` のみ、既存分は skipped) | Bearer | 1 or 2 **かつオーナー** |
+| 26 | POST | `/api/maker/v1/attendance/leave/periodic-grants/run` | 周期自動付与の実行 (冪等、既存付与は変更しない) | Bearer | 1 or 2 **かつオーナー** |
+| 27 | GET | `/api/maker/v1/attendance/leave/admin/summary` | 休暇管理一覧 (メンバー × 種別の付与/取得/残。利用者数上限 500 人) | Bearer | 1 or 2 **かつオーナー** |
 
 ---
 
@@ -588,7 +705,8 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 │   │   ├── Infrastructure/     EF Core + 監査 (Iter 4 段階 B で認証は Presentation/Program.cs の JwtBearer に移行)
 │   │   └── Presentation/       Minimal API エンドポイント
 │   └── Frontend/       Nuxt 3 + Reka UI + Tailwind CSS
-│       ├── pages/              ルーティング (login, users)
+│       ├── pages/              ルーティング (login, index, masters, products, orders, production,
+│       │                        attendance, sales, shipping, inventory, analytics, users, admin)
 │       ├── composables/        useAuth (Firebase Auth、Iter 4 段階 B) / useApi (getIdToken Bearer)
 │       └── middleware/         認証ガード
 ├── RUNBOOK.md (本ファイル)

@@ -29,10 +29,15 @@
 
 /**
  * ナビ表示上のアクセス制御キー。省略時は認証済みの全ユーザが対象。
- * - 'owner': 工程実績管理権限（processRecordPermission === 1）を持つ管理者のみ。
+ * - 'owner': 工程実績管理権限（processRecordPermission >= 1）を持つ管理者のみ。
+ *   （オーナー権限は 0/1 の 2 値。判定式は useAuth / users.vue と揃えて >= 1 に統一する）
  *   現状はデータ移行（旧システム取込）のみが該当する。
+ * - 'attendance': 勤怠権限あり（attendancePermission が 1=更新可能 または 2=参照のみ）。
+ *   0=なし のユーザには勤怠カテゴリごと出さない。
+ *
+ * 実際の判定は composables/useNav.ts の canAccess が一元的に行う（本ファイルは純関数のまま保つ）。
  */
-export type NavGuard = 'owner'
+export type NavGuard = 'owner' | 'attendance'
 
 /** ナビ上のページ。セクション内のタブ 1 つに対応する。 */
 export interface NavLink {
@@ -249,6 +254,29 @@ export const NAV_CATEGORIES: NavCategory[] = [
         description: 'KPI ダッシュボード',
         links: [
           { path: '/analytics', label: '分析ダッシュボード', icon: 'chart' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'attendance',
+    label: '勤怠',
+    icon: 'clock',
+    description: '打刻・勤怠集計・休暇',
+    sections: [
+      {
+        id: 'attendance',
+        label: '勤怠',
+        icon: 'clock',
+        description: '打刻とタイムカード、日次/週次/月次の集計・休暇・各種申請',
+        // links[0] がセクションの既定ページ（カード押下時の遷移先）。
+        // 日常的に開くのは打刻画面のためタイムカードを先頭に置く。
+        // /attendance と /attendance/timecard は resolveActiveLinkPath の
+        // 「完全一致 → 詳細ルート → 最長前方一致」の順で解決されるため、
+        // 並び順に関わらず /attendance が /attendance/timecard を誤って奪うことはない。
+        links: [
+          { path: '/attendance/timecard', label: 'タイムカード', icon: 'clock', requires: 'attendance' },
+          { path: '/attendance', label: '勤怠管理', icon: 'clipboard-check', requires: 'attendance' },
         ],
       },
     ],

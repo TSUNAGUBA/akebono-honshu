@@ -21,11 +21,15 @@ interface AkebonoUser {
   // マルチテナント (AKB-DOC-12)。/auth/sync 応答から取得し、useApi が X-Tenant-Id ヘッダーに使う。
   tenantId: string
   tenantCode: string
-  // C-02 4 権限カテゴリ (Phase 5 §3.18)
+  // C-02 権限カテゴリ (Phase 5 §3.18)。勤怠 (attendancePermission) を加えて現在 5 カテゴリ。
+  // いずれも非単調スケールのため、書込判定は === 1 で行う (>= 1 は「参照のみ」に書込を許す)。
   productLedgerPermission: number       // 0=なし, 1=更新可能, 2=参照のみ, 3=参照のみ制限
   purchaseOrderCreatePermission: number // 0=なし, 1=更新可能, 2=参照のみ
   purchaseOrderInfoPermission: number   // 0=なし, 1=あり
   processRecordPermission: number       // 0=なし, 1=あり
+  // 勤怠 (5 つ目の権限カテゴリ。勤怠移植仕様 §2 / §6.1)。末尾追加 = 下位互換。
+  attendancePermission: number          // 0=なし, 1=更新可能, 2=参照のみ
+  punchRequired: boolean                // 打刻対象か (役員・外注等は false)
 }
 
 interface SyncApiResponse {
@@ -40,6 +44,10 @@ interface SyncApiResponse {
   // マルチテナント (AKB-DOC-12)
   tenantId: string
   tenantCode: string
+  // 勤怠 (末尾追加)。Backend 未更新の環境では欠落し得るため optional で受け、
+  // 権限は 0 (なし) へフォールバックする (fail-close)。
+  attendancePermission?: number
+  punchRequired?: boolean
 }
 
 // onAuthStateChanged の初回発火 (+ Backend 同期) 完了を表すゲート Promise。
@@ -87,6 +95,10 @@ export const useAuth = () => {
       purchaseOrderCreatePermission: res.purchaseOrderCreatePermission,
       purchaseOrderInfoPermission: res.purchaseOrderInfoPermission,
       processRecordPermission: res.processRecordPermission,
+      // 勤怠 (末尾追加)。応答に無い = Backend 未更新のため、権限なし・打刻対象外として扱う
+      // (勤怠ナビ・打刻ボタンが出ない。権限は必ず fail-close 側へ倒す)。
+      attendancePermission: res.attendancePermission ?? 0,
+      punchRequired: res.punchRequired ?? false,
     }
   }
 
@@ -181,10 +193,47 @@ export const useAuth = () => {
   // 書込 (マスタ編集) は「更新可能 (==1)」のみ。参照のみ (2/3) は編集不可 (バックエンドと一致)。
   const canEditMaster = computed(() => (auth.value?.productLedgerPermission ?? 0) === 1)
 
+  // ------------------------------------------
+  // 勤怠 (勤怠移植仕様 §6.1)
+  // ------------------------------------------
+  // 権限スケールは既存 4 カテゴリと同じく非単調 (0=なし / 1=更新可能 / 2=参照のみ)。
+  // 「参照のみ」が「更新可能」より大きい値のため、書込判定に >= 1 を使うとバグる。必ず === 1 で判定する。
+
+  /** 打刻できるか。勤怠が更新可能 (===1) かつ打刻対象 (punchRequired) であること。 */
+  const canPunch = computed(() =>
+    (auth.value?.attendancePermission ?? 0) === 1 && (auth.value?.punchRequired ?? false))
+
+  /** 勤怠機能 (自分の勤怠参照) を使えるか。0=なし のみ不可。 */
+  const canUseAttendance = computed(() => {
+    const p = auth.value?.attendancePermission ?? 0
+    return p === 1 || p === 2
+  })
+
+  /**
+   * 勤怠の管理操作 (全員のタイムカード参照 / 各種承認 / 休暇付与 / 勤怠ルール設定) が可能か。
+   * office の admin 相当を既存オーナー権限に集約する (§2)。
+   *
+   * **判定はバックエンドの CheckAttendanceAdminAsync と同式にする (原則3)**:
+   * 勤怠参照権限 (canUseAttendance) **かつ** オーナー権限。オーナーであることだけでは足りない
+   * (attendance_permission = 0 は勤怠機能の利用を明示的に禁じた状態で、サーバは全て 403 で拒否する)。
+   * これを揃えないと「オーナー権限：…を利用できます」バッジが、実際には拒否される能力を断定表示する。
+   *
+   * **オーナー権限 (process_record_permission) は 0=なし / 1=あり の 2 値**であり、他の 4 カテゴリの
+   * ような非単調スケール (2=参照のみ) を持たない。そのため `>= 1` と `=== 1` は同値になるが、
+   * 判定式は既存 pages/masters/users.vue と揃えて **`>= 1` に統一**する
+   * (同一概念の判定式が画面ごとに違うと、権限値が拡張されたときに片方だけ挙動が変わるため)。
+   * 勤怠の書込権限 (attendancePermission) は非単調スケールなので、こちらは必ず `=== 1` で判定すること。
+   */
+  const isAttendanceAdmin = computed(() =>
+    canUseAttendance.value && (auth.value?.processRecordPermission ?? 0) >= 1)
+
   return {
     user: auth,
     isAuthenticated: computed(() => auth.value !== null),
     canEditMaster,
+    canPunch,
+    canUseAttendance,
+    isAttendanceAdmin,
     getIdToken,
     login,
     logout,

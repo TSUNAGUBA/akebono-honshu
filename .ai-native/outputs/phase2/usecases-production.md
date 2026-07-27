@@ -176,7 +176,7 @@
 
 | 論点 | 方針 |
 |------|------|
-| 認証・権限 | 既存4権限の実在トークンのみ流用。BOM=`product:*`、生産指示/素材発注=`purchase_order:*`、素材単価開示/設定=`price:read/write` を AND（D-prod-7 確定、`data-design-production.md §12`。`production_info:*` は不使用＝監査C-1） |
+| 認証・権限 | 既存4権限（**2026-07-27 更新: Iteration 30 で勤怠を加え 5 権限**。本増分の割当は不変）の実在トークンのみ流用。BOM=`product:*`、生産指示/素材発注=`purchase_order:*`、素材単価開示/設定=`price:read/write` を AND（D-prod-7 確定、`data-design-production.md §12`。`production_info:*` は不使用＝監査C-1） |
 | 排他制御 | 既存と同じ Last-Write-Wins |
 | 監査ログ | BOM・生産指示・素材発注の C/U/D ＋ Excel出力 ＋ 素材単価閲覧を記録（既存 C-03 体系に追加） |
 | Excel出力 | 既存 O-06（ClosedXML）と同方式。初回出力時に宛名スナップショット凍結 |

@@ -35,7 +35,7 @@
 │ │  ┌───────────────────────────────────────────────────────────┐  │ │
 │ │  │  ASP.NET Core 8 Web API (C#)                              │  │ │
 │ │  │  ├─ Firebase JWKS + JwtBearer Middleware (Token 検証)     │  │ │
-│ │  │  ├─ Authorization Policies (Custom Claims → 4 権限評価)   │  │ │
+│ │  │  ├─ Authorization Policies (Custom Claims → 5 権限評価)   │  │ │
 │ │  │  ├─ EF Core 8 + Npgsql (DbContext, Migration)             │  │ │
 │ │  │  ├─ AWS SDK (S3, Secrets Manager, CloudWatch)             │  │ │
 │ │  │  ├─ Firebase Admin SDK (User 管理 + setCustomUserClaims)  │  │ │
@@ -93,7 +93,7 @@ src/
 │   │   ├─ PurchaseOrders/           # /purchase-orders, /purchase-orders/{id}/lines
 │   │   ├─ Outputs/                  # /outputs/excel, /outputs/labels
 │   │   └─ ...
-│   ├─ Authorization/                # Authorization Policies (4 権限)
+│   ├─ Authorization/                # Authorization Policies (5 権限)
 │   ├─ Middleware/                   # GlobalExceptionHandler, RequestLogging
 │   └─ appsettings.{env}.json        # AWS Secrets Manager 経由で実際の値注入
 │
@@ -160,7 +160,7 @@ src/
 │   ├─ useAuth.ts                     # signIn / signOut / onAuthStateChanged
 │   ├─ useApi.ts                      # $fetch ラッパ + Bearer 自動付与 + エラーコード → トースト
 │   ├─ useIdle.ts                     # 8時間アイドル監視（SEC-05 実装）
-│   └─ usePermission.ts               # Custom Claims から 4 権限評価
+│   └─ usePermission.ts               # Custom Claims から 5 権限評価
 ├─ stores/                            # Pinia
 │   ├─ auth.ts                        # 現在ユーザ・Custom Claims
 │   └─ ui.ts                          # トースト・モーダル等のグローバル UI 状態
@@ -198,7 +198,7 @@ test/
 5. ID Token 取得 → useAuth で Pinia store に格納
 6. useApi が全 XHR に Authorization: Bearer <Token> を付与
 7. バックエンドが JWKS で署名検証 + Custom Claims を読み取り
-8. usePermission がフロント側でも 4 権限チェック（UI 表示制御のみ、最終判定はサーバ側）
+8. usePermission がフロント側でも 5 権限チェック（UI 表示制御のみ、最終判定はサーバ側）
 ```
 
 ---
@@ -242,7 +242,7 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 [2] Frontend: POST /api/v1/products/{productId}/supplier-prices
               { supplierId, unitPrice, effectiveFrom, currency }
 [3] App Runner: 認証・認可 (Product.Write && Price.Write の AND 評価)
-                 → Phase 3 §6 機密度「中-高」のため Price.Write は 4 権限の上位レベル必要
+                 → Phase 3 §6 機密度「中-高」のため Price.Write は 5 権限の上位レベル必要
 [4] Application: AddSupplierPriceCommand
                  ├─ Product 存在チェック (FK 整合)
                  ├─ Supplier 存在チェック
@@ -355,8 +355,23 @@ Phase 5 ゲート「全データフローが I/F レベルで矛盾なく通る�
 | ブルートフォース | Firebase 標準レートリミット | SEC-06 | ✅ Firebase 標準 |
 | アイドル切断 8h | フロント `useIdle` + `signOut` | SEC-05 | ⏳ 段階 C 着手後実装 |
 | トークン検証 | JwtBearer + Firebase JWKS | SEC-08 | ✅ 段階 B 完了 |
-| 4 権限ポリシー | RDS 直読 (`CheckMasterEditAsync` / `CheckOrderEditAsync`)。段階 C 以降 Custom Claims + AuthorizationPolicy を追加してサーバ最終判定を二重化 | SEC-11 / C-02 | ⏳ RDS 直読のみ段階 B 完了、Custom Claims は段階 C |
+| 5 権限ポリシー（Iteration 30 で 4 → 5）| RDS 直読 (`CheckMasterEditAsync` / `CheckOrderEditAsync` / `CheckUserAdminAsync` / **`CheckAttendanceWriteAsync` / `CheckAttendanceReadAsync` / `CheckAttendanceAdminAsync`**)。段階 C 以降 Custom Claims + AuthorizationPolicy を追加してサーバ最終判定を二重化 | SEC-11 / C-02 | ⏳ RDS 直読のみ段階 B 完了、Custom Claims は段階 C |
 | 権限変更同期 | RDS 先行 → setCustomUserClaims（§4.5）| 原則6 | ⏳ 段階 C 着手後実装 (シナリオ E) |
+
+> **2026-07-27 訂正（権限カテゴリは 4 → 5）:** 本ドキュメント中の「4 権限」表記は Iteration 30 で
+> **5 権限**に更新した。`users` の権限列は以下の 5 カテゴリ（SoT = `src/Backend/Domain/Entities/User.cs`）:
+>
+> | # | 列 | 値 | 書込判定 |
+> |---|---|---|---|
+> | 1 | `product_ledger_permission` | 0=なし / 1=更新可能 / 2=参照のみ / 3=参照のみ(制限) | `== 1` |
+> | 2 | `purchase_order_create_permission` | 0=なし / 1=更新可能 / 2=参照のみ | `== 1` |
+> | 3 | `purchase_order_info_permission` | 0=なし / 1=あり | `>= 1` |
+> | 4 | `process_record_permission`（**オーナー権限**。利用者マスタ管理の gate を兼ねる。**勤怠管理系は本権限と `attendance_permission` の AND**）| 0=なし / 1=あり | `>= 1` |
+> | 5 | **`attendance_permission`（Iteration 30 追加）** | 0=なし / 1=更新可能 / 2=参照のみ | **`== 1`** |
+>
+> **#1 / #2 / #5 は非単調エンコード**（「参照のみ」が「更新可能」より大きい値）のため、
+> 書込判定に `>= 1` を使うと参照専用ユーザに書込を許すバグになる。必ず `== 1` で判定すること。
+> #3 / #4 は 0/1 の 2 値なので `>= 1` で正しい。
 
 ### 5.2 エラーハンドリング
 
@@ -471,3 +486,4 @@ Phase 5 方法論の「I/F 設計 6 視点」を architecture.md レベルで実
 | 日付 | 内容 |
 |---|---|
 | 2026-05-19 | 初版作成（Phase 4 確定スタック準拠、5 シナリオドキュメントトレース）|
+| 2026-07-27 | Iteration 30: 「4 権限」表記を **5 権限**へ更新（§1 構成図 / §2 ディレクトリ / §3 フロント構成・認証フロー / §4.3 / §5.1）。§5.1 に 5 カテゴリの値域・書込判定（非単調エンコードの注意）と勤怠系認可ヘルパー 3 種（`CheckAttendanceWriteAsync` / `CheckAttendanceReadAsync` / `CheckAttendanceAdminAsync`）を追記（`users.attendance_permission` 追加に伴う整合、akebono-office からの移植）|
