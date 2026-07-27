@@ -231,6 +231,20 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 # ※Iteration 30 (2026-07-27) で 10-attendance.sql (勤怠 6 テーブル + users への勤怠列追加) を
 #   追加。08/09 より後に流れるため RLS と updated_at トリガは 10 が自ら配線する (ファイル冒頭の
 #   コメント参照)。**投入し忘れると勤怠画面が全滅する**ので必ず 10 まで流すこと。
+#
+# ★★ 重要 (Iteration 30 の下位互換・原則7): 勤怠列は **users** テーブルにも追加される。
+#    User エンティティが勤怠 6 列を map するため、**列が無いと users を引く全経路 (とりわけ
+#    ログイン直後の /auth/sync) が「column does not exist」で失敗し、全利用者がログイン不能になる**。
+#    - 新規デプロイ: 上記の 10-attendance.sql まで流せば列も付く。
+#    - 既存 DB を更新する場合: **コードより先に** マイグレーションを適用すること。
+#        既存 DB へは冪等マイグレーション db/migration/iter30-attendance.sql を当てる:
+#          deploy/db/run-migrations.sh を ACTION=migrate で実行 (推奨。schema_migrations で二重適用防止)
+#          または直接: psql "<接続先>" -f db/migration/iter30-attendance.sql
+#        既存 users は attendance_permission=1 / punch_required=true 等の DEFAULT で backfill される
+#        (既存利用者はそのまま打刻可能・ログイン可能)。冪等なので二重適用しても安全。
+#    - 起動時ガード: バックエンドは起動時に users の勤怠列を検査し、無ければ
+#        「AKB-SCHEMA-GUARD ... iter30-attendance.sql を適用してください」を出して**起動を中断**する
+#        (SchemaGuardHostedService)。cryptic なログイン失敗ではなく起動失敗として気づける。
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
