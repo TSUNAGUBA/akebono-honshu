@@ -580,6 +580,16 @@ pnpm dev
 > 管理系（全員のタイムカード・承認/却下・休暇付与・各種設定・`scope=all`）は勤怠権限では判定せず、すべてオーナーに集約する。
 > 他人の勤怠を参照する `?userId` 指定もオーナーが必要（省略時は常に自分）。
 > 詳細な I/F は `.ai-native/outputs/phase5/api-design.md §2.7`（`#` 番号は同節と一致）。
+>
+> **一覧のページング（2026-07-27 追記）:** 申請一覧 2 本（#8 打刻修正申請 / #21 休暇申請）は
+> キーセットページング（`?limit`（1〜200）/ `?cursor`、続きの有無は `meta.page.hasMore`、不正は 400 `AKB-SYS-011`）。
+> **この 2 本だけ `limit` 省略時の既定が 200**（§0-P の全体既定 50 とは異なる。フロントがまだ `limit` /
+> `cursor` を送らないため、既定 50 では申請が黙って欠落するのを避ける措置）。curl 疎通時は
+> `meta.page.nextCursor` を辿ること。
+>
+> **利用者数の上限（2026-07-27 追記）:** #6 タイムカードは 200 人、#27 休暇管理一覧は 500 人を超えると
+> **422 `AKB-SYS-002`**「対象の利用者が多すぎます（一度に集計できるのは {N} 人までです）」。
+> #6 は `q`（氏名の部分一致）で絞り込む（**期間を短くしても利用者数は減らない**）、#27 は #20 の個人別サマリで確認する。
 
 **打刻・集計 (#1〜#6) — `src/Backend/Presentation/Endpoints/AttendanceEndpoints.cs`**
 
@@ -590,14 +600,14 @@ pnpm dev
 | 3 | GET | `/api/maker/v1/attendance/day` | 日次サマリ (`?userId&date&raw`) | Bearer | 1 or 2 (他人は **オーナー**) |
 | 4 | GET | `/api/maker/v1/attendance/month` | 月次サマリ (`?userId&month`) | Bearer | 1 or 2 (他人は **オーナー**) |
 | 5 | GET | `/api/maker/v1/attendance/alerts` | 36 協定アラート (`?userId&endMonth`、直近 6 ヶ月) | Bearer | 1 or 2 (他人は **オーナー**) |
-| 6 | GET | `/api/maker/v1/attendance/timecard` | 全員のタイムカード (`?from&to&q`、期間上限 62 日) | Bearer | **オーナー** |
+| 6 | GET | `/api/maker/v1/attendance/timecard` | 全員のタイムカード (`?from&to&q`、期間上限 62 日 = 両端含み、利用者数上限 200 人)。並びは日付降順 → 氏名昇順 → 利用者 ID 昇順 | Bearer | **オーナー** |
 
 **打刻修正申請 (#7〜#9)**
 
 | # | メソッド | パス | 概要 | 認証 | 権限 |
 |---|---|---|---|---|---|
 | 7 | POST | `/api/maker/v1/attendance/fix-requests` | 修正申請 (対象は常に本人、理由必須) | Bearer | `attendance_permission == 1` |
-| 8 | GET | `/api/maker/v1/attendance/fix-requests` | 申請一覧 (`?status&scope`) | Bearer | 1 or 2 / `scope=all` は **オーナー** |
+| 8 | GET | `/api/maker/v1/attendance/fix-requests` | 申請一覧 (`?status&scope&limit&cursor`) | Bearer | 1 or 2 / `scope=all` は **オーナー** |
 | 9 | POST | `/api/maker/v1/attendance/fix-requests/{id}/decision` | 承認 / 却下 (元打刻は削除せず修正打刻を追記) | Bearer | **オーナー** |
 
 **勤怠ルール = 勤務体系マスタ (#10〜#14)**
@@ -606,9 +616,9 @@ pnpm dev
 |---|---|---|---|---|---|
 | 10 | GET | `/api/maker/v1/attendance/rules` | 一覧 (`?includeInactive`、既定 false) | Bearer | 1 or 2 |
 | 11 | POST | `/api/maker/v1/attendance/rules` | 新規作成 | Bearer | **オーナー** |
-| 12 | PATCH | `/api/maker/v1/attendance/rules/{id}` | 部分更新 (null のフィールドは現在値を保持) | Bearer | **オーナー** |
+| 12 | PATCH | `/api/maker/v1/attendance/rules/{id}` | 部分更新 (null のフィールドは現在値を保持。ただし `flexEnabled=false` を受けるとコアタイムは指定値に関わらず null になる) | Bearer | **オーナー** |
 | 13 | DELETE | `/api/maker/v1/attendance/rules/{id}` | 論理削除 | Bearer | **オーナー** |
-| 14 | POST | `/api/maker/v1/attendance/rules/{id}/restore` | 論理削除の取消 | Bearer | **オーナー** |
+| 14 | POST | `/api/maker/v1/attendance/rules/{id}/restore` | 論理削除の取消 (同名の有効なルールがあると 409) | Bearer | **オーナー** |
 
 **休暇 (#15〜#27) — `src/Backend/Presentation/Endpoints/AttendanceLeaveEndpoints.cs`**
 
@@ -618,15 +628,15 @@ pnpm dev
 | 16 | POST | `/api/maker/v1/attendance/leave/types` | 休暇種別 作成 (法定有給は作成不可) | Bearer | **オーナー** |
 | 17 | PATCH | `/api/maker/v1/attendance/leave/types/{id}` | 休暇種別 部分更新 (法定有給は 409) | Bearer | **オーナー** |
 | 18 | DELETE | `/api/maker/v1/attendance/leave/types/{id}` | 休暇種別 論理削除 (付与・申請の実績は残す) | Bearer | **オーナー** |
-| 19 | POST | `/api/maker/v1/attendance/leave/types/{id}/restore` | 休暇種別 復元 | Bearer | **オーナー** |
+| 19 | POST | `/api/maker/v1/attendance/leave/types/{id}/restore` | 休暇種別 復元 (同名の有効な種別があると 409) | Bearer | **オーナー** |
 | 20 | GET | `/api/maker/v1/attendance/leave/summary` | 残数・年 5 日義務・履歴 (`?userId`) | Bearer | 1 or 2 (他人は **オーナー**) |
-| 21 | GET | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 (`?scope&status`) | Bearer | 1 or 2 / `scope=all` は **オーナー** |
+| 21 | GET | `/api/maker/v1/attendance/leave/requests` | 休暇申請 一覧 (`?scope&status&from&to&limit&cursor`)。`from` / `to` は取得日の範囲 (両端含み・片側のみ可・**両方省略時は全期間**、上限 366 日) | Bearer | 1 or 2 / `scope=all` は **オーナー** |
 | 22 | POST | `/api/maker/v1/attendance/leave/requests` | 休暇申請 (対象は常に本人) | Bearer | `attendance_permission == 1` |
 | 23 | POST | `/api/maker/v1/attendance/leave/requests/{id}/decision` | 承認 / 却下 (処理済みの再操作は 409) | Bearer | **オーナー** |
 | 24 | POST | `/api/maker/v1/attendance/leave/grants` | 個別付与 (同一 user × 種別 × 付与日は `skipped=1`) | Bearer | **オーナー** |
 | 25 | POST | `/api/maker/v1/attendance/leave/grants/bulk` | 一括付与 (`target=all` のみ、既存分は skipped) | Bearer | **オーナー** |
 | 26 | POST | `/api/maker/v1/attendance/leave/periodic-grants/run` | 周期自動付与の実行 (冪等、既存付与は変更しない) | Bearer | **オーナー** |
-| 27 | GET | `/api/maker/v1/attendance/leave/admin/summary` | 休暇管理一覧 (メンバー × 種別の付与/取得/残) | Bearer | **オーナー** |
+| 27 | GET | `/api/maker/v1/attendance/leave/admin/summary` | 休暇管理一覧 (メンバー × 種別の付与/取得/残。利用者数上限 500 人) | Bearer | **オーナー** |
 
 ---
 
