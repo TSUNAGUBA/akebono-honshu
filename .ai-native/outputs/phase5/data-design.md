@@ -922,3 +922,4 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 |---|---|
 | 2026-05-19 | 初版作成（18 マスタ + 商品 4 + 発注 3 + 監査 1 = 計 26 テーブル、機能要件 21 全対応）|
 | 2026-07-27 | Iteration 30: 勤怠 6 テーブル（`attendance_rules` / `punch_records` / `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）を §14 に追加。§3.18 `users` に勤怠列 6 本（`attendance_permission` / `punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追記、§2 ERD 概観に勤怠エンティティ群を追加（akebono-office からの移植）|
+| 2026-07-27 | **第 9 イテレーション修正コミット `bd1a96e` を §3.18 へ反映（原則5）:** `users` の勤怠 4 列（`attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）について「入力 UI が無く `PATCH /users/{id}` の全項目上書きで既定値へ巻き戻る」と**解消済みの BLOCKER を未解決として宣言し続けていた**記述を、`4c6981e` で解消済み（利用者フォームへの 4 項目追加 ＋ `UserPatchRequest` による部分更新化）へ訂正。`screen-design.md §3.12` / `api-design.md §2.7.9` と食い違ったまま放置すると、存在しない給与・法定関連の重大欠陥を SoT が宣言し、完了済み改修の再着手を誘導するため |
