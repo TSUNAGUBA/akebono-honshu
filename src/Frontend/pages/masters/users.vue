@@ -282,7 +282,18 @@ const remove = async (u: UserItem) => {
     <div v-if="!canManageUsers" class="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
       閲覧のみ (利用者管理はオーナー権限が必要です)。
     </div>
-    <div v-if="listError" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ listError }}</div>
+    <!-- 取得失敗時は一覧本体を描画しないため、ここに再取得の導線を置く。
+         非オーナーは「+ 利用者を追加」も出ないので、これが無いとブラウザリロード以外に
+         回復手段が無くなる（原則1: 手動手順に頼らせない）。 -->
+    <div v-if="listError" class="mb-3 flex flex-wrap items-center gap-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+      <span>{{ listError }}</span>
+      <button
+        type="button"
+        :disabled="loading"
+        class="inline-flex min-h-[44px] items-center text-xs font-semibold underline disabled:opacity-40"
+        @click="reload"
+      >再取得する</button>
+    </div>
     <div v-if="errorMessage" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ errorMessage }}</div>
     <div v-if="successMessage" class="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{{ successMessage }}</div>
 

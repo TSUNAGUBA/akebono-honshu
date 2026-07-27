@@ -29,7 +29,8 @@
 
 /**
  * ナビ表示上のアクセス制御キー。省略時は認証済みの全ユーザが対象。
- * - 'owner': 工程実績管理権限（processRecordPermission === 1）を持つ管理者のみ。
+ * - 'owner': 工程実績管理権限（processRecordPermission >= 1）を持つ管理者のみ。
+ *   （オーナー権限は 0/1 の 2 値。判定式は useAuth / users.vue と揃えて >= 1 に統一する）
  *   現状はデータ移行（旧システム取込）のみが該当する。
  * - 'attendance': 勤怠権限あり（attendancePermission が 1=更新可能 または 2=参照のみ）。
  *   0=なし のユーザには勤怠カテゴリごと出さない。
