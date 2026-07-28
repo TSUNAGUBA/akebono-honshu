@@ -865,6 +865,10 @@
           "requestedAt": {
             "nullable": true,
             "type": "string"
+          },
+          "targetPunchId": {
+            "nullable": true,
+            "type": "string"
           }
         },
         "type": "object"
