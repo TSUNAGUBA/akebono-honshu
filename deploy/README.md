@@ -27,13 +27,14 @@
 flowchart LR
     subgraph GH[GitHub Actions]
       subgraph PIPE[deploy.yml 統合パイプライン]
-        PF[事前検証<br/>対象判定] --> GATE[テストゲート<br/>単体・結合・シナリオ]
-        GATE -->|通過時のみ| BE[deploy-backend.yml<br/>workflow_call]
+        PF[事前検証<br/>対象判定] --> GATE[テストゲート<br/>単体xUnit・結合起動+CORS・シナリオ]
+        GATE -->|通過時のみ| MIG[DB マイグレーション<br/>migrate 前進適用]
+        MIG --> BE[deploy-backend.yml<br/>workflow_call]
         GATE -->|通過時のみ| FE[deploy-frontend.yml<br/>workflow_call]
         BE --> RPT[結果レポート]
         FE --> RPT
       end
-      DB[db-migrate.yml]
+      DB[db-migrate.yml<br/>手動 init/reinit]
       CI[ci.yml]
     end
     FE -->|nuxi generate + firebase deploy| FH[Firebase Hosting]
@@ -46,9 +47,12 @@ flowchart LR
 ```
 
 - **統合デプロイパイプライン** (`deploy.yml`): `main` push（変更対象を自動判定）/ 手動（`target` 選択）→
-  **事前検証**（main 限定・対象判定）→ **テストゲート**（単体=Release ビルド＋型チェック / 結合=OpenAPI 整合 /
-  シナリオ=Docker ビルド。`scripts/run-test-stage.sh` が失敗ログを Step Summary とアーティファクト `deploy-logs`
-  に残す）→ **テスト通過時のみ**デプロイ → **結果レポート**。テスト未通過ではデプロイされない。
+  **事前検証**（main 限定・対象判定）→ **テストゲート**（**単体**=Release ビルド＋**xUnit 単体テスト**
+  （`Akebono.Domain.Tests`: 勤怠計算 週40h/深夜/36協定/有効打刻等）＋型チェック / **結合**=使い捨て Postgres に
+  `db/init` を投入し backend を**実際に起動**して `/health`（起動+スキーマ整合）・**CORS プリフライト**・OpenAPI 一致を検証 /
+  **シナリオ**=Docker ビルド。`scripts/run-test-stage.sh` が失敗ログを Step Summary とアーティファクト `deploy-logs`
+  に残す）→ **DB マイグレーション**（backend 対象時、`action=migrate` を前進適用。migrate→deploy 順序保証）→
+  **テスト・マイグレーション成功時のみ**デプロイ → **結果レポート**。テスト未通過・マイグレーション失敗ではデプロイされない。
   - **Frontend** (`deploy-frontend.yml`): `deploy.yml` から `workflow_call` で呼ばれ、Nuxt 静的生成 → Firebase Hosting。
     緊急時は `workflow_dispatch` で単体実行も可（ゲートは通らない）。
   - **Backend** (`deploy-backend.yml`): `deploy.yml` から `workflow_call` で呼ばれ、Docker build → GHCR push →
@@ -56,9 +60,13 @@ flowchart LR
   - どちらも**単体では `push` で起動しない**（`push` トリガーは `deploy.yml` が一元管理）。これにより
     「テスト未通過でも `main` push でデプロイ」の穴を塞ぐ。テストコマンドは repository variables
     （`SETUP_CMD` / `UNIT_TEST_CMD` / `INTEGRATION_TEST_CMD` / `SCENARIO_TEST_CMD`）で上書き可能。
-- **DB** (`db-migrate.yml`): **手動のみ**。(OIDC 任意で) EC2 を踏み台に、使い捨て psql コンテナで RDS に init / migrate。
-- **CI** (`ci.yml`): **PR ゲート専用**（+ 手動）。Backend `dotnet build` + Docker build + Frontend `pnpm typecheck` +
-  OpenAPI 整合を並行実行。`main` push 時の同等検証は `deploy.yml` のテストゲートが担うため二重実行しない。
+- **DB** (`db-migrate.yml`): (OIDC 任意で) EC2 を踏み台に、使い捨て psql コンテナで RDS に init / migrate。
+  **`init` / `reinit`（破壊的）は手動 `workflow_dispatch` のみ**。**`migrate`（前進専用・冪等）は `deploy.yml` が
+  backend デプロイ前に `workflow_call` で自動実行**する（migrate→deploy 順序保証。手動 dispatch も従来どおり可）。
+- **CI** (`ci.yml`): **PR ゲート専用**（+ 手動）。Backend `dotnet build` + **xUnit 単体テスト** + Docker build +
+  Frontend `pnpm typecheck` + **結合テスト（backend 実起動 + `/health` + CORS + OpenAPI 一致）** を並行実行。
+  検証内容は `deploy.yml` のテストゲートと同一（`scripts/integration-test.sh` を共有）。`main` push 時の同等検証は
+  `deploy.yml` のテストゲートが担うため二重実行しない。
 
 ---
 
