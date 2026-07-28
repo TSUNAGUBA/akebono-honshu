@@ -32,6 +32,18 @@ jobs:
       - name: Restore & build (Release)
         run: dotnet build src/Backend/Akebono.sln -c Release
 
+  # ドメイン純粋関数の単体テスト (xUnit)。勤怠計算 (AttendanceCalc: 週40h/深夜/36協定/有効打刻等) の
+  # 正しさを実アサーションで検証する。deploy.yml のテストゲート単体ステージと同一の検証。
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Unit tests (Akebono.Domain.Tests)
+        run: dotnet test src/Backend/tests/Akebono.Domain.Tests/Akebono.Domain.Tests.csproj -c Release
+
   backend-docker-build:
     runs-on: ubuntu-latest
     steps:
@@ -58,25 +70,30 @@ jobs:
         working-directory: src/Frontend
         run: pnpm run typecheck
 
-  # OpenAPI 仕様と実装の一致検証 (AKB-DOC-12 §4-1)。
-  # scripts/generate-openapi.sh がアプリをスタブ構成で起動し swagger.json を取得、
-  # コミット済み docs/api/openapi.json と diff。乖離があれば fail
-  # (API を変更したらスクリプトを再実行して openapi.json を更新・コミットする)。
-  openapi-check:
+  # 結合テスト: 使い捨て Postgres に db/init を投入し backend を**実際に起動**して HTTP 検証する。
+  # /health(起動+スキーマ整合) / CORS プリフライト / OpenAPI 一致 を一度の起動でまとめて検証。
+  # deploy.yml のテストゲート結合ステージと同一 (scripts/integration-test.sh 経由・PR とデプロイで同期)。
+  # これにより「スキーマ移行漏れで起動不能」「CORS 崩れ」「仕様乖離」を PR 段階で捕捉する。
+  integration-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: akebono_honshu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Generate OpenAPI spec from implementation
-        run: |
-          cp docs/api/openapi.json /tmp/openapi-committed.json
-          bash scripts/generate-openapi.sh
-      - name: Diff against committed spec
-        run: |
-          if ! diff -u /tmp/openapi-committed.json docs/api/openapi.json; then
-            echo "::error::docs/api/openapi.json が実装と乖離しています。scripts/generate-openapi.sh を実行してコミットしてください" >&2
-            exit 1
-          fi
-          echo "OpenAPI spec is in sync with the implementation."
+      - name: Integration test (boot backend + /health + CORS + OpenAPI)
+        run: bash scripts/integration-test.sh

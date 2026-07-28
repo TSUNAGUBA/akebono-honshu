@@ -437,7 +437,9 @@ public static class AttendanceCalc
     /// 戻り値の <c>Within8h</c> は当日の日 8h 以内労働 (呼出側が週累計へ加算する)、
     /// <c>TotalNonStat</c> は当日の法定外残業合計 (呼出側が月 60h 累計へ加算する)。
     /// </summary>
-    private static (AttendanceBuckets Buckets, int Within8h, int TotalNonStat) SplitBucketsWeekly(
+    // internal: 週40h 分解ロジックの単体テスト (Akebono.Domain.Tests) から直接検証するため
+    // private ではなく internal。MonthSummary からの利用は従来どおり。
+    internal static (AttendanceBuckets Buckets, int Within8h, int TotalNonStat) SplitBucketsWeekly(
         int workMinutes, int scheduledMinutes, int nightMinutes, bool isLegalHoliday,
         int monthNonStatutoryOtSoFar, int weekCumWithin8h)
     {

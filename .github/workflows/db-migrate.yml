@@ -27,6 +27,17 @@ on:
         description: 'reinit の場合のみ: 破壊的再構築を承認する (true 必須)'
         type: boolean
         default: false
+  # deploy.yml の統合パイプラインから「backend デプロイ前の前進マイグレーション」として呼ばれる。
+  # 呼び出し側は action=migrate 固定 (init/reinit の破壊的操作は自動化しない・手動 dispatch のみ)。
+  workflow_call:
+    inputs:
+      action:
+        description: 'workflow_call では migrate 固定を想定 (前進専用・冪等)'
+        type: string
+        default: migrate
+      confirm_reinit:
+        type: boolean
+        default: false
 
 permissions:
   contents: read

@@ -5,4 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <!-- 週40h 分解 (SplitBucketsWeekly, internal) の単体テストを Akebono.Domain.Tests から検証するため。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Akebono.Domain.Tests" />
+  </ItemGroup>
 </Project>

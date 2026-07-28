@@ -72,9 +72,11 @@ concurrency:
 env:
   DEFAULT_SETUP_CMD: dotnet restore src/Backend/Akebono.sln && (cd src/Frontend && pnpm install --no-frozen-lockfile)
   # 単体: バックエンドの Release ビルド（テストプロジェクト未整備のため疎通確認）＋フロントの型チェック
-  DEFAULT_UNIT_TEST_CMD: dotnet build src/Backend/Akebono.sln -c Release && (cd src/Frontend && pnpm run typecheck)
-  # 結合: OpenAPI 仕様と実装の一致検証（実装から再生成してコミット済み spec と差分がないこと）
-  DEFAULT_INTEGRATION_TEST_CMD: cp docs/api/openapi.json /tmp/openapi-committed.json && bash scripts/generate-openapi.sh && diff -u /tmp/openapi-committed.json docs/api/openapi.json
+  DEFAULT_UNIT_TEST_CMD: dotnet build src/Backend/Akebono.sln -c Release && dotnet test src/Backend/tests/Akebono.Domain.Tests/Akebono.Domain.Tests.csproj -c Release && (cd src/Frontend && pnpm run typecheck)
+  # 結合: 使い捨て Postgres に db/init を投入し backend を**実際に起動**して HTTP 検証
+  #   (/health=起動+スキーマ整合 / CORS プリフライト / OpenAPI 一致)。単なるビルドでは捕捉できない
+  #   「起動不能・CORS 崩れ・仕様乖離」を CI で捕捉する。test ジョブの postgres サービスを使う。
+  DEFAULT_INTEGRATION_TEST_CMD: bash scripts/integration-test.sh
   # シナリオ: 本番と同じ context=repo root での Docker ビルド（デプロイ成果物が組み上がること）
   DEFAULT_SCENARIO_TEST_CMD: docker build -f src/Backend/Dockerfile -t akebono-honshu-backend:ci .
 
@@ -175,10 +177,25 @@ jobs:
     name: テストゲート（単体・結合・シナリオ）
     needs: preflight
     runs-on: ubuntu-latest
-    # 本ジョブは意図的に secrets を env 注入しない（ビルド/型/OpenAPI/Docker はいずれも機密不要）。
-    # 将来テストコマンドに認証系 secret を渡す場合は、各ステップの env に
-    # SCRUB_SECRET_NAMES（スペース区切りの環境変数名）を設定すること。設定しないと
-    # アーティファクト .deploy-logs/*.log と Step Summary（マスク非対象）に平文で残り得る。
+    # 本ジョブは意図的に「アプリの機密 secret」を env 注入しない（ビルド/型/Docker/結合はいずれも
+    # 本番機密不要。結合テストの DB は使い捨てローカル Postgres）。将来テストコマンドに認証系 secret を
+    # 渡す場合は、各ステップの env に SCRUB_SECRET_NAMES（スペース区切りの環境変数名）を設定すること。
+    # 設定しないとアーティファクト .deploy-logs/*.log と Step Summary（マスク非対象）に平文で残り得る。
+    # 結合テスト用の使い捨て Postgres（本番機密なし・ローカル固定値）。scripts/integration-test.sh が使う。
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: akebono_honshu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -224,12 +241,31 @@ jobs:
           retention-days: 30
 
   # -------------------------------------------------------------------------
-  # デプロイ（backend）: 全テストゲート通過時かつ対象が backend のときのみ実行。
-  # 既存の再利用可能ワークフロー deploy-backend.yml を呼び出す（デプロイ手順は不変）。
+  # DB マイグレーション: backend を deploy する前に、未適用の前進マイグレーションを適用する
+  # （migrate→deploy 順序保証）。これが無いと「スキーマ変更を含むコードを先にデプロイ →
+  # 起動時スキーマガードで落ちる」障害が起きる（実際に発生・2026-07-28）。
+  # action=migrate 固定（前進専用・冪等・ledger で二重適用防止）。破壊的な init/reinit は
+  # 自動化せず db-migrate.yml の手動 dispatch のみに残す。frontend は DB 非依存のため待たせない。
+  # -------------------------------------------------------------------------
+  db-migrate:
+    name: DB マイグレーション適用（migrate）
+    needs: [preflight, test]
+    if: needs.preflight.outputs.deploy_backend == 'true'
+    permissions:
+      contents: read
+      id-token: write      # db-migrate.yml の AWS OIDC 用（EC2_HOST 直指定なら未使用）
+    uses: ./.github/workflows/db-migrate.yml
+    with:
+      action: migrate
+    secrets: inherit
+
+  # -------------------------------------------------------------------------
+  # デプロイ（backend）: 全テストゲート通過 かつ マイグレーション適用成功時かつ対象が backend のとき
+  # のみ実行。既存の再利用可能ワークフロー deploy-backend.yml を呼び出す（デプロイ手順は不変）。
   # -------------------------------------------------------------------------
   deploy-backend:
     name: デプロイ（backend / EC2）
-    needs: [preflight, test]
+    needs: [preflight, test, db-migrate]
     if: needs.preflight.outputs.deploy_backend == 'true'
     permissions:
       contents: read
@@ -255,7 +291,7 @@ jobs:
   # -------------------------------------------------------------------------
   report:
     name: パイプライン結果レポート
-    needs: [preflight, test, deploy-backend, deploy-frontend]
+    needs: [preflight, test, db-migrate, deploy-backend, deploy-frontend]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -263,6 +299,7 @@ jobs:
         env:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          MIGRATE_RESULT: ${{ needs.db-migrate.result }}
           BACKEND_RESULT: ${{ needs.deploy-backend.result }}
           FRONTEND_RESULT: ${{ needs.deploy-frontend.result }}
         run: |
@@ -283,6 +320,7 @@ jobs:
             echo "|---------|------|"
             echo "| 事前検証 | $(to_mark "$PREFLIGHT_RESULT") |"
             echo "| テストゲート（単体・結合・シナリオ） | $(to_mark "$TEST_RESULT") |"
+            echo "| DB マイグレーション (migrate) | $(to_mark "$MIGRATE_RESULT") |"
             echo "| デプロイ backend (EC2) | $(to_mark "$BACKEND_RESULT") |"
             echo "| デプロイ frontend (Firebase) | $(to_mark "$FRONTEND_RESULT") |"
             echo ""
@@ -293,6 +331,10 @@ jobs:
               echo "⚠️ テストゲートを通過していないため、デプロイは実行されていません。"
               echo "失敗したステージの Step Summary とアーティファクト \`deploy-logs\` で"
               echo "「何がどのように失敗したか」を確認し、修正後に再実行してください。"
+            elif [ "$MIGRATE_RESULT" = "failure" ]; then
+              echo "⚠️ DB マイグレーション（migrate）が失敗したため、backend はデプロイされていません。"
+              echo "db-migrate ジョブのログを確認し、修正後に再実行してください（コードとスキーマの不整合を防ぐため、"
+              echo "マイグレーション失敗時は backend を出しません）。"
             elif [ "$BACKEND_RESULT" = "failure" ] || [ "$FRONTEND_RESULT" = "failure" ]; then
               echo "⚠️ テストゲートは通過しましたが、デプロイの一部が失敗しました。各ジョブのログを確認してください。"
             else
