@@ -236,7 +236,12 @@ flowchart LR
   `target`（`both` / `backend` / `frontend`）を選ぶ（**main ブランチからのみ**実行可能）。
 - 緊急時に片側だけをテストゲート抜きで再デプロイしたい場合のフォールバックとして、
   `Deploy Backend (EC2)` / `Deploy Frontend (Firebase Hosting)` を個別に **Run workflow** で実行することも可能
-  （通常は `deploy.yml` から実行する）。
+  （通常は `deploy.yml` から実行する。単体実行も**main ブランチからのみ**許可。テストゲートは通らない点に注意）。
+
+> **前提（推奨設定）:** `main` は**ブランチ保護で直接 push を禁止し PR 必須**にすること。
+> `main` への変更はすべて PR ゲート（`ci.yml`。PR では paths フィルタ無しで全変更を検証）を通るため、
+> 「ビルドに影響するが `deploy.yml` の push paths 外のファイル」が無検証で入る事故を防げる。
+> 直接 push を許す運用では、その種のファイルが `ci.yml` にも `deploy.yml` にも当たらず検証されない可能性がある。
 
 ### 3.2 DB 初期化 / マイグレーション (手動)
 1. **初回のみ:** Actions → *DB Init / Migrate (RDS)* → Run workflow → `action = init`。
@@ -257,7 +262,8 @@ flowchart LR
 ### 3.3 デプロイ順序 (初回)
 `db-migrate (init)` → **`deploy.yml`（`target = both`）**。Backend は RDS スキーマが無いと
 起動後に各 API が失敗するため、DB を先に用意する。`deploy.yml` はテストゲート通過後に
-backend → frontend を実行する（backend/frontend の順序が必要なら `target` を分けて 2 回実行してもよい）。
+backend と frontend を**並列に**デプロイする（両者に依存関係は無い。厳密な順序が必要なら
+`target` を `backend` / `frontend` に分けて 2 回実行する）。
 
 ---
 

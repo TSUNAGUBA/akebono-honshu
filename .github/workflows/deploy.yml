@@ -63,7 +63,11 @@ concurrency:
   group: deploy-pipeline
   cancel-in-progress: false
 
-# akebono 向けテストゲート既定コマンド（ci.yml と同等の検証）。
+# akebono 向けテストゲート既定コマンド。**ci.yml の各ジョブと同等の検証**を逐次実行する
+# （単体=build+typecheck / 結合=OpenAPI 整合 / シナリオ=Docker build）。
+# ⚠️ ci.yml（PR ゲート）と本 env（デプロイゲート）は検証内容を一致させること。片方だけ変更すると
+#    PR ゲートとデプロイゲートが別物を検証する状態に静かに分岐する（原則3/5）。ソリューションパス変更・
+#    テストプロジェクト新設時は両方（または repository variables SETUP_CMD 等）を更新する。
 # repository variables（SETUP_CMD 等）が登録されていればそちらが優先される。
 env:
   DEFAULT_SETUP_CMD: dotnet restore src/Backend/Akebono.sln && (cd src/Frontend && pnpm install --no-frozen-lockfile)
@@ -87,8 +91,13 @@ jobs:
       deploy_backend: ${{ steps.decide.outputs.backend }}
       deploy_frontend: ${{ steps.decide.outputs.frontend }}
     steps:
-      # checkout は置かない。paths-filter は作業コピーが無いとき GitHub の比較 API で
-      # 変更ファイルを取得するため、shallow checkout で push の base コミットを見失う問題を避ける。
+      # paths-filter は push イベントでは**常に git ベース**で変更検出する（比較 API を使うのは
+      # pull_request 系のみ）。checkout が無いと空ワークスペースで git が失敗し preflight ごと
+      # 落ちて自動デプロイが不動作になる。base コミット（github.event.before）を確実に辿れるよう
+      # 全履歴（fetch-depth: 0）を取得する。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # デプロイは実サービス（本番 EC2 / Firebase）へ反映されるため、手動実行は main に限定する
       # （未マージ内容の本番反映経路を塞ぐ。push トリガーは既に main 限定）。
@@ -166,6 +175,10 @@ jobs:
     name: テストゲート（単体・結合・シナリオ）
     needs: preflight
     runs-on: ubuntu-latest
+    # 本ジョブは意図的に secrets を env 注入しない（ビルド/型/OpenAPI/Docker はいずれも機密不要）。
+    # 将来テストコマンドに認証系 secret を渡す場合は、各ステップの env に
+    # SCRUB_SECRET_NAMES（スペース区切りの環境変数名）を設定すること。設定しないと
+    # アーティファクト .deploy-logs/*.log と Step Summary（マスク非対象）に平文で残り得る。
     steps:
       - uses: actions/checkout@v4
 
@@ -273,7 +286,10 @@ jobs:
             echo "| デプロイ backend (EC2) | $(to_mark "$BACKEND_RESULT") |"
             echo "| デプロイ frontend (Firebase) | $(to_mark "$FRONTEND_RESULT") |"
             echo ""
-            if [ "$TEST_RESULT" != "success" ]; then
+            if [ "$PREFLIGHT_RESULT" != "success" ]; then
+              echo "⚠️ 事前検証で停止したため、デプロイは実行されていません"
+              echo "（main 以外からの手動実行、または対象判定の失敗）。Step Summary の事前検証欄を確認してください。"
+            elif [ "$TEST_RESULT" != "success" ]; then
               echo "⚠️ テストゲートを通過していないため、デプロイは実行されていません。"
               echo "失敗したステージの Step Summary とアーティファクト \`deploy-logs\` で"
               echo "「何がどのように失敗したか」を確認し、修正後に再実行してください。"

@@ -8,6 +8,8 @@
 # トリガーは PR のみ（+ 手動）。main への push 時の検証は統合デプロイパイプライン
 # deploy.yml のテストゲート（本 CI と同等の build/typecheck/openapi/docker を実行）が担うため、
 # push:[main] は持たない（二重実行を避ける・原則3）。
+# ⚠️ 本 CI の検証内容と deploy.yml のテストゲート（DEFAULT_UNIT/INTEGRATION/SCENARIO_TEST_CMD）は
+#    一致させること。片方だけ変更すると PR ゲートとデプロイゲートが別物を検証する状態に分岐する。
 # ===========================================================================
 name: CI
 
