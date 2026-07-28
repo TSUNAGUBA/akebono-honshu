@@ -68,6 +68,10 @@ const commTemplateOptions = computed(() =>
 )
 // テンプレを指定スロットに適用する (AutoComplete は index 文字列を value にするため body を引き直す)。
 const applyTemplateToLine = (slot: number, optionValue: string) => {
+  // 「（選択しない）」= 空値は no-op（AutoComplete が '' を emit する）。
+  // Number('') === 0 で commTemplates[0] を引くと、手入力済みの本文を
+  // 「テンプレを適用しないつもり」の操作で無言上書きする（データ消失・OD-2）。
+  if (optionValue === '') return
   const idx = Number(optionValue)
   const tpl = commTemplates.value[idx]
   if (tpl && slot >= 0 && slot < editCommLines.value.length) {

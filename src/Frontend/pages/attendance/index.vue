@@ -2244,7 +2244,11 @@ const currentDefaultRuleName = computed(() =>
           <div>
             <h2 class="text-lg font-semibold">勤怠ルール（勤務体系）</h2>
             <p class="mt-0.5 text-sm text-gray-500">
-              所定労働時間・休憩・法定休日の曜日・締め日を定義します。日次集計はこのルールを基準に計算されます。
+              所定労働時間・休憩・法定休日の曜日を定義します。<strong>日次・月次の集計はこれらを基準に計算されます。</strong>
+            </p>
+            <p class="mt-0.5 text-xs text-amber-700">
+              ※ <strong>締め日・フレックス</strong>（コアタイム・清算期間）は<strong>記録用の設定</strong>で、現時点では集計には反映されません。
+              月次集計・36 協定の期間は暦月（1 日〜月末）固定です。
             </p>
           </div>
           <button type="button" class="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700" @click="openRuleModal()">+ ルールを追加</button>
@@ -2669,11 +2673,13 @@ const currentDefaultRuleName = computed(() =>
                 <span class="text-sm font-medium">締め日 <span class="text-red-500">*</span></span>
                 <input v-model.number="ruleForm.closingDay" type="number" min="1" max="31" class="rounded-md border border-gray-300 px-2.5 text-sm" />
                 <span class="text-xs text-gray-500">31 を指定すると「月末」として扱います。</span>
+                <span class="text-xs text-amber-700">※ 記録用の設定です。現時点では月次集計・36 協定の期間（暦月固定）には反映されません。</span>
               </label>
             </div>
 
             <fieldset class="rounded-md border border-gray-200 p-3">
               <legend class="px-1 text-xs font-semibold text-gray-600">フレックスタイム</legend>
+              <p class="mb-1 text-xs text-amber-700">※ 記録用の設定です。現時点ではコアタイム・清算期間は集計に反映されません。</p>
               <label class="inline-flex items-center gap-2 text-sm">
                 <input v-model="ruleForm.flexEnabled" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
                 フレックスタイム制を有効にする
