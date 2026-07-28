@@ -1,0 +1,301 @@
+# ===========================================================================
+# 統合デプロイパイプライン / Deploy Pipeline
+#
+# 事前検証 → テストゲート（単体・結合・シナリオ）→ デプロイ → 結果レポート の順で実行し、
+# テストゲートのいずれかが失敗した場合はデプロイを中断する
+# （product-plan-agent のデプロイパイプライン構造を akebono の実スタックへ移植・適応）。
+#
+# 「何がどのように失敗したか」は Step Summary とアーティファクト（deploy-logs）に残る。
+# デプロイ段は既存の再利用可能ワークフロー（deploy-backend.yml = EC2 / deploy-frontend.yml =
+# Firebase Hosting）を workflow_call で呼び出す（デプロイ手順自体は変えない・原則3）。
+#
+# 本パイプライン導入前は deploy-backend / deploy-frontend が main への push で
+# ci.yml と**並行**起動し、テスト未通過でもデプロイされ得た。本パイプラインは
+# テストゲートを needs で挟むことでその穴を塞ぐ。
+#
+# トリガー:
+#   - main への push（backend / frontend 関連の変更時）: 変更のあった対象のみ自動デプロイ
+#   - workflow_dispatch: 対象（both / backend / frontend）を選んで手動実行
+#     （デプロイは実サービス = 本番。main からのみ実行可能）
+#
+# 設定値（deploy/README.md §2 が SoT）は各再利用ワークフローが repository secrets から注入する。
+# テストコマンドは repository variables（SETUP_CMD / UNIT_TEST_CMD / INTEGRATION_TEST_CMD /
+# SCENARIO_TEST_CMD）で上書き可能（未設定時は下記 env の akebono 向け既定値を使用）。
+# ===========================================================================
+name: デプロイパイプライン / Deploy Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'デプロイ対象（both / backend / frontend）'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - backend
+          - frontend
+  push:
+    branches: [main]
+    paths:
+      - 'src/Backend/**'
+      - 'src/Frontend/**'
+      - 'db/migration/**'
+      - 'deploy/ec2/**'
+      - 'firebase.json'
+      - '.firebaserc'
+      - '.dockerignore'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy-backend.yml'
+      - '.github/workflows/deploy-frontend.yml'
+      - '.github/actions/ec2-connect/**'
+      - 'scripts/run-test-stage.sh'
+      - 'scripts/generate-openapi.sh'
+
+# 既定は最小 (read)。デプロイ呼び出しジョブが必要な権限のみを追加付与する（最小権限）。
+permissions:
+  contents: read
+
+# 同一パイプラインの多重実行を禁止（実行中のデプロイはキャンセルしない）。
+# backend / frontend 各再利用ワークフローは自身の concurrency も併せて持つ。
+concurrency:
+  group: deploy-pipeline
+  cancel-in-progress: false
+
+# akebono 向けテストゲート既定コマンド。**ci.yml の各ジョブと同等の検証**を逐次実行する
+# （単体=build+typecheck / 結合=OpenAPI 整合 / シナリオ=Docker build）。
+# ⚠️ ci.yml（PR ゲート）と本 env（デプロイゲート）は検証内容を一致させること。片方だけ変更すると
+#    PR ゲートとデプロイゲートが別物を検証する状態に静かに分岐する（原則3/5）。ソリューションパス変更・
+#    テストプロジェクト新設時は両方（または repository variables SETUP_CMD 等）を更新する。
+# repository variables（SETUP_CMD 等）が登録されていればそちらが優先される。
+env:
+  DEFAULT_SETUP_CMD: dotnet restore src/Backend/Akebono.sln && (cd src/Frontend && pnpm install --no-frozen-lockfile)
+  # 単体: バックエンドの Release ビルド（テストプロジェクト未整備のため疎通確認）＋フロントの型チェック
+  DEFAULT_UNIT_TEST_CMD: dotnet build src/Backend/Akebono.sln -c Release && (cd src/Frontend && pnpm run typecheck)
+  # 結合: OpenAPI 仕様と実装の一致検証（実装から再生成してコミット済み spec と差分がないこと）
+  DEFAULT_INTEGRATION_TEST_CMD: cp docs/api/openapi.json /tmp/openapi-committed.json && bash scripts/generate-openapi.sh && diff -u /tmp/openapi-committed.json docs/api/openapi.json
+  # シナリオ: 本番と同じ context=repo root での Docker ビルド（デプロイ成果物が組み上がること）
+  DEFAULT_SCENARIO_TEST_CMD: docker build -f src/Backend/Dockerfile -t akebono-honshu-backend:ci .
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 事前検証: 起点ブランチの確認と、デプロイ対象（backend / frontend）の判定。
+  # push では変更パスから対象を絞り込み（既存の path フィルタ相当の選択性を維持）、
+  # workflow_dispatch では target 入力に従う。
+  # -------------------------------------------------------------------------
+  preflight:
+    name: 事前検証（起点ブランチ・対象判定）
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_backend: ${{ steps.decide.outputs.backend }}
+      deploy_frontend: ${{ steps.decide.outputs.frontend }}
+    steps:
+      # paths-filter は push イベントでは**常に git ベース**で変更検出する（比較 API を使うのは
+      # pull_request 系のみ）。checkout が無いと空ワークスペースで git が失敗し preflight ごと
+      # 落ちて自動デプロイが不動作になる。base コミット（github.event.before）を確実に辿れるよう
+      # 全履歴（fetch-depth: 0）を取得する。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # デプロイは実サービス（本番 EC2 / Firebase）へ反映されるため、手動実行は main に限定する
+      # （未マージ内容の本番反映経路を塞ぐ。push トリガーは既に main 限定）。
+      - name: 起点ブランチ検証（手動実行は main のみ）
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          {
+            echo "## ❌ 事前検証失敗 — デプロイは main ブランチからのみ実行できます"
+            echo ""
+            echo "選択されたブランチ: \`${REF_NAME}\`。Run workflow で main を選択して再実行してください。"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::デプロイは main ブランチからのみ実行できます（現在: ${REF_NAME}）"
+          exit 1
+
+      # push イベントのときだけ変更パスから対象を判定する（対象別デプロイの選択性を維持）。
+      - name: 変更パスの判定（push のみ）
+        id: changes
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'src/Backend/**'
+              - 'db/migration/**'
+              - 'deploy/ec2/**'
+              - '.dockerignore'
+              - '.github/workflows/deploy-backend.yml'
+              - '.github/actions/ec2-connect/**'
+            frontend:
+              - 'src/Frontend/**'
+              - 'firebase.json'
+              - '.firebaserc'
+              - '.github/workflows/deploy-frontend.yml'
+
+      - name: デプロイ対象の決定
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          TARGET: ${{ github.event.inputs.target }}
+          CH_BACKEND: ${{ steps.changes.outputs.backend }}
+          CH_FRONTEND: ${{ steps.changes.outputs.frontend }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            case "$TARGET" in
+              backend)  b=true;  f=false ;;
+              frontend) b=false; f=true  ;;
+              *)        b=true;  f=true  ;;   # both（既定）
+            esac
+          else
+            # paths-filter は該当時 'true' を返す。共通ファイル（deploy.yml / run-test-stage.sh /
+            # generate-openapi.sh）だけの変更では両方 false になり得るが、その場合はゲートのみ実行し
+            # デプロイはスキップする（対象不明のまま本番へ出さない・fail-closed）。
+            b="${CH_BACKEND:-false}"
+            f="${CH_FRONTEND:-false}"
+          fi
+          echo "backend=$b"  >> "$GITHUB_OUTPUT"
+          echo "frontend=$f" >> "$GITHUB_OUTPUT"
+          {
+            echo "## 事前検証 OK"
+            echo ""
+            echo "| 対象 | デプロイ |"
+            echo "|------|---------|"
+            echo "| backend (EC2)        | $b |"
+            echo "| frontend (Firebase)  | $f |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------------
+  # テストゲート: 単体 → 結合 → シナリオ の順に実行。
+  # 前段が失敗した時点で以降は実行されず、デプロイは中断される。
+  # -------------------------------------------------------------------------
+  test:
+    name: テストゲート（単体・結合・シナリオ）
+    needs: preflight
+    runs-on: ubuntu-latest
+    # 本ジョブは意図的に secrets を env 注入しない（ビルド/型/OpenAPI/Docker はいずれも機密不要）。
+    # 将来テストコマンドに認証系 secret を渡す場合は、各ステップの env に
+    # SCRUB_SECRET_NAMES（スペース区切りの環境変数名）を設定すること。設定しないと
+    # アーティファクト .deploy-logs/*.log と Step Summary（マスク非対象）に平文で残り得る。
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 環境セットアップ
+        env:
+          STAGE_CMD: ${{ vars.SETUP_CMD || env.DEFAULT_SETUP_CMD }}
+        run: bash scripts/run-test-stage.sh "環境セットアップ" setup
+
+      - name: 単体（ビルド・型チェック）
+        env:
+          STAGE_CMD: ${{ vars.UNIT_TEST_CMD || env.DEFAULT_UNIT_TEST_CMD }}
+        run: bash scripts/run-test-stage.sh "単体テスト" unit-test
+
+      - name: 結合（OpenAPI 整合）
+        env:
+          STAGE_CMD: ${{ vars.INTEGRATION_TEST_CMD || env.DEFAULT_INTEGRATION_TEST_CMD }}
+        run: bash scripts/run-test-stage.sh "結合テスト" integration-test
+
+      - name: シナリオ（Docker ビルド）
+        env:
+          STAGE_CMD: ${{ vars.SCENARIO_TEST_CMD || env.DEFAULT_SCENARIO_TEST_CMD }}
+        run: bash scripts/run-test-stage.sh "シナリオテスト" scenario-test
+
+      - name: テストログをアーティファクトとして保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-logs
+          path: .deploy-logs/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # デプロイ（backend）: 全テストゲート通過時かつ対象が backend のときのみ実行。
+  # 既存の再利用可能ワークフロー deploy-backend.yml を呼び出す（デプロイ手順は不変）。
+  # -------------------------------------------------------------------------
+  deploy-backend:
+    name: デプロイ（backend / EC2）
+    needs: [preflight, test]
+    if: needs.preflight.outputs.deploy_backend == 'true'
+    permissions:
+      contents: read
+      packages: write      # GHCR push（build-and-push）
+      id-token: write      # AWS OIDC（EC2_HOST 直指定なら実質未使用）
+    uses: ./.github/workflows/deploy-backend.yml
+    secrets: inherit
+
+  # -------------------------------------------------------------------------
+  # デプロイ（frontend）: 全テストゲート通過時かつ対象が frontend のときのみ実行。
+  # -------------------------------------------------------------------------
+  deploy-frontend:
+    name: デプロイ（frontend / Firebase）
+    needs: [preflight, test]
+    if: needs.preflight.outputs.deploy_frontend == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-frontend.yml
+    secrets: inherit
+
+  # -------------------------------------------------------------------------
+  # 最終レポート: 成否にかかわらずパイプライン全体の結果を Step Summary に記録。
+  # -------------------------------------------------------------------------
+  report:
+    name: パイプライン結果レポート
+    needs: [preflight, test, deploy-backend, deploy-frontend]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 結果サマリーを出力
+        env:
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          BACKEND_RESULT: ${{ needs.deploy-backend.result }}
+          FRONTEND_RESULT: ${{ needs.deploy-frontend.result }}
+        run: |
+          to_mark() {
+            case "$1" in
+              success)  echo "✅ 成功" ;;
+              failure)  echo "❌ 失敗" ;;
+              cancelled) echo "⏹️ キャンセル" ;;
+              skipped)  echo "⏭️ スキップ（対象外／前段の失敗により未実行）" ;;
+              *)        echo "$1" ;;
+            esac
+          }
+
+          {
+            echo "# デプロイパイプライン結果"
+            echo ""
+            echo "| ステージ | 結果 |"
+            echo "|---------|------|"
+            echo "| 事前検証 | $(to_mark "$PREFLIGHT_RESULT") |"
+            echo "| テストゲート（単体・結合・シナリオ） | $(to_mark "$TEST_RESULT") |"
+            echo "| デプロイ backend (EC2) | $(to_mark "$BACKEND_RESULT") |"
+            echo "| デプロイ frontend (Firebase) | $(to_mark "$FRONTEND_RESULT") |"
+            echo ""
+            if [ "$PREFLIGHT_RESULT" != "success" ]; then
+              echo "⚠️ 事前検証で停止したため、デプロイは実行されていません"
+              echo "（main 以外からの手動実行、または対象判定の失敗）。Step Summary の事前検証欄を確認してください。"
+            elif [ "$TEST_RESULT" != "success" ]; then
+              echo "⚠️ テストゲートを通過していないため、デプロイは実行されていません。"
+              echo "失敗したステージの Step Summary とアーティファクト \`deploy-logs\` で"
+              echo "「何がどのように失敗したか」を確認し、修正後に再実行してください。"
+            elif [ "$BACKEND_RESULT" = "failure" ] || [ "$FRONTEND_RESULT" = "failure" ]; then
+              echo "⚠️ テストゲートは通過しましたが、デプロイの一部が失敗しました。各ジョブのログを確認してください。"
+            else
+              echo "🎉 パイプラインが完了しました（スキップ = 対象外）。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -287,7 +287,7 @@ Iteration 4 (Hardening) のスコープ (本番認証 / AWS インフラ / CI/CD
 |---|---|
 | **本番認証切替** | ダミー認証 (Iteration 0 で実装) を Firebase Auth + Custom Claims に置換。Iteration 1 の C-01/C-02 設計通り完成 |
 | **AWS インフラ構築** | App Runner / RDS PostgreSQL 16 Multi-AZ / S3 / KMS / IAM をオペレーターと初期化、Terraform でコード化 |
-| **CI/CD パイプライン** | GitHub Actions (lint / test / build / Docker image push / App Runner deploy)、main 自動デプロイ |
+| **CI/CD パイプライン** | GitHub Actions (lint / test / build / Docker image push / App Runner deploy)、main 自動デプロイ（**当初計画。実装は EC2+Firebase／テストゲート付き統合パイプライン `deploy.yml`。現行実体の SoT は `deploy/README.md`**） |
 | **統合テスト** | UC-1〜UC-4 通しシナリオを E2E 自動化 |
 | **性能調整** | Phase 3 NFR §1.1 各画面・処理の応答時間検証と最適化 (発注書 Excel 出力 5 秒以内、1 万件商品一覧 100ms 等) |
 | **セキュリティ最終確認** | audit_logs 改竄防止 (DB ロール権限 + S3 Object Lock)、KMS 暗号化、IAM 最小権限の再確認 |
