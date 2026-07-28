@@ -242,9 +242,18 @@ CREATE DATABASE "akebono_honshu" OWNER pguser;
 #          または直接: psql "<接続先>" -f db/migration/iter30-attendance.sql
 #        既存 users は attendance_permission=1 / punch_required=true 等の DEFAULT で backfill される
 #        (既存利用者はそのまま打刻可能・ログイン可能)。冪等なので二重適用しても安全。
-#    - 起動時ガード: バックエンドは起動時に users の勤怠列を検査し、無ければ
-#        「AKB-SCHEMA-GUARD ... iter30-attendance.sql を適用してください」を出して**起動を中断**する
-#        (SchemaGuardHostedService)。cryptic なログイン失敗ではなく起動失敗として気づける。
+#    - 起動時ガード: バックエンドは起動時に「このコード版が要求する勤怠スキーマ」を検査し、
+#        不足があれば「AKB-SCHEMA-GUARD ... 未適用の db/migration/*.sql を適用してください」を出して
+#        **起動を中断**する (SchemaGuardHostedService)。cryptic なログイン失敗ではなく起動失敗として気づける。
+#        検査対象は users の勤怠 6 列 (iter30) と attendance_fix_requests.target_punch_id (iter31、下記) の両方。
+#
+# ※Iteration 31 (2026-07-28 / C-2) で attendance_fix_requests に target_punch_id UUID NULL を追加。
+#    打刻修正申請で「どの打刻を直すか」を指定できるようにする列 (NULL=同種の先頭 1 件へフォールバック)。
+#    - 新規デプロイ: 10-attendance.sql が本列を含む (末尾に定義) ため追加作業は不要。
+#    - 既存 DB を更新する場合: **コードより先に** db/migration/iter31-fix-target-punch.sql を適用する
+#        (ADD COLUMN IF NOT EXISTS で冪等。ACTION=migrate deploy/db/run-migrations.sh が iter30/iter31 を
+#        まとめて前進適用する)。未適用のまま起動すると打刻修正申請の一覧・作成・承認が column does not exist で
+#        失敗する (ログインは通るが機能単位で沈黙的に壊れる) ため、上記の起動時ガードで起動失敗として検知する。
 psql "host=<rds-endpoint> port=5432 dbname=akebono_honshu user=pguser sslmode=require" \
   -f db/init/01-schema.sql
 
@@ -545,8 +554,9 @@ pnpm dev
 
 ### 3.4 Iteration 30 追加シナリオ (勤怠・タイムカード)
 
-> **前提:** `db/init/10-attendance.sql`（新規初期化）または `db/migration/iter30-attendance.sql`（既存 DB）を投入済みであること。
+> **前提:** `db/init/10-attendance.sql`（新規初期化）または `db/migration/iter30-attendance.sql` ＋ `iter31-fix-target-punch.sql`（既存 DB）を投入済みであること。
 > **投入し忘れると勤怠画面が全滅する**（§2 の警告参照）。利用者の `attendance_permission` は DDL 既定が `1`（更新可能）。
+> iter31（C-2）は打刻修正の対象打刻列 `attendance_fix_requests.target_punch_id` を足す（未適用だと打刻修正申請だけが沈黙的に壊れる。起動時ガードが検知）。
 
 1. **打刻 (T-01):** `http://localhost:3000/attendance/timecard` → 「出勤」→ 状態バッジが「勤務中」へ変わり、出退勤一覧に当日の行が出る
    → 「休憩開始」→「休憩終了」→「退勤」。**同じ打刻を続けて押すと 409 `AKB-SYS-007`**（状態機械が拒否）
@@ -558,6 +568,9 @@ pnpm dev
    → **オーナー**（`process_record_permission >= 1`）で `?tab=requests` →「承認待ち」に出る → 「承認」
    → 日次タブで**修正前打刻に取消線 +「修正前」バッジ**、修正打刻に「修正反映」バッジが付く
    （**承認は取り消せない**。誤承認はあらためて修正申請で直す → §3.14 の注記）
+   → **対象打刻の指定 (C-2):** 休憩を複数回とった日で、日次タイムラインの各打刻の「この打刻を修正」から申請すると
+   モーダルに対象打刻（例「休憩開始 15:00」）が表示され、その打刻だけが置換される（2 回目の休憩開始を直しても 1 回目は残る）。
+   汎用の「打刻修正を申請」ボタンや、モーダルで種別を変えた場合は対象指定が外れ、同種の先頭 1 件が対象になる（下位互換）
 5. **休暇:** `?tab=leave` で有給残数・年 5 日取得義務トラッカー →「休暇を申請」→ オーナーが `?tab=requests` で承認
    → 月次カレンダーに「休暇」バッジが付く
 6. **オーナー専用 3 タブ:** `?tab=timecard`（全員のタイムカード、既定 = 直近 7 日・上限 62 日）/

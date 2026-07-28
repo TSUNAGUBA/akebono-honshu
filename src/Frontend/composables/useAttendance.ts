@@ -158,6 +158,11 @@ export interface FixRequestInput {
    */
   requestedAt: string
   reason: string
+  /**
+   * 修正対象の打刻 id（C-2）。同種の打刻が複数ある日で「どれを直すか」を指定する。
+   * 省略時はサーバが「同種の先頭 1 件」を対象にする（単一打刻の日・旧導線の下位互換）。
+   */
+  targetPunchId?: string
 }
 
 // ---- 勤怠ルール（§5.3）----

@@ -149,7 +149,8 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         var day = ParseDate(date, SystemTime.TodayJst, "date");
         var first = new DateOnly(day.Year, day.Month, 1);
 
-        var rows = await LoadPunchesAsync(targetUserId, first, first.AddMonths(1), ct);
+        // 週 40h (C-4) は月をまたぐ週をシードする必要があるため、当月 1 日を含む週の日曜から読む。
+        var rows = await LoadPunchesAsync(targetUserId, AttendanceCalc.WeekStart(first), first.AddMonths(1), ct);
         var rule = await ResolveRuleForAsync(targetUserId, ct);
         var month = AttendanceCalc.MonthSummary(GroupByDate(rows), rule, day.Year, day.Month);
         // MonthSummary は当月全日を生成するため、当該日は必ず存在する。
@@ -175,7 +176,8 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         var (year, monthNo) = ParseMonth(month, "month");
         var first = new DateOnly(year, monthNo, 1);
 
-        var rows = await LoadPunchesAsync(targetUserId, first, first.AddMonths(1), ct);
+        // 週 40h (C-4) の月またぎ週シードのため、当月 1 日を含む週の日曜から読む。
+        var rows = await LoadPunchesAsync(targetUserId, AttendanceCalc.WeekStart(first), first.AddMonths(1), ct);
         var rule = await ResolveRuleForAsync(targetUserId, ct);
         var summary = AttendanceCalc.MonthSummary(GroupByDate(rows), rule, year, monthNo);
 
@@ -199,7 +201,9 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         var anchor = new DateOnly(year, monthNo, 1);
 
         // 直近 6 ヶ月 (endMonth を最終月) 分の打刻をまとめて読む。
-        var rows = await LoadPunchesAsync(targetUserId, anchor.AddMonths(-5), anchor.AddMonths(1), ct);
+        // 週 40h (C-4) の月またぎ週シードのため、最古月 1 日を含む週の日曜から読む。
+        var rows = await LoadPunchesAsync(
+            targetUserId, AttendanceCalc.WeekStart(anchor.AddMonths(-5)), anchor.AddMonths(1), ct);
         var rule = await ResolveRuleForAsync(targetUserId, ct);
 
         return AttendanceCalc.Article36Alerts(GroupByDate(rows), rule, year, monthNo)
@@ -318,12 +322,33 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             throw DomainException.Validation($"修正理由は {ReasonMaxLength} 文字以内で入力してください",
                 "修正理由を短くして再送信してください");
 
+        // 対象打刻 (C-2)。指定があれば、その日の**同種の有効打刻**であることを検証する
+        // (別日・別種別・他人・無効化済みの打刻を対象に取らせない)。未指定 (単一打刻の日・旧導線) は
+        // 承認時に「同種の先頭 1 件」へフォールバックする (下位互換)。
+        Guid? targetPunchId = null;
+        var rawTarget = (req.TargetPunchId ?? string.Empty).Trim();
+        if (rawTarget.Length > 0)
+        {
+            if (!Guid.TryParse(rawTarget, out var parsedTarget))
+                throw DomainException.Validation("対象打刻の指定が不正です",
+                    "画面を開き直して対象の打刻を選び直してください");
+            var dayRows = await LoadPunchesAsync(actorId, date, date.AddDays(1), ct);
+            var isValidTarget = AttendanceCalc.EffectivePunches(dayRows)
+                .Any(p => p.Id == parsedTarget && p.Kind == kind);
+            if (!isValidTarget)
+                throw DomainException.Validation(
+                    "指定された対象打刻が見つかりません（すでに修正済みか、種別が一致しません）",
+                    "画面を開き直して対象の打刻を選び直してください");
+            targetPunchId = parsedTarget;
+        }
+
         var now = SystemTime.UtcNow;
         var entity = new AttendanceFixRequest
         {
             UserId = actorId,
             Date = date,
             Kind = kind,
+            TargetPunchId = targetPunchId,
             // JST オフセット付きで受け取り、格納は UTC に統一する。
             RequestedAt = requestedAt.UtcDateTime,
             Reason = reason,
@@ -434,9 +459,14 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             if (approved)
             {
                 var rows = await LoadPunchesAsync(fix.UserId, fix.Date, fix.Date.AddDays(1), ct);
-                // 置換対象 = 現在有効な同種打刻 (fix の連鎖でも EffectivePunches が最新のみ返す)。
-                var existing = AttendanceCalc.EffectivePunches(rows)
-                    .FirstOrDefault(p => p.Kind == fix.Kind);
+                var effective = AttendanceCalc.EffectivePunches(rows);
+                // 置換対象 (C-2)。対象打刻が指定されていればそれを、無ければ同種の先頭 1 件を採る。
+                // 指定があっても申請〜承認の間に対象が無効化されていれば先頭 1 件へフォールバックする
+                // (fix の連鎖でも EffectivePunches が最新のみ返すため、id 一致で現在有効な行のみ拾う)。
+                var existing = (fix.TargetPunchId is { } targetId
+                        ? effective.FirstOrDefault(p => p.Id == targetId)
+                        : null)
+                    ?? effective.FirstOrDefault(p => p.Kind == fix.Kind);
                 db.PunchRecords.Add(new PunchRecord
                 {
                     UserId = fix.UserId,

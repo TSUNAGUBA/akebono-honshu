@@ -985,7 +985,18 @@ const runConfirm = async () => {
 // 16. 打刻修正の申請モーダル
 // ------------------------------------------------------------------
 const fixModalOpen = ref(false)
-const fixForm = ref({ date: todayJst(), kind: 'in' as PunchKind, time: '09:00', reason: '' })
+// targetPunchId / targetKind は「どの打刻を直すか」の指定 (C-2)。既存打刻の「修正」導線から開いた
+// ときだけ埋まり、白紙申請 (「打刻修正を申請」ボタン) では null になる。null のときサーバは同種の
+// 先頭 1 件を対象にフォールバックする (単一打刻の日の下位互換)。targetLabel は確認表示用。
+const fixForm = ref({
+  date: todayJst(),
+  kind: 'in' as PunchKind,
+  time: '09:00',
+  reason: '',
+  targetPunchId: null as string | null,
+  targetKind: null as PunchKind | null,
+  targetLabel: '',
+})
 
 const openFixModal = (punch?: PunchDto) => {
   formError.value = ''
@@ -998,6 +1009,11 @@ const openFixModal = (punch?: PunchDto) => {
     // <input type="time"> が値を受け付けず入力欄が空になるため、この保証が要る)。
     time: punch ? fmtJstHm(punch.at) : '09:00',
     reason: '',
+    // 特定の打刻を指定して開いたときだけ対象を固定する。punch.id を持つのは有効打刻列 (p) から
+    // 開いたときのみ。白紙申請は null → サーバが同種先頭にフォールバック。
+    targetPunchId: punch?.id ?? null,
+    targetKind: punch?.kind ?? null,
+    targetLabel: punch ? `${kindLabel(punch.kind)} ${fmtJstHm(punch.at)}` : '',
   }
   fixModalOpen.value = true
 }
@@ -1017,8 +1033,12 @@ const submitFix = async () => {
   // 組み立ては toJstOffsetString に任せる: <input type="time"> は環境により "09:00:00" を返すため、
   // 素朴なテンプレート結合だと "...T09:00:00:00+09:00" になり 422 になる。
   const requestedAt = toJstOffsetString(f.date, f.time)
+  // 対象打刻の指定は、モーダルで種別を変えていない (targetKind と一致する) ときだけ送る。
+  // 種別を変えたら対象打刻は無意味 (サーバは target.Kind != kind を 422 にする) なので落とし、
+  // サーバの「同種先頭フォールバック」に委ねる。
+  const targetPunchId = f.targetPunchId && f.kind === f.targetKind ? f.targetPunchId : undefined
   const ok = await runWrite(async () => {
-    await requestFix({ date: f.date, kind: f.kind, requestedAt, reason: f.reason.trim() })
+    await requestFix({ date: f.date, kind: f.kind, requestedAt, reason: f.reason.trim(), targetPunchId })
     successMessage.value = '打刻修正を申請しました。承認されると打刻に反映されます。'
     invalidate()
     await loadDaily()
@@ -2244,7 +2264,11 @@ const currentDefaultRuleName = computed(() =>
           <div>
             <h2 class="text-lg font-semibold">勤怠ルール（勤務体系）</h2>
             <p class="mt-0.5 text-sm text-gray-500">
-              所定労働時間・休憩・法定休日の曜日・締め日を定義します。日次集計はこのルールを基準に計算されます。
+              所定労働時間・休憩・法定休日の曜日を定義します。<strong>日次・月次の集計はこれらを基準に計算されます。</strong>
+            </p>
+            <p class="mt-0.5 text-xs text-amber-700">
+              ※ <strong>締め日・フレックス</strong>（コアタイム・清算期間）は<strong>記録用の設定</strong>で、現時点では集計には反映されません。
+              月次集計・36 協定の期間は暦月（1 日〜月末）固定です。
             </p>
           </div>
           <button type="button" class="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700" @click="openRuleModal()">+ ルールを追加</button>
@@ -2382,6 +2406,19 @@ const currentDefaultRuleName = computed(() =>
                 @update:model-value="(v) => fixForm.kind = (v as PunchKind)"
               />
             </div>
+            <!-- C-2: 特定の打刻を指定して開いたときは、どの打刻を直すのかを明示する。
+                 種別を変えると対象指定は外れ (サーバの同種先頭フォールバックになる) 旨も添える。 -->
+            <p
+              v-if="fixForm.targetPunchId"
+              class="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700"
+            >
+              <template v-if="fixForm.kind === fixForm.targetKind">
+                修正対象: <span class="font-mono font-semibold">{{ fixForm.targetLabel }}</span> の打刻を直します。
+              </template>
+              <template v-else>
+                種別を変更したため、対象打刻の指定は外れました（同じ種別の最初の打刻が対象になります）。
+              </template>
+            </p>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">修正後の時刻 <span class="text-red-500">*</span></span>
               <input v-model="fixForm.time" type="time" class="rounded-md border border-gray-300 px-2.5 text-sm" />
@@ -2669,11 +2706,13 @@ const currentDefaultRuleName = computed(() =>
                 <span class="text-sm font-medium">締め日 <span class="text-red-500">*</span></span>
                 <input v-model.number="ruleForm.closingDay" type="number" min="1" max="31" class="rounded-md border border-gray-300 px-2.5 text-sm" />
                 <span class="text-xs text-gray-500">31 を指定すると「月末」として扱います。</span>
+                <span class="text-xs text-amber-700">※ 記録用の設定です。現時点では月次集計・36 協定の期間（暦月固定）には反映されません。</span>
               </label>
             </div>
 
             <fieldset class="rounded-md border border-gray-200 p-3">
               <legend class="px-1 text-xs font-semibold text-gray-600">フレックスタイム</legend>
+              <p class="mb-1 text-xs text-amber-700">※ 記録用の設定です。現時点ではコアタイム・清算期間は集計に反映されません。</p>
               <label class="inline-flex items-center gap-2 text-sm">
                 <input v-model="ruleForm.flexEnabled" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
                 フレックスタイム制を有効にする

@@ -400,8 +400,10 @@ public static class AttendanceCalc
     /// <summary>
     /// 日次サマリ (§4.8)。<paramref name="monthOtSoFar"/> は当月の当日より前までの
     /// 法定外残業累計 (60h 超バケットの振り分けに必要)。
-    /// 単日だけを計算すると <c>Over60Ot</c> が常に 0 になるため、
-    /// API は原則 <see cref="MonthSummary"/> から射影すること。
+    /// 単日だけを計算すると <c>Over60Ot</c> が常に 0 になり、<b>週 40h 法定外残業も反映されない</b>ため
+    /// (週コンテキストが無いため)、割増区分 (6 バケット) を扱う API は原則
+    /// <see cref="MonthSummary"/> から射影すること。本メソッドは打刻列・実労働・休憩不足の
+    /// 単日算出 (全員のタイムカード等、6 バケットを使わない用途) に用いる。
     /// </summary>
     public static DaySummaryResult DaySummary(
         IReadOnlyList<PunchRecord> rows, AttendanceRule? rule, DateOnly date, int monthOtSoFar = 0)
@@ -424,9 +426,78 @@ public static class AttendanceCalc
             buckets, breakShortage, effective);
     }
 
+    /// <summary>その日を含む週 (日曜起点) の日曜を返す。週 40h 判定の週境界に使う。</summary>
+    public static DateOnly WeekStart(DateOnly d) => d.AddDays(-(int)d.DayOfWeek);
+
+    /// <summary>
+    /// 実労働を割増区分へ分解する。<see cref="SplitBuckets"/> に<b>週 40 時間 (労基法 32 条) の
+    /// 法定外残業</b>を織り込んだ版 (§4.4、C-4)。日 8h 超 (日次法定外) とは<b>二重計上しない</b>
+    /// (日次法定外は 8h 超、週法定外は 8h 以内で母数が重ならない)。
+    /// <paramref name="weekCumWithin8h"/> は当該週の当日より前までの「日 8h 以内労働 (法定休日を除く)」累計。
+    /// 戻り値の <c>Within8h</c> は当日の日 8h 以内労働 (呼出側が週累計へ加算する)、
+    /// <c>TotalNonStat</c> は当日の法定外残業合計 (呼出側が月 60h 累計へ加算する)。
+    /// </summary>
+    private static (AttendanceBuckets Buckets, int Within8h, int TotalNonStat) SplitBucketsWeekly(
+        int workMinutes, int scheduledMinutes, int nightMinutes, bool isLegalHoliday,
+        int monthNonStatutoryOtSoFar, int weekCumWithin8h)
+    {
+        // 法定休日労働は週 40h の母数に入れない (全量が法定休日労働・時間外の概念なし)。
+        if (isLegalHoliday)
+            return (new AttendanceBuckets(0, 0, 0, 0, nightMinutes, workMinutes), 0, 0);
+
+        var within8h = Math.Min(workMinutes, LegalDailyMinutes);
+        var dailyOver8h = Math.Max(0, workMinutes - LegalDailyMinutes);   // 日次法定外 (常に法定外)
+
+        // 週 40h 超 = この日の 8h 以内労働のうち、週累計が 40h を超える分。
+        var overStart = Math.Max(weekCumWithin8h, LegalWeeklyMinutes);
+        var weekCumAfter = weekCumWithin8h + within8h;
+        var weeklyOt = Math.Max(0, weekCumAfter - overStart);
+
+        var totalNonStat = dailyOver8h + weeklyOt;                        // 二重計上なし
+        var roomTo60 = Math.Max(0, Over60ThresholdMinutes - monthNonStatutoryOtSoFar);
+        var nonStatutoryOt = Math.Min(totalNonStat, roomTo60);
+        var over60Ot = Math.Max(0, totalNonStat - roomTo60);
+
+        // 割増なしで残る分を所定内・所定超へ (週法定外へ振り替えた分だけ所定超→所定内の順に減る)。
+        var premiumFree = within8h - weeklyOt;
+        var scheduled = Math.Min(premiumFree, scheduledMinutes);
+        var statutoryOt = premiumFree - scheduled;
+
+        return (new AttendanceBuckets(scheduled, statutoryOt, nonStatutoryOt, over60Ot, nightMinutes, 0),
+                within8h, totalNonStat);
+    }
+
+    /// <summary>週コンテキスト付きの日次計算 (<see cref="MonthSummary"/> 専用)。</summary>
+    private static (DaySummaryResult Day, int Within8h, int TotalNonStat) DaySummaryWeekly(
+        IReadOnlyList<PunchRecord> rows, AttendanceRule? rule, DateOnly date,
+        int monthOtSoFar, int weekCumWithin8h)
+    {
+        var effective = EffectivePunches(rows);
+        var worked = CalcWorkedMinutes(effective);
+        var scheduled = rule != null
+            ? Math.Max(0, HhmmToMin(rule.WorkEnd) - HhmmToMin(rule.WorkStart) - rule.BreakMinutes)
+            : LegalDailyMinutes;
+        var isLegalHoliday = (int)date.DayOfWeek == (rule != null ? rule.LegalHolidayWeekday : 0);
+
+        var (buckets, within8h, totalNonStat) = SplitBucketsWeekly(
+            worked.WorkMinutes, scheduled, worked.NightMinutes, isLegalHoliday, monthOtSoFar, weekCumWithin8h);
+        var breakShortage = Math.Max(0, RequiredBreakMinutes(worked.WorkMinutes) - worked.BreakMinutes);
+
+        var day = new DaySummaryResult(
+            date, worked.WorkMinutes, worked.BreakMinutes, worked.NightMinutes,
+            buckets, breakShortage, effective);
+        return (day, within8h, totalNonStat);
+    }
+
     /// <summary>
     /// 月次サマリ (§4.8)。月内を日付昇順に走査して法定外残業の累計を繰り越すため、
     /// 月 60h 超バケットが正しく振り分けられる。日次・週次 API もここから射影する。
+    ///
+    /// <para>週 40h (労基法 32 条・C-4): 週 (日曜起点) は月をまたぐため、<b>当月 1 日を含む週の日曜から
+    /// シード</b>して週累計を確立する (前月分の日は週累計にのみ寄与し、当月日だけを出力・60h 累計へ算入)。
+    /// 前月分の打刻が <paramref name="punchesByDate"/> に無い場合は週頭からの累計が欠けるため、
+    /// 呼出側は <see cref="WeekStart"/> (当月 1 日) 以降の打刻を渡すこと (欠けても例外は出さず、
+    /// その週の 40h 判定が当月内だけの近似になる)。</para>
     /// </summary>
     public static MonthSummaryResult MonthSummary(
         IReadOnlyDictionary<DateOnly, IReadOnlyList<PunchRecord>> punchesByDate,
@@ -434,15 +505,24 @@ public static class AttendanceCalc
     {
         var days = new List<DaySummaryResult>();
         var otSoFar = 0;
+        var weekCum = 0;
         var daysInMonth = DateTime.DaysInMonth(year, month);
+        var first = new DateOnly(year, month, 1);
+        var last = new DateOnly(year, month, daysInMonth);
 
-        for (var d = 1; d <= daysInMonth; d++)
+        // 当月 1 日を含む週の日曜からシードする (月またぎ週の週 40h を正しく判定するため)。
+        for (var cursor = WeekStart(first); cursor <= last; cursor = cursor.AddDays(1))
         {
-            var date = new DateOnly(year, month, d);
-            var rows = punchesByDate.TryGetValue(date, out var found) ? found : EmptyPunches;
-            var summary = DaySummary(rows, rule, date, otSoFar);
-            otSoFar += summary.Buckets.NonStatutoryOt + summary.Buckets.Over60Ot;
-            days.Add(summary);
+            if (cursor.DayOfWeek == DayOfWeek.Sunday) weekCum = 0;   // 週の切り替わりでリセット
+            var rows = punchesByDate.TryGetValue(cursor, out var found) ? found : EmptyPunches;
+            var (day, within8h, totalNonStat) = DaySummaryWeekly(rows, rule, cursor, otSoFar, weekCum);
+            weekCum += within8h;
+
+            if (cursor >= first)   // 当月日のみ出力・60h 累計を進める (前月シード日は累計にのみ寄与)
+            {
+                days.Add(day);
+                otSoFar += totalNonStat;
+            }
         }
 
         var total = new AttendanceBuckets(

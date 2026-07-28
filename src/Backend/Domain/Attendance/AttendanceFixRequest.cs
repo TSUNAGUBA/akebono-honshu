@@ -24,6 +24,14 @@ public class AttendanceFixRequest : ITenantScoped
     /// <summary>修正対象の打刻種別。</summary>
     public PunchKind Kind { get; set; }
 
+    /// <summary>
+    /// 修正対象の打刻 (punch_records.id)。同種の打刻が複数ある日 (休憩を複数回とった日など) で
+    /// 「どれを直すか」を指定するために持つ (C-2)。NULL のとき (旧データ・単一打刻の日) は
+    /// 承認時に「同種の先頭 1 件」へフォールバックする (下位互換)。FK は張らず soft reference と
+    /// する (punch_records は追記のみで id は安定。作成時に有効打刻であることを検証する)。
+    /// </summary>
+    public Guid? TargetPunchId { get; set; }
+
     /// <summary>修正後の打刻時刻 (UTC 格納)。</summary>
     public DateTime RequestedAt { get; set; }
 

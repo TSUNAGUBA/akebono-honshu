@@ -795,6 +795,7 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.UserId).HasColumnName("user_id");
             b.Property(x => x.Date).HasColumnName("date");
             b.Property(x => x.Kind).HasColumnName("kind").HasConversion<short>();
+            b.Property(x => x.TargetPunchId).HasColumnName("target_punch_id");
             b.Property(x => x.RequestedAt).HasColumnName("requested_at");
             b.Property(x => x.Reason).HasColumnName("reason").IsRequired().HasMaxLength(512);
             b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();

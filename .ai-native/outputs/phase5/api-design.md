@@ -1145,8 +1145,14 @@ S3 アップロード完了後、メタデータを DB に登録。
 | 6 | `?from&to&q`。既定 `from` = **当月 1 日**、`to` = **今日**（JST）。`q` = 表示名の部分一致 | **200** `TimecardRowDto[]`。**日付降順 → 氏名昇順（`StringComparison.Ordinal` で決定的に）→ `userId` 昇順**（同姓同名のタイブレーカー）| 422「from / to は YYYY-MM-DD 形式で指定してください」/ 422「from / to は 2000-01-01 〜 {実行日の 1 年後} の範囲で指定してください」/ 422「期間の開始日は終了日以前にしてください」/ 422「期間は最大 62 日までです」（**両端を含めて 62 日超**）/ **422 `AKB-SYS-002`「対象の利用者が多すぎます（一度に集計できるのは 200 人までです）」**/ 403（非オーナー）|
 
 **計算上の重要事項:**
-- **`GET /day` も月次経由で算出する。** 月 60 時間超の残業バケット（`over60Ot`）は月内累計に依存するため、
-  単日だけ計算すると常に 0 になる。実装は対象月を丸ごと集計してから該当日を射影する。
+- **`GET /day` も月次経由で算出する。** 月 60 時間超の残業バケット（`over60Ot`）は月内累計に依存し、
+  **週 40 時間超の法定外残業（C-4）は週累計に依存する**ため、単日だけ計算すると常に 0 になる。
+  実装は対象月を丸ごと集計してから該当日を射影する。
+- **週 40 時間の週境界（C-4、労基法 32 条）:** 週は**日曜起点**。週は月をまたぐため、月次集計は
+  **当月 1 日を含む週の日曜からシード**して週累計を確立する（前月分の日は週累計にのみ寄与し、当月日だけを
+  出力・月 60h 累計へ算入。二重計上しない）。そのため `GET /day`・`GET /month`・`GET /alerts` は
+  DB から**当月（最古月）1 日を含む週の日曜以降**の打刻を読む。週 40h 超は日 8h 超と重ならない
+  （週法定外は 8h 以内労働のうち週累計が 40h を超える分）ため二重計上は生じない。
 - `GET /timecard` の期間上限は **バックエンド定数 `AttendanceService.TimecardRangeMaxDays = 62` が SoT**。
   判定式は **`toDate.DayNumber - fromDate.DayNumber + 1 > TimecardRangeMaxDays`**、すなわち
   **両端を含めて 62 日までを受け付け、63 日は 422「期間は最大 62 日までです」で拒否する**。
@@ -1194,7 +1200,7 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 | # | リクエスト | レスポンス | 主なエラー |
 |---|---|---|---|
-| 7 | body `FixRequestCreateRequest { date, kind, requestedAt, reason }`。`date` は必須（既定なし）。`requestedAt` は**タイムゾーン付き**文字列（例 `2026-07-27T09:00:00+09:00`）でフロントが送り、サーバが UTC 化して保存 | **201** `IdResultDto { id }`。`Location: .../fix-requests/{id}` | 422「date を指定してください」/「date は YYYY-MM-DD 形式で指定してください」/「date は 2000-01-01 〜 {実行日の 1 年後} の範囲で指定してください」/「打刻種別は …」/「修正後の時刻は YYYY-MM-DDTHH:mm:ss+09:00 形式（タイムゾーン付き）で指定してください」/ **「修正後の時刻は対象日または翌日（夜勤の日跨ぎ）の範囲で指定してください」**/「修正理由を入力してください（客観的記録の担保）」/「修正理由は 512 文字以内で入力してください」|
+| 7 | body `FixRequestCreateRequest { date, kind, requestedAt, reason, targetPunchId? }`。`date` は必須（既定なし）。`requestedAt` は**タイムゾーン付き**文字列（例 `2026-07-27T09:00:00+09:00`）でフロントが送り、サーバが UTC 化して保存。**`targetPunchId`（任意、C-2）**は「その日の同種の有効打刻」の id。指定時はサーバがそれを検証し（不一致は 422）、承認時の置換対象に採る。**省略時は同種の先頭 1 件へフォールバック**（下位互換）| **201** `IdResultDto { id }`。`Location: .../fix-requests/{id}` | 422「date を指定してください」/「date は YYYY-MM-DD 形式で指定してください」/「date は 2000-01-01 〜 {実行日の 1 年後} の範囲で指定してください」/「打刻種別は …」/「修正後の時刻は YYYY-MM-DDTHH:mm:ss+09:00 形式（タイムゾーン付き）で指定してください」/ **「修正後の時刻は対象日または翌日（夜勤の日跨ぎ）の範囲で指定してください」**/ **「対象打刻の指定が不正です」/「指定された対象打刻が見つかりません（すでに修正済みか、種別が一致しません）」**/「修正理由を入力してください（客観的記録の担保）」/「修正理由は 512 文字以内で入力してください」|
 | 8 | `?status&scope&limit&cursor`。`status` = `pending` / `approved` / `rejected`（省略 = 絞り込みなし）。`scope=all` で全員分。**`limit` = 1〜200（省略時 200 = `PageRequest.MaxLimit`）**、**`cursor`** = 前ページの `meta.page.nextCursor`（不透明トークン）| **200** `FixRequestDto[]`。**`createdAt` 降順 → `id` 降順**。申請者・処理者の氏名は削除済ユーザでも解決して返す（監査表示のため）。**`meta.page = { nextCursor, limit, hasMore }`**（`ApiEnvelope.OkPaged`。`data` は配列のままで非破壊、続きの有無は `hasMore`）| 422「status は pending / approved / rejected のいずれかを指定してください」/ **400 `AKB-SYS-011`「limit は 1〜200 の整数で指定してください」/「cursor が不正です」**/ 403（`scope=all` を非オーナーが指定）|
 | 9 | body `FixDecisionRequest { action: "approved" \| "rejected" }` | **200** `IdResultDto { id }` | 422「action は approved / rejected を指定してください」/ 404 `AKB-TENANT-010` / 409 `AKB-SYS-007`「この申請は処理済みです」|
 
@@ -1203,6 +1209,8 @@ S3 アップロード完了後、メタデータを DB に登録。
 > 申請を再読込して `status != Pending` なら 409 → **`punch_records` に修正打刻を追記**
 > （`source=Fix`, `at=requestedAt`, `fixedFrom=` 置換対象の有効打刻の `at`, `fixReason`, `approvedByUserId`）→
 > 申請の `status` / `decidedByUserId` を更新 → Commit。
+> **置換対象（C-2）は `targetPunchId` があればそれを指す有効打刻、無ければ同種の先頭 1 件**。
+> 指定があっても申請〜承認の間に対象が無効化されていれば先頭 1 件へフォールバックする。
 > **元打刻は削除も更新もしない**（`data-design.md §14.2`）。409 判定を必ずトランザクション内で行うことで二重承認を防ぐ。
 > 却下時は打刻を追記しない。
 
@@ -1455,17 +1463,17 @@ LeaveGrantResultDto { id, skipped }        LeaveGrantBulkResultDto { granted, sk
 - `docs/api/openapi.json` は**未再生成**。CI の `regen-openapi` ワークフロー（main 向け PR で自動再生成し、
   生成物を head ブランチへ自動コミットする）に委ねる。本節と OpenAPI の突合はその再生成後に行うこと。
 
-**移植時から引き継いだ既知の制約（API 挙動に現れるもの、2026-07-27 追記）:**
+**移植時から引き継いだ既知の制約（API 挙動に現れるもの、2026-07-27 追記 / 2026-07-28 に C-2・C-3・C-4 を対応）:**
 
 > **詳細・根拠・判断材料の SoT は `screen-design.md §3.16`。** 本節は API 利用者向けの索引として要点のみ再掲する。
-> いずれも**移植元 akebono-office の挙動をそのまま引き継いだもので、今回の移植で新たに壊したものではない**。
+> いずれも**移植元 akebono-office の挙動をそのまま引き継いだもの**。**C-2・C-3・C-4 は 2026-07-28 にオペレーター判断のうえ対応済み**（C-1 は「日跨ぎ夜勤の運用なし」として制約を受容）。
 
 | # | API 上の現れ方 | 該当エンドポイント |
 |---|---|---|
-| **C-1** | **日跨ぎ夜勤の退勤打刻が 409 `AKB-SYS-007` で弾かれる。** 業務日付が JST の当日固定で、状態判定の打刻列も当日分のみのため、翌朝の「退勤」は状態 `before`（未出勤）と判定される。**打刻修正申請は日跨ぎを許容し（対象日または翌日）、深夜割増も日跨ぎを正しく扱うが、打刻本体だけが暦日で切れている** | `POST /attendance/punches`、`GET /attendance/state` |
-| **C-2** | **修正申請に対象打刻を指定する手段が無い**（body は `{ date, kind, requestedAt, reason }`）。承認時の置換対象は**同種の最初の 1 件**に固定される。休憩は複数サイクルを許容するため、2 回目の休憩開始を直すと 1 回目が無効化される。`punch_records` は UPDATE/DELETE 剥奪済みのため**巻き戻せない** | `POST /attendance/fix-requests`、`POST /attendance/fix-requests/{id}/decision` |
-| **C-3** | 勤怠ルールの **`closingDay` とフレックス 4 項目は保存・返却されるが集計には使われない**（集計側に参照が無い）。月次集計・36 協定判定は**暦月固定**で、`month` パラメータの解釈に締め日は影響しない | `GET /attendance/month`、`GET /attendance/alerts`、`/attendance/rules` 系 |
-| **C-4** | **週 40 時間超が 6 区分の `nonStatutoryOt` に計上されない**（分解は日次 8 時間のみを基準にする）。8 時間 × 週 6 日でも `nonStatutoryOt` は 0 分で、36 協定アラートも発火しない。**週次に相当する API は無く、画面の週次タブは日次・月次の結果から組み立てるため、この欠落は週次タブにもそのまま現れる** | `GET /attendance/day`、`GET /attendance/month`、`GET /attendance/alerts` |
+| **C-1**（受容） | **日跨ぎ夜勤の退勤打刻が 409 `AKB-SYS-007` で弾かれる。** 業務日付が JST の当日固定で、状態判定の打刻列も当日分のみのため、翌朝の「退勤」は状態 `before`（未出勤）と判定される。**打刻修正申請は日跨ぎを許容し（対象日または翌日）、深夜割増も日跨ぎを正しく扱うが、打刻本体だけが暦日で切れている**。→ **オペレーター判断で「日跨ぎ夜勤の運用は無い」ため制約を受容**（2026-07-28） | `POST /attendance/punches`、`GET /attendance/state` |
+| **C-2**（【2026-07-28 解決】） | 修正申請の body に **`targetPunchId`（任意）を追加**し、同種の打刻が複数ある日で「どの打刻を直すか」を指定できるようにした。承認時の置換対象は指定があればそれを、**無ければ従来どおり同種の先頭 1 件**（下位互換）。作成時に「その日の同種の有効打刻」であることを検証（不一致は 422）。→ `attendance_fix_requests.target_punch_id`（Iteration 31） | `POST /attendance/fix-requests`、`POST /attendance/fix-requests/{id}/decision` |
+| **C-3**（【2026-07-28 対応】） | 勤怠ルールの **`closingDay` とフレックス 4 項目は引き続き集計に使わない**（**記録用の設定**。月次集計・36 協定判定は**暦月固定**）。挙動は不変だが、実態と説明の乖離を解消するため**画面の説明文・ルール編集フォームに「集計には用いない記録用の設定」である旨を明示**した | `GET /attendance/month`、`GET /attendance/alerts`、`/attendance/rules` 系 |
+| **C-4**（【2026-07-28 解決】） | **週 40 時間超を法定外残業へ計上するようにした**（労基法 32 条）。日 8h 超（日次法定外）と**二重計上しない**（週法定外は 8h 以内労働のうち週累計が 40h を超える分）。`nonStatutoryOt` / 月 60h 超は `over60Ot` に載り、**36 協定判定にも算入**。日/月/アラート API は**当月 1 日を含む週の日曜からシード**して週累計を確立する（月またぎ週の 40h を正しく判定） | `GET /attendance/day`、`GET /attendance/month`、`GET /attendance/alerts` |
 
 #### 2.7.9 利用者 API への影響（§2.2 の追補 — 勤怠列の追加に伴う変更）
 

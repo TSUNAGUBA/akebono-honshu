@@ -820,6 +820,7 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 | `reason` | `VARCHAR(512) NOT NULL` | 修正理由（必須。空白のみは 422）|
 | `status` | `SMALLINT NOT NULL DEFAULT 0` | 0=Pending, 1=Approved, 2=Rejected。`CHECK (status BETWEEN 0 AND 2)` |
 | `decided_by_user_id` | `UUID NULL REFERENCES users(id)` | 承認/却下したオーナー |
+| `target_punch_id` | `UUID NULL` | **修正対象の打刻**（C-2、Iteration 31）。同種の打刻が複数ある日（休憩を複数回とった等）で「どれを直すか」を指定する。**NULL=同種の先頭 1 件へフォールバック**（旧データ・単一打刻の日の下位互換）。**FK は張らない**（soft reference。`punch_records` は追記のみで id が安定。作成時に「その日の同種の有効打刻」であることを検証する）|
 | 共通基底（§14.0）| | |
 
 **インデックス:** `idx_afr_status (tenant_id, status)`, `idx_afr_user_date (tenant_id, user_id, date)`。
@@ -828,6 +829,14 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 > `status` 再確認 → `punch_records` へ修正打刻を**追記** → 申請の `status` 更新、の順で行う。
 > `status != Pending` の 409 判定を必ずトランザクション内で行うことで二重承認を防ぐ。
 > 監査ログ（`AttendanceFixRequest.Approve` / `.Reject`）は commit 後に記録する。
+
+> **`target_punch_id` の解決（C-2、Iteration 31）:** 承認時の置換対象は
+> `target_punch_id` があればそれを指す有効打刻を、無ければ**同種の先頭 1 件**を採る。
+> 指定があっても申請〜承認の間に対象が無効化（別の修正が先に承認された等）されていれば
+> 先頭 1 件へフォールバックする。置換自体は従来どおり `punch_records.fixed_from`（＝対象打刻の `at`）
+> による**論理置換**で表現するため、本列は「どの打刻の `at` を `fixed_from` に採るか」を選ぶ手段であり、
+> スキーマの置換機構自体は変えない。**列は末尾に追加**（`iter31` の `ADD COLUMN` が末尾へ足すのに合わせ、
+> `db/init/10-attendance.sql` でも末尾に置く）ことで init 経路と migration 経路の `pg_dump` 一致を保つ。
 
 ### 14.4 `leave_types` — 休暇種別マスタ
 
@@ -944,3 +953,4 @@ RLS ポリシーと `updated_at` トリガを自ら配線する。アプリロ�
 | 2026-07-27 | **第 9 イテレーション修正コミット `bd1a96e` を §3.18 へ反映（原則5）:** `users` の勤怠 4 列（`attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）について「入力 UI が無く `PATCH /users/{id}` の全項目上書きで既定値へ巻き戻る」と**解消済みの BLOCKER を未解決として宣言し続けていた**記述を、`4c6981e` で解消済み（利用者フォームへの 4 項目追加 ＋ `UserPatchRequest` による部分更新化）へ訂正。`screen-design.md §3.12` / `api-design.md §2.7.9` と食い違ったまま放置すると、存在しない給与・法定関連の重大欠陥を SoT が宣言し、完了済み改修の再着手を誘導するため |
 | 2026-07-27 | **第 11 イテレーション監査の指摘対応（原則2 / 原則5）:** §14.4 `leave_types` のシードガードを `name` + `deleted_at`（可変）から **`is_statutory`（不変）** 基準へ変更。旧ガードは統制有給を DB 直操作で論理削除・改名した後の再実行で **2 行目を作り**、`leave_grants` が旧 id を指したまま有給残数が分裂し、部分 UNIQUE 索引により復元も 409 で塞がれた（実機で再現確認）。`db/init/10-attendance.sql` / `db/migration/iter30-attendance.sql` を同時修正し、**両経路の `pg_dump -s` 一致（7,026 行）とシード内容一致を再検証済み** |
 | 2026-07-27 | **第 12 イテレーション: 第 11 イテレーションの修正が開けた穴を塞いだ（原則2）。** `leave_types` のシードガードを `is_statutory` 単独 → **`is_statutory OR (name = '有給休暇' AND deleted_at IS NULL)` の 2 条件 OR** へ。単独ガードは「統制行が無く、同名の非統制行が有効で存在する」テナントで**部分 UNIQUE 索引違反によりスクリプトが中断**し、シードより後段の GRANT・RLS 配線・トリガ配線が丸ごと未実行になる（実機で再現）。3 シナリオ（同名非統制行が有効 / 統制行を論理削除 / 改名）すべてで exit 0・1 行維持を確認し、両経路の `pg_dump -s` 一致（7,026 行）も再検証 |
+| 2026-07-28 | **Iteration 31 / C-2: `attendance_fix_requests` に `target_punch_id UUID NULL` を追加（§14.3）。** 同種の打刻が複数ある日で「どの打刻を直すか」を指定可能にする（NULL=同種の先頭 1 件へフォールバック＝下位互換）。soft reference（FK なし）。`db/init/10-attendance.sql`（末尾に追加）と `db/migration/iter31-fix-target-punch.sql`（`ADD COLUMN IF NOT EXISTS`、冪等）を同時整備し、**init 経路（01–10）と migration 経路（main init ＋ iter31）の `pg_dump -s` 完全一致・`target_punch_id` が両経路で 12 番目（末尾）に来ることを実機で再検証済み**。起動時スキーマガード（`SchemaGuardHostedService`）の検査対象にも本列を追加（未適用起動時に打刻修正申請が沈黙的に壊れるのを起動失敗として可視化）|

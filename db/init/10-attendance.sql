@@ -162,6 +162,10 @@ CREATE TABLE IF NOT EXISTS attendance_fix_requests (
     decided_by_user_id  UUID         NULL REFERENCES users(id),
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    -- 修正対象の打刻 (C-2、soft reference。NULL=同種の先頭1件へフォールバック)。
+    -- ※ migration (iter31) は ADD COLUMN で末尾に追加するため、init 経路と列順を揃える目的で
+    --   本列も末尾 (updated_at の後) に置く。init 経路と migration 経路の pg_dump 一致を保つため。
+    target_punch_id     UUID         NULL,
 
     CONSTRAINT chk_afr_kind   CHECK (kind BETWEEN 0 AND 3),
     CONSTRAINT chk_afr_status CHECK (status BETWEEN 0 AND 2)
