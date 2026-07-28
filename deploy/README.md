@@ -26,8 +26,13 @@
 ```mermaid
 flowchart LR
     subgraph GH[GitHub Actions]
-      FE[deploy-frontend.yml]
-      BE[deploy-backend.yml]
+      subgraph PIPE[deploy.yml 統合パイプライン]
+        PF[事前検証<br/>対象判定] --> GATE[テストゲート<br/>単体・結合・シナリオ]
+        GATE -->|通過時のみ| BE[deploy-backend.yml<br/>workflow_call]
+        GATE -->|通過時のみ| FE[deploy-frontend.yml<br/>workflow_call]
+        BE --> RPT[結果レポート]
+        FE --> RPT
+      end
       DB[db-migrate.yml]
       CI[ci.yml]
     end
@@ -40,10 +45,20 @@ flowchart LR
     EC2 -->|HTTPS| FH
 ```
 
-- **Frontend** (`deploy-frontend.yml`): `main` push / 手動 → Nuxt 静的生成 → Firebase Hosting。
-- **Backend** (`deploy-backend.yml`): `main` push / 手動 → Docker build → GHCR push → (OIDC 任意で) EC2 解決 → SSH で `.env` 配置 + `docker compose up -d` (**既存 nginx-proxy に相乗り**) + ヘルスチェック。
+- **統合デプロイパイプライン** (`deploy.yml`): `main` push（変更対象を自動判定）/ 手動（`target` 選択）→
+  **事前検証**（main 限定・対象判定）→ **テストゲート**（単体=Release ビルド＋型チェック / 結合=OpenAPI 整合 /
+  シナリオ=Docker ビルド。`scripts/run-test-stage.sh` が失敗ログを Step Summary とアーティファクト `deploy-logs`
+  に残す）→ **テスト通過時のみ**デプロイ → **結果レポート**。テスト未通過ではデプロイされない。
+  - **Frontend** (`deploy-frontend.yml`): `deploy.yml` から `workflow_call` で呼ばれ、Nuxt 静的生成 → Firebase Hosting。
+    緊急時は `workflow_dispatch` で単体実行も可（ゲートは通らない）。
+  - **Backend** (`deploy-backend.yml`): `deploy.yml` から `workflow_call` で呼ばれ、Docker build → GHCR push →
+    (OIDC 任意で) EC2 解決 → SSH で `.env` 配置 + `docker compose up -d` (**既存 nginx-proxy に相乗り**) + ヘルスチェック。
+  - どちらも**単体では `push` で起動しない**（`push` トリガーは `deploy.yml` が一元管理）。これにより
+    「テスト未通過でも `main` push でデプロイ」の穴を塞ぐ。テストコマンドは repository variables
+    （`SETUP_CMD` / `UNIT_TEST_CMD` / `INTEGRATION_TEST_CMD` / `SCENARIO_TEST_CMD`）で上書き可能。
 - **DB** (`db-migrate.yml`): **手動のみ**。(OIDC 任意で) EC2 を踏み台に、使い捨て psql コンテナで RDS に init / migrate。
-- **CI** (`ci.yml`): PR / push で Backend `dotnet build` + Frontend `pnpm typecheck`。
+- **CI** (`ci.yml`): **PR ゲート専用**（+ 手動）。Backend `dotnet build` + Docker build + Frontend `pnpm typecheck` +
+  OpenAPI 整合を並行実行。`main` push 時の同等検証は `deploy.yml` のテストゲートが担うため二重実行しない。
 
 ---
 
@@ -213,8 +228,15 @@ flowchart LR
 ## 3. 使い方
 
 ### 3.1 通常デプロイ
-- `main` に push すると、変更パスに応じて `deploy-frontend` / `deploy-backend` が自動実行される。
-- 手動実行は Actions タブ → 対象ワークフロー → **Run workflow**。
+- `main` に push すると **統合パイプライン `deploy.yml`** が起動し、事前検証 → テストゲート（単体・結合・
+  シナリオ）→ **通過時のみ**変更対象（backend / frontend を変更パスから自動判定）をデプロイ → 結果レポート、
+  の順に実行する。**テストゲートが失敗するとデプロイされない**（失敗内容は Step Summary とアーティファクト
+  `deploy-logs` に残る）。
+- 手動実行は Actions タブ → **デプロイパイプライン / Deploy Pipeline** → **Run workflow** →
+  `target`（`both` / `backend` / `frontend`）を選ぶ（**main ブランチからのみ**実行可能）。
+- 緊急時に片側だけをテストゲート抜きで再デプロイしたい場合のフォールバックとして、
+  `Deploy Backend (EC2)` / `Deploy Frontend (Firebase Hosting)` を個別に **Run workflow** で実行することも可能
+  （通常は `deploy.yml` から実行する）。
 
 ### 3.2 DB 初期化 / マイグレーション (手動)
 1. **初回のみ:** Actions → *DB Init / Migrate (RDS)* → Run workflow → `action = init`。
@@ -233,8 +255,9 @@ flowchart LR
    (`db/migration/README.md`)。
 
 ### 3.3 デプロイ順序 (初回)
-`db-migrate (init)` → `deploy-backend` → `deploy-frontend`。Backend は RDS スキーマが無いと
-起動後に各 API が失敗するため、DB を先に用意する。
+`db-migrate (init)` → **`deploy.yml`（`target = both`）**。Backend は RDS スキーマが無いと
+起動後に各 API が失敗するため、DB を先に用意する。`deploy.yml` はテストゲート通過後に
+backend → frontend を実行する（backend/frontend の順序が必要なら `target` を分けて 2 回実行してもよい）。
 
 ---
 

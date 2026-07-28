@@ -14,16 +14,14 @@
 # ===========================================================================
 name: Deploy Backend (EC2)
 
+# 呼び出し方 (トリガーの一元管理・原則3):
+#   - 統合デプロイパイプライン .github/workflows/deploy.yml から workflow_call で呼ばれる。
+#     main への push はテストゲート通過を必須にするため、push トリガーは deploy.yml が
+#     一元的に持つ (本ワークフロー単体では push で起動しない = テスト未通過デプロイの穴を塞ぐ)。
+#   - workflow_dispatch: バックエンド単体を手動で再デプロイする際のフォールバック
+#     (緊急時。通常は deploy.yml から実行する)。
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/Backend/**'
-      - 'db/migration/**'      # MIG-3 SQL は backend イメージに埋め込まれる
-      - 'deploy/ec2/**'
-      - '.dockerignore'
-      - '.github/workflows/deploy-backend.yml'
-      - '.github/actions/ec2-connect/**'
+  workflow_call:
   workflow_dispatch:
 
 concurrency:

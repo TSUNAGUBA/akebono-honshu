@@ -770,7 +770,7 @@ docker compose down -v && docker compose up -d postgres  # 完全リセット
 | Firebase 本番認証 | ✅ Iteration 4 段階 B 完了 (2026-05-20) | JwtBearer + JWKS 検証、`POST /auth/sync` で users.firebase_uid 引当 |
 | AWS RDS 接続 | ✅ Iteration 4 段階 A 完了 (2026-05-20) | dotnet user-secrets で接続文字列管理 |
 | EC2(ubuntu) コンテナ + Firebase Hosting | Iteration 4 段階 C/D | 本番デプロイ (Dockerfile / **GHCR** / repository secrets)。当初計画は App Runner/ECR、実装で EC2/GHCR に変更。SoT: `deploy/README.md` |
-| CI/CD (GitHub Actions) | ✅ Iteration 4 段階 D 実装 | main push で自動デプロイ (`deploy-backend`/`deploy-frontend`)、DB は手動 `db-migrate` |
+| CI/CD (GitHub Actions) | ✅ Iteration 4 段階 D 実装 | main push で統合パイプライン `deploy.yml` が起動しテストゲート (単体・結合・シナリオ) 通過後に変更対象を自動デプロイ (`deploy-backend`/`deploy-frontend` を workflow_call)、DB は手動 `db-migrate`。SoT: `deploy/README.md` |
 | EF Core マイグレーション | Iteration 1 | 現在は `db/init/01-schema.sql` + `db/migration/*.sql` を投入 |
 | TLS / セキュリティ強化 | Iteration 4 段階 C | KMS / IAM 最小権限 / audit_logs 改竄防止 |
 | User Secrets / Connection String 整理 | ✅ Iteration 4 段階 A 完了 | `dotnet user-secrets` 運用に移行済 |

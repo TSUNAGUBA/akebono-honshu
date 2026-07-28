@@ -257,6 +257,11 @@ GitHub の **Actions** タブから手動実行します。
 - GHCR へ build/push → EC2 で `docker compose up`（nginx-proxy に相乗り）→ health 確認。
 - 初回は Let's Encrypt 証明書発行に数分かかることがあります。
 
+> **初回セットアップではこの単体ワークフローで backend → frontend を順に確認しながら進めます**
+> （間に 6-3 の owner 紐付けを挟むため）。**運用開始後の通常デプロイは統合パイプライン
+> `デプロイパイプライン / Deploy Pipeline`（`deploy.yml`）** を使ってください
+> （テストゲート通過後に自動デプロイ。手順 7 参照）。
+
 ### 6-3. ログインユーザの紐付け（owner に Firebase UID と権限を付与）
 EC2 に SSH し、手順 4-2 でコピーした **Firebase UID** を使って実行（`<MIGRATOR_PW>` / `<FIREBASE_UID>` を置換）:
 
@@ -306,7 +311,7 @@ curl.exe https://akebono-honshu-api.akebono.work/health
 
 ## 以降の運用
 
-- **コード変更**: `main` に push すると、変更箇所に応じて backend / frontend が自動デプロイされます。手動は Actions タブから。
+- **コード変更**: `main` に push すると、統合パイプライン `デプロイパイプライン / Deploy Pipeline`（`deploy.yml`）が起動し、**テストゲート（単体・結合・シナリオ）を通過した場合のみ**、変更箇所に応じて backend / frontend が自動デプロイされます（テスト失敗時はデプロイされず、失敗内容は Step Summary とアーティファクト `deploy-logs` に残ります）。手動は `Actions → デプロイパイプライン → Run workflow`（`target` を選択、**main のみ**）。
 - **スキーマ変更**: `db/migration/` に `mig-3-*` 以外の `*.sql` を追加 → `DB Init / Migrate` を `action=migrate` で実行（適用済みは自動 skip）。
 - **デモ業務データの反映（既存 DB）**: 稼働中 DB は `init` が中止されるため、リアルなデモデータ（商品・付属情報・発注・生産）は `db/migration/iter6-demo-data.sql`（`db/init/06-demo-data.sql` を取り込む、冪等）が `action=migrate` で適用されます。
 - **MIG-3（既存 CSV 取込）**: 画面 `/admin/legacy-import` から実施（このワークフローの対象外）。

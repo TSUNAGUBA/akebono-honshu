@@ -1,17 +1,19 @@
 # ===========================================================================
-# CI: ビルド / 型チェック (PR + main push)
+# CI: ビルド / 型チェック (PR ゲート)
 #
 # 既存 pr-checks.yml は PR メタデータ (Issue 参照 / セルフチェック) を検証する別役割。
 # 本ワークフローはコンパイル/型の早期検知を担う (migration-plan §5.2 の意図)。
 # テストプロジェクトは未整備のため、Backend は dotnet build で疎通確認する。
+#
+# トリガーは PR のみ（+ 手動）。main への push 時の検証は統合デプロイパイプライン
+# deploy.yml のテストゲート（本 CI と同等の build/typecheck/openapi/docker を実行）が担うため、
+# push:[main] は持たない（二重実行を避ける・原則3）。
 # ===========================================================================
 name: CI
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
