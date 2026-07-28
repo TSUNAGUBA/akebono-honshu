@@ -210,6 +210,13 @@ Backend (`src/Backend/Application/Migration/LegacyImportService.cs`) は
 
 テーブル定義の詳細は `.ai-native/outputs/phase5/data-design.md §14` を参照。
 
+> **後続のスキーマ系マイグレーション `iter31-fix-target-punch.sql`（2026-07-28 / C-2）:**
+> `attendance_fix_requests` に `target_punch_id UUID NULL` を追加します（打刻修正で「どの打刻を直すか」を
+> 指定する列。NULL=同種の先頭 1 件へフォールバック）。`ADD COLUMN IF NOT EXISTS` で冪等、`db/init/10-attendance.sql`
+> にも**末尾列として**反映済み（init 経路と migration 経路の `pg_dump -s` 一致を検証済み）。下記「適用手順（推奨: 自動）」で
+> `iter30` と同様に `run-migrations.sh` が自動適用します（本ファイル固有の追加操作はありません）。未適用のまま
+> コードを起動すると打刻修正申請だけが `column does not exist` で失敗しますが、起動時スキーマガードが検知して起動を中断します。
+
 ### 適用手順（推奨: 自動）
 
 GitHub Actions **「DB Init / Migrate (RDS)」を `action=migrate`** で実行します。

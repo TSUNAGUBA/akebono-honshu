@@ -76,7 +76,8 @@ public record PunchStateDto(PunchState State, IReadOnlyList<PunchDto> Punches);
 /// 打刻修正申請の作成リクエスト。RequestedAt は JST オフセット付き
 /// ("YYYY-MM-DDTHH:mm:00+09:00") で受け取り、サーバで UTC 化して保存する。
 /// </summary>
-public record FixRequestCreateRequest(string Date, string Kind, string RequestedAt, string Reason);
+public record FixRequestCreateRequest(
+    string Date, string Kind, string RequestedAt, string Reason, string? TargetPunchId = null);
 
 /// <summary>打刻修正申請。</summary>
 public record FixRequestDto(
