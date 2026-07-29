@@ -23,6 +23,8 @@ interface Props {
   inputClass?: string
   /** スプレッドシート風のセル入力 (枠なし・セルを埋める・フォーカス時のみ強調)。表内の高密度入力向け。 */
   borderless?: boolean
+  /** バリデーションエラー状態。true で赤枠表示（新規登録フォームの必須未入力表示に使用）。 */
+  error?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -32,15 +34,22 @@ const props = withDefaults(defineProps<Props>(), {
   emptyLabel: '（未選択）',
   inputClass: '',
   borderless: false,
+  error: false,
 })
 
 // 通常は角丸+枠線、borderless は枠なし・角丸なしでセルを埋め、フォーカス時のみ内側リングと淡い背景で示す。
 // 高さは main.css の base で 2rem (h-full 指定時はセルに追従)。表セルではグリッド線を td 側に任せる。
-const inputClasses = computed(() =>
-  props.borderless
-    ? 'w-full border-0 bg-transparent px-2 pr-6 text-sm outline-none focus:bg-blue-50 focus:ring-1 focus:ring-inset focus:ring-blue-400 disabled:bg-gray-50 disabled:text-gray-400'
-    : 'w-full rounded-md border border-gray-300 px-2.5 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400',
-)
+// error=true の場合は枠線・フォーカスリングを赤系にして必須未入力を明示する（要件: 該当 input を赤枠）。
+const inputClasses = computed(() => {
+  if (props.borderless) {
+    return props.error
+      ? 'w-full border-0 bg-red-50 px-2 pr-6 text-sm outline-none ring-1 ring-inset ring-red-400 focus:bg-red-50 focus:ring-1 focus:ring-inset focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400'
+      : 'w-full border-0 bg-transparent px-2 pr-6 text-sm outline-none focus:bg-blue-50 focus:ring-1 focus:ring-inset focus:ring-blue-400 disabled:bg-gray-50 disabled:text-gray-400'
+  }
+  return props.error
+    ? 'w-full rounded-md border border-red-400 px-2.5 pr-8 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400'
+    : 'w-full rounded-md border border-gray-300 px-2.5 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400'
+})
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
 

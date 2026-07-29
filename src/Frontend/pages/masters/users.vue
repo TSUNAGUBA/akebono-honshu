@@ -5,6 +5,8 @@ const { user } = useAuth()
 const { apiData, apiFetch } = useApi()
 // 勤務体系 (勤怠ルール) の選択肢。勤怠 API のラッパを再利用する (原則3)。
 const { attendanceRules } = useAttendance()
+// スナックバー通知（必須未入力の押下時アラート）。共通の通知基盤 (composables/useSnackbar)。
+const { showError } = useSnackbar()
 
 const canManageUsers = computed(() => (user.value?.processRecordPermission ?? 0) >= 1)
 
@@ -54,6 +56,12 @@ const submitting = ref(false)
 const listError = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
+
+// 必須項目バリデーション状態（要件: 登録ボタン押下時に未入力項目を赤枠＋メッセージで明示）。
+// キーはフォーム項目名。true = 未入力エラー。submit の validate() で毎回再構築する。
+const fieldErrors = ref<Record<string, boolean>>({})
+// プレーン input の枠色（未入力なら赤）。
+const errCls = (key: string): string => (fieldErrors.value[key] ? 'border-red-400' : 'border-gray-300')
 
 // 権限選択肢 (Phase 5 §3.18)。
 const PRODUCT_LEDGER_OPTS = [
@@ -136,6 +144,7 @@ onMounted(async () => {
 
 const startCreate = () => {
   form.value = emptyForm()
+  fieldErrors.value = {}
   showForm.value = true
   successMessage.value = ''
 }
@@ -167,6 +176,7 @@ const startEdit = (u: UserItem) => {
     // 連携済 UID は変更させない (空で送れば既存値を保持)。
     firebaseUid: '',
   }
+  fieldErrors.value = {}
   showForm.value = true
   successMessage.value = ''
 }
@@ -180,19 +190,40 @@ const isWeeklyValid = computed(() => {
     && Number.isFinite(hours) && hours >= 0 && hours <= 168
 })
 
-const canSubmit = computed(() =>
-  form.value.employeeNo.trim() !== '' &&
-  form.value.loginId.trim() !== '' &&
-  form.value.displayName.trim() !== '' &&
-  isWeeklyValid.value &&
-  !submitting.value)
+// 必須項目バリデーション。未入力項目に赤枠フラグを立て、未入力ラベルの一覧を返す。
+// 従来 canSubmit にあった 社員番号 / ログインID / 表示名 の必須チェックをここへ集約し、
+// 該当 input を赤枠で明示する（従来はボタン無効化のみで枠色が付かなかった）。
+const validate = (): string[] => {
+  const errs: Record<string, boolean> = {}
+  const missing: string[] = []
+  const req = (empty: boolean, key: string, label: string) => {
+    if (empty) { errs[key] = true; missing.push(label) }
+  }
+  req(form.value.employeeNo.trim() === '', 'employeeNo', '社員番号')
+  req(form.value.loginId.trim() === '', 'loginId', 'ログインID')
+  req(form.value.displayName.trim() === '', 'displayName', '表示名')
+  fieldErrors.value = errs
+  return missing
+}
 
 const submit = async () => {
   errorMessage.value = ''
   successMessage.value = ''
-  // 範囲エラーの方が具体的な案内になるため、必須チェックより先に判定する。
-  if (!isWeeklyValid.value) { errorMessage.value = '週所定日数は 0〜7、週所定時間は 0〜168 で入力してください'; return }
-  if (!canSubmit.value) { errorMessage.value = '社員番号 / ログインID / 表示名は必須です'; return }
+  // 必須未入力の赤枠フラグは常に更新する（週所定の範囲エラーで先に return しても枠色を反映させる）。
+  const missing = validate()
+  // 範囲エラーの方が具体的な案内になるため、必須チェックより先にメッセージ表示する。
+  if (!isWeeklyValid.value) {
+    const msg = '週所定日数は 0〜7、週所定時間は 0〜168 で入力してください'
+    errorMessage.value = msg
+    showError(msg) // スナックバーでも警告（要件: 押下時アラート）
+    return
+  }
+  if (missing.length > 0) {
+    const msg = `必須項目が未入力です（${missing.join(' / ')}）`
+    errorMessage.value = msg
+    showError(msg) // スナックバーでも警告（要件: 押下時アラート）
+    return
+  }
   submitting.value = true
   try {
     const body = {
@@ -304,15 +335,18 @@ const remove = async (u: UserItem) => {
         <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium">社員番号 <span class="text-red-500">*</span></span>
-            <input v-model="form.employeeNo" type="text" maxlength="16" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+            <input v-model="form.employeeNo" type="text" maxlength="16" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('employeeNo')" />
+            <span v-if="fieldErrors.employeeNo" class="text-xs text-red-600">社員番号を入力してください</span>
           </label>
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium">ログイン ID <span class="text-red-500">*</span></span>
-            <input v-model="form.loginId" type="text" maxlength="64" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+            <input v-model="form.loginId" type="text" maxlength="64" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('loginId')" />
+            <span v-if="fieldErrors.loginId" class="text-xs text-red-600">ログインIDを入力してください</span>
           </label>
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium">表示名 <span class="text-red-500">*</span></span>
-            <input v-model="form.displayName" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+            <input v-model="form.displayName" type="text" maxlength="255" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('displayName')" />
+            <span v-if="fieldErrors.displayName" class="text-xs text-red-600">表示名を入力してください</span>
           </label>
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium">メール</span>
@@ -411,7 +445,7 @@ const remove = async (u: UserItem) => {
 
         <div class="flex justify-end gap-2">
           <button type="button" class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm hover:bg-gray-50" @click="cancelForm">キャンセル</button>
-          <button type="submit" :disabled="!canSubmit" class="rounded-md bg-blue-600 px-6 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
+          <button type="submit" :disabled="submitting" class="rounded-md bg-blue-600 px-6 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
             {{ submitting ? '保存中…' : (isEditing ? '更新' : '登録') }}
           </button>
         </div>

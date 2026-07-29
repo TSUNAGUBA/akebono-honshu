@@ -8,6 +8,8 @@ const familyId = computed(() => String(route.query.familyId ?? ''))
 const { getFamily } = useProducts()
 const { list } = useMasters()
 const { piCreate } = useProduction()
+// スナックバー通知（必須未入力の押下時アラート）。共通の通知基盤 (composables/useSnackbar)。
+const { showError } = useSnackbar()
 
 const family = ref<FamilyDetail | null>(null)
 // 加工先 = 工場 (Part2)。工場マスタを参照する (旧: 仕入先兼用)。
@@ -16,8 +18,12 @@ const loading = ref(true)
 const errorMessage = ref('')
 const submitting = ref(false)
 
+// 必須項目バリデーション状態（要件: 登録ボタン押下時に未入力項目を赤枠＋メッセージで明示）。
+// キーはフォーム項目名。true = 未入力エラー。submit の validate() で毎回再構築する。
+const fieldErrors = ref<Record<string, boolean>>({})
+
 const form = ref({
-  factorySupplierId: '',  // uuid 文字列 ('' = 未選択)
+  factorySupplierId: '',  // uuid 文字列 ('' = 未選択、要件: 必須項目はデフォルト未選択)
   dueDate: todayJstPlusDays(30), // 業務日付は JST 基準
   communicationText: '',
 })
@@ -40,13 +46,29 @@ onMounted(reload)
 
 const totalQty = computed(() => Object.values(qty.value).reduce((a, b) => a + (Number(b) || 0), 0))
 
+// 必須項目バリデーション。未入力項目に赤枠フラグを立て、未入力ラベルの一覧を返す。
+// 既存の個別ガード（加工先未選択・生産数量 0）を validate() に集約し、赤枠＋スナックバーの対象にする。
+const validate = (): string[] => {
+  const errs: Record<string, boolean> = {}
+  const missing: string[] = []
+  if (!form.value.factorySupplierId) { errs.factorySupplierId = true; missing.push('加工先') }
+  if (!(totalQty.value > 0)) { errs.quantity = true; missing.push('生産数量') }
+  fieldErrors.value = errs
+  return missing
+}
+
 const submit = async () => {
   errorMessage.value = ''
-  if (!form.value.factorySupplierId) { errorMessage.value = '加工先を選択してください'; return }
+  const missing = validate()
+  if (missing.length > 0) {
+    const msg = `必須項目が未入力です（${missing.join(' / ')}）`
+    errorMessage.value = msg
+    showError(msg) // スナックバーでも警告（要件: 押下時アラート）
+    return
+  }
   const lines = Object.entries(qty.value)
     .map(([pid, q]) => ({ productId: pid, quantity: Number(q) || 0 }))
     .filter(l => l.quantity > 0)
-  if (lines.length === 0) { errorMessage.value = '生産数量を 1 件以上入力してください'; return }
   submitting.value = true
   try {
     const res = await piCreate({
@@ -78,10 +100,11 @@ const submit = async () => {
         <div class="mb-3 text-sm"><span class="text-gray-500">品番:</span> <strong>{{ family.family.productName1 }}</strong></div>
         <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-3">
           <label class="block text-sm">
-            <span class="text-gray-600">加工先 (工場)</span>
+            <span class="text-gray-600">加工先 (工場) <span class="text-red-500">*</span></span>
             <div class="mt-1">
-              <MasterSelect :model-value="form.factorySupplierId" :items="factories" placeholder="加工先を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
+              <MasterSelect :model-value="form.factorySupplierId" :items="factories" :error="fieldErrors.factorySupplierId" placeholder="加工先を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
             </div>
+            <span v-if="fieldErrors.factorySupplierId" class="mt-1 block text-xs text-red-600">加工先を選択してください</span>
           </label>
           <label class="block text-sm">
             <span class="text-gray-600">希望納期</span>
@@ -95,14 +118,15 @@ const submit = async () => {
         </label>
       </section>
 
-      <section class="mb-4 overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+      <section class="mb-4 overflow-x-auto rounded-lg border bg-white shadow-sm" :class="fieldErrors.quantity ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-200'">
+        <p v-if="fieldErrors.quantity" class="px-3 pt-2 text-xs text-red-600">生産数量を 1 件以上入力してください</p>
         <table class="w-full">
           <thead class="border-b border-gray-200 bg-gray-50">
             <tr>
               <th class="px-3 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">品番(SKU)</th>
               <th class="px-3 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">色</th>
               <th class="px-3 py-1.5 text-left text-xs font-semibold uppercase text-gray-600">サイズ</th>
-              <th class="px-3 py-1.5 text-right text-xs font-semibold uppercase text-gray-600">生産数量</th>
+              <th class="px-3 py-1.5 text-right text-xs font-semibold uppercase text-gray-600">生産数量 <span class="text-red-500">*</span></th>
             </tr>
           </thead>
           <tbody>

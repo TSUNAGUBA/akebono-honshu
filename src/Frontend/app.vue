@@ -10,6 +10,8 @@
       <NuxtLayout>
         <NuxtPage />
       </NuxtLayout>
+      <!-- グローバルスナックバー（新規登録フォーム等のバリデーション警告表示）。全ページ共通。 -->
+      <AppSnackbar />
       <template #fallback>
         <div class="flex min-h-screen items-center justify-center">
           <p class="text-gray-500">読み込み中…</p>

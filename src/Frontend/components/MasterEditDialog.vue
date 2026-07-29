@@ -21,6 +21,10 @@ const fields = computed(() => allFields(props.def))
 const form = ref<Record<string, unknown>>({})
 const errorMessage = ref('')
 const submitting = ref(false)
+// スナックバー通知（必須未入力の押下時アラート、共通基盤）。
+const { showError } = useSnackbar()
+// 必須項目バリデーション状態（true=未入力）。該当 input を赤枠にする（要件）。
+const fieldErrors = ref<Record<string, boolean>>({})
 
 watchEffect(() => {
   if (!props.open) return
@@ -32,13 +36,16 @@ watchEffect(() => {
     }
     form.value = init
   } else {
+    // 新規は必須項目もデフォルト未入力・未選択（要件）。number/decimal は 0 ではなく null（空表示）で開始する。
     const init: Record<string, unknown> = {}
-    for (const f of fields.value) init[f.key] = f.nullable ? null : defaultFor(f.type)
+    for (const f of fields.value) init[f.key] = newDefaultFor(f.type)
     form.value = init
   }
   errorMessage.value = ''
+  fieldErrors.value = {}
 })
 
+// 編集モードの初期値フォールバック（初期データ欠落時のみ使用）。
 function defaultFor(type: string): unknown {
   switch (type) {
     case 'number':
@@ -48,16 +55,38 @@ function defaultFor(type: string): unknown {
   }
 }
 
+// 新規モードの初期値。必須も含めデフォルト未入力（number/decimal は null=空、checkbox は false、他は ''）。
+function newDefaultFor(type: string): unknown {
+  switch (type) {
+    case 'number':
+    case 'decimal':
+    case 'select-master': return null
+    case 'checkbox': return false
+    default: return ''
+  }
+}
+
+const errCls = (key: string): string => (fieldErrors.value[key] ? 'border-red-400' : 'border-gray-300')
+
 const onSubmit = async () => {
   errorMessage.value = ''
-  // 簡易バリデーション
+  // 必須バリデーション。未入力項目に赤枠フラグを立て、未入力ラベル一覧をスナックバーで警告する。
+  const errs: Record<string, boolean> = {}
+  const missing: string[] = []
   for (const f of fields.value) {
     if (!f.required) continue
     const v = form.value[f.key]
-    if (v === '' || v === null || v === undefined) {
-      errorMessage.value = `${f.label} は必須です`
-      return
+    if (v === '' || v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v))) {
+      errs[f.key] = true
+      missing.push(f.label)
     }
+  }
+  fieldErrors.value = errs
+  if (missing.length > 0) {
+    const msg = `必須項目が未入力です（${missing.join(' / ')}）`
+    errorMessage.value = msg
+    showError(msg)
+    return
   }
   submitting.value = true
   try {
@@ -114,14 +143,16 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
               type="text"
               :maxlength="f.maxLength"
               :placeholder="f.placeholder"
-              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              class="rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              :class="errCls(f.key)"
             />
 
             <input
               v-else-if="f.type === 'number'"
               v-model.number="form[f.key] as number"
               type="number"
-              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              class="rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              :class="errCls(f.key)"
             />
 
             <input
@@ -129,14 +160,16 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
               v-model.number="form[f.key] as number"
               type="number"
               step="0.01"
-              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              class="rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              :class="errCls(f.key)"
             />
 
             <textarea
               v-else-if="f.type === 'textarea'"
               v-model="form[f.key] as string"
               rows="4"
-              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              class="rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              :class="errCls(f.key)"
             />
 
             <label v-else-if="f.type === 'checkbox'" class="inline-flex items-center gap-2">
@@ -152,6 +185,9 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
               v-else-if="f.type === 'select-master'"
               :model-value="(form[f.key] as string | null)"
               :items="referenceItemsFor(f.master ?? '')"
+              :allow-empty="!f.required"
+              :error="fieldErrors[f.key]"
+              empty-label="（すべて／未指定）"
               @update:model-value="(v) => form[f.key] = v ?? null"
             />
 
@@ -159,7 +195,8 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
             <select
               v-else-if="f.type === 'select-master-code'"
               v-model="form[f.key] as string"
-              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              class="rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              :class="errCls(f.key)"
             >
               <option value="">（選択）</option>
               <option v-for="it in referenceItemsFor(f.master ?? '')" :key="it.id" :value="it.code">
@@ -167,6 +204,7 @@ const referenceItemsFor = (slug: string): MasterItem[] => props.referenceData[sl
               </option>
             </select>
 
+            <p v-if="fieldErrors[f.key]" class="text-xs text-red-600">{{ f.label }} は必須です</p>
             <p v-if="f.help" class="text-xs text-gray-500">{{ f.help }}</p>
           </div>
 

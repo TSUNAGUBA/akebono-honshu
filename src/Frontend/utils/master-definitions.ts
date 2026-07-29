@@ -37,6 +37,8 @@ export interface MasterDef {
   label: string
   /** 補足説明 (画面ヘッダに表示) */
   description?: string
+  /** マスタ一覧メニューから隠す (ルート/データは残すが導線に出さない)。 */
+  hidden?: boolean
   /** 拡張フィールド定義 (id / code / name 以外、code/name は全マスタ共通で先頭に追加) */
   extensionFields: FieldDef[]
   /** 一覧テーブルに表示する追加列 (code/name は固定で表示) */
@@ -156,10 +158,31 @@ export const masterDefinitions: MasterDef[] = [
     slug: 'tax-rates',
     label: '税率',
     description: '税率マスタ (Part5)。税区分ごとの税率(%)。',
+    // 関税率マスタの導入に伴い非表示（要件: 税率マスタも同様に非表示）。ルート/データは下位互換のため残す。
+    hidden: true,
     extensionFields: [
       { key: 'rate', label: '税率 (%)', type: 'decimal', required: true, help: '例: 10.00 = 10%' },
     ],
     extensionColumns: [{ key: 'rate', label: '税率(%)' }],
+  },
+  {
+    slug: 'customs-duty-rates',
+    label: '関税率',
+    description: '関税率マスタ。海外仕入（輸入）時の関税率(%) を、原産国 × 素材分類（甲皮/中底/底）ごとに管理する。'
+      + '商品新規ウィザードの海外仕入で関税を自動算出。素材分類が未指定の列は「すべての素材に適用（ワイルドカード）」。'
+      + '実税率は実行関税率表・EPA/特恵・関税割当で変動するため、運用者が実態に合わせて登録・更新する。',
+    extensionFields: [
+      { key: 'countryId', label: '国', type: 'select-master', required: true, master: 'countries', help: '原産国（仕入先の国）' },
+      { key: 'upperMaterialClassificationId', label: '甲皮素材分類', type: 'select-master', master: 'material-classifications', help: '未指定＝すべての甲皮素材に適用' },
+      { key: 'insoleMaterialClassificationId', label: '中底素材分類', type: 'select-master', master: 'material-classifications', help: '未指定＝すべての中底素材に適用' },
+      { key: 'outsoleMaterialClassificationId', label: '底素材分類', type: 'select-master', master: 'material-classifications', help: '未指定＝すべての底素材に適用' },
+      { key: 'dutyRate', label: '関税率 (%)', type: 'decimal', required: true, help: '従価税率。例: 6.70 = 6.7%' },
+      { key: 'specificDutyPerPair', label: '従量税 (円/足)', type: 'decimal', nullable: true, help: '革製履物等で「従価税額と従量税額の高い方」を採用。未設定＝従価税のみ' },
+    ],
+    extensionColumns: [
+      { key: 'dutyRate', label: '関税率(%)' },
+      { key: 'specificDutyPerPair', label: '従量(円/足)' },
+    ],
   },
   {
     slug: 'colors',

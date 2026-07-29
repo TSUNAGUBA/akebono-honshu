@@ -8,6 +8,8 @@ const { list } = useMasters()
 const { create, communicationSuggestions, priceSuggestion } = useOrders()
 const { listFamiliesAll } = useProducts()
 const { apiData } = useApi()
+// スナックバー通知（必須未入力の押下時アラート）。共通の通知基盤 (composables/useSnackbar)。
+const { showError } = useSnackbar()
 
 // マスタ参照
 const suppliers = ref<MasterItem[]>([])
@@ -35,6 +37,14 @@ const commTemplates = ref<CommunicationSuggestion[]>([])
 const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
+
+// 必須項目バリデーション状態（要件: 登録ボタン押下時に未入力項目を赤枠＋メッセージで明示）。
+// キーはフォーム項目名。true = 未入力エラー。onSubmit の validate() で毎回再構築する。
+const fieldErrors = ref<Record<string, boolean>>({})
+// プレーン input の枠色（未入力なら赤）。MasterSelect / AutoComplete は :error prop で赤枠にする。
+const errCls = (key: string): string => (fieldErrors.value[key] ? 'border-red-400' : 'border-gray-300')
+// 明細行（複数行）の項目別エラー。行 index → { product?, quantity? }。validate() で再構築する。
+const lineErrors = ref<Record<number, { product?: boolean; quantity?: boolean }>>({})
 
 // フォーム
 const today = todayJst() // 業務日付は JST 基準 (UTC 由来だと JST 00:00-08:59 に前日になる)
@@ -233,15 +243,10 @@ onMounted(async () => {
     )
     skus.value = skuLists.flat()
 
-    // 初期値
-    if (sup.length) form.value.supplierId = sup[0].id
-    if (dest.length) form.value.deliveryDestinationId = dest[0].id
-    if (dept.length) form.value.departmentId = dept[0].id
-    if (wh.length) form.value.warehouseId = wh[0].id
-    if (usrRes.length) {
-      form.value.ordererUserId = usrRes[0].id
-      form.value.managerUserId = usrRes[0].id
-    }
+    // 初期値設定: 必須項目（発注先/納品先/発注事業部/納入倉庫1/発注担当者/発注管理者）は
+    // デフォルト未選択とする（要件: 共通の新規登録フォーム方針）。以前は各マスタの先頭を自動選択して
+    // いたが、利用者が意図せず登録する事故を避けるため空のままにし、登録ボタン押下時の validate() で
+    // 未選択を赤枠＋スナックバーで明示する。
     // 明細は空から始める (§改修 2026-07)。SKU の自動選択・分納列の自動作成は行わない。
     // 分納はユーザが「分納設定」モーダルを開いたときに日付列 5 列をデフォルト配置する。
   } catch (e) {
@@ -358,25 +363,45 @@ const applyTemplateToLine = (slot: number, optionValue: string) => {
 // 明細の数量妥当性: 分納なしは単一 quantity > 0、分納あり (納期列) は各明細の合計 > 0。
 const lineQuantityValid = (l: LineRow): boolean => lineQuantity(l) > 0
 
-const canSubmit = computed(() =>
+// 必須項目バリデーション。未入力項目に赤枠フラグを立て、未入力ラベルの一覧を返す。
+// 返り値が空なら送信可能。押下時に呼ぶ（必須未入力でボタンを無効化しない要件のため）。
+const validate = (): string[] => {
+  const errs: Record<string, boolean> = {}
+  const missing: string[] = []
+  const req = (empty: boolean, key: string, label: string) => {
+    if (empty) { errs[key] = true; missing.push(label) }
+  }
   // 発注先は海外のみ必須 (Part6: 国内は非表示・任意)。
-  (!form.value.isOverseas || form.value.supplierId !== '') &&
-  form.value.deliveryDestinationId !== '' &&
-  form.value.departmentId !== '' &&
-  form.value.warehouseId !== '' &&
-  form.value.ordererUserId !== '' &&
-  form.value.managerUserId !== '' &&
-  // 明細は空から始まるため 1 件以上を必須にする (空配列だと every が常に true になるのを防ぐ)。
-  lines.value.length > 0 &&
-  lines.value.every((l) => l.productId !== '' && lineQuantityValid(l) && l.unitPriceSnapshot >= 0) &&
-  !submitting.value)
+  if (form.value.isOverseas) req(form.value.supplierId === '', 'supplierId', '発注先')
+  req(form.value.deliveryDestinationId === '', 'deliveryDestinationId', '納品先')
+  req(form.value.departmentId === '', 'departmentId', '発注事業部')
+  req(form.value.warehouseId === '', 'warehouseId', '納入倉庫1')
+  req(form.value.dueDate === '', 'dueDate', '取引先納入日')
+  req(form.value.ordererUserId === '', 'ordererUserId', '発注担当者')
+  req(form.value.managerUserId === '', 'managerUserId', '発注管理者')
+  // 明細は空から始まるため 1 件以上を必須にする。各行は SKU 選択 + 発注数>0 を検査し、行別に赤枠を立てる。
+  const rowErrs: Record<number, { product?: boolean; quantity?: boolean }> = {}
+  req(lines.value.length === 0, 'lines', '明細')
+  let anyLineMissing = false
+  lines.value.forEach((l, idx) => {
+    const e: { product?: boolean; quantity?: boolean } = {}
+    if (l.productId === '') { e.product = true; anyLineMissing = true }
+    if (!lineQuantityValid(l)) { e.quantity = true; anyLineMissing = true }
+    if (e.product || e.quantity) rowErrs[idx] = e
+  })
+  if (anyLineMissing) missing.push('明細')
+  fieldErrors.value = errs
+  lineErrors.value = rowErrs
+  return missing
+}
 
 const onSubmit = async () => {
   errorMessage.value = ''
-  if (!canSubmit.value) {
-    errorMessage.value = form.value.isOverseas
-      ? '必須項目を入力してください (発注先 / 納品先 / 担当者 / 明細)'
-      : '必須項目を入力してください (納品先 / 担当者 / 明細)'
+  const missing = validate()
+  if (missing.length > 0) {
+    const msg = `必須項目が未入力です（${missing.join(' / ')}）`
+    errorMessage.value = msg
+    showError(msg) // スナックバーでも警告（要件: 押下時アラート）
     return
   }
   submitting.value = true
@@ -527,7 +552,8 @@ const onSubmit = async () => {
             <!-- 発注先 (仕入先マスタ)。Part6: 海外のみ表示・必須。国内は非表示 (supplierId は null 送信)。 -->
             <label v-if="form.isOverseas" class="flex flex-col gap-1">
               <span class="font-medium">発注先 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.supplierId" :items="suppliers" />
+              <MasterSelect v-model="form.supplierId" :items="suppliers" :error="fieldErrors.supplierId" />
+              <span v-if="fieldErrors.supplierId" class="text-xs text-red-600">発注先を選択してください</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">得意先</span>
@@ -535,7 +561,8 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納品先 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.deliveryDestinationId" :items="destinations" />
+              <MasterSelect v-model="form.deliveryDestinationId" :items="destinations" :error="fieldErrors.deliveryDestinationId" />
+              <span v-if="fieldErrors.deliveryDestinationId" class="text-xs text-red-600">納品先を選択してください</span>
             </label>
           </div>
 
@@ -543,7 +570,8 @@ const onSubmit = async () => {
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注事業部 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.departmentId" :items="departments" />
+              <MasterSelect v-model="form.departmentId" :items="departments" :error="fieldErrors.departmentId" />
+              <span v-if="fieldErrors.departmentId" class="text-xs text-red-600">発注事業部を選択してください</span>
             </label>
             <!-- 荷揚地。Part6: 海外のみ表示。 -->
             <label v-if="form.isOverseas" class="flex flex-col gap-1">
@@ -552,7 +580,8 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納入倉庫1 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.warehouseId" :items="warehouses" />
+              <MasterSelect v-model="form.warehouseId" :items="warehouses" :error="fieldErrors.warehouseId" />
+              <span v-if="fieldErrors.warehouseId" class="text-xs text-red-600">納入倉庫1を選択してください</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">納入倉庫2</span>
@@ -568,7 +597,8 @@ const onSubmit = async () => {
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <label class="flex flex-col gap-1">
               <span class="font-medium">取引先納入日 <span class="text-red-500">*</span></span>
-              <input v-model="form.dueDate" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5" />
+              <input v-model="form.dueDate" type="date" class="rounded-md border px-2.5 py-1.5" :class="errCls('dueDate')" />
+              <span v-if="fieldErrors.dueDate" class="text-xs text-red-600">取引先納入日を入力してください</span>
             </label>
             <!-- 工場出荷日 / 納品所出荷日 / 海外出港日。Part6: 海外のみ表示。 -->
             <label v-if="form.isOverseas" class="flex flex-col gap-1">
@@ -589,11 +619,13 @@ const onSubmit = async () => {
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注担当者 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.ordererUserId" :items="userOptions" />
+              <MasterSelect v-model="form.ordererUserId" :items="userOptions" :error="fieldErrors.ordererUserId" />
+              <span v-if="fieldErrors.ordererUserId" class="text-xs text-red-600">発注担当者を選択してください</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="font-medium">発注管理者 <span class="text-red-500">*</span></span>
-              <MasterSelect v-model="form.managerUserId" :items="userOptions" />
+              <MasterSelect v-model="form.managerUserId" :items="userOptions" :error="fieldErrors.managerUserId" />
+              <span v-if="fieldErrors.managerUserId" class="text-xs text-red-600">発注管理者を選択してください</span>
             </label>
           </div>
         </section>
@@ -641,11 +673,11 @@ const onSubmit = async () => {
               <tr v-for="(l, idx) in lines" :key="idx">
                 <td class="border-b border-r border-gray-200 p-0">
                   <!-- サイズ別仕入単価 (PR2): SKU 選択時に単価をサジェスト補完 (onLineProductChange)。 -->
-                  <MasterSelect :model-value="l.productId" :items="skuOptions" borderless placeholder="SKU・品名で検索…" @update:model-value="(v) => onLineProductChange(idx, v)" />
+                  <MasterSelect :model-value="l.productId" :items="skuOptions" borderless :error="lineErrors[idx]?.product" placeholder="SKU・品名で検索…" @update:model-value="(v) => onLineProductChange(idx, v)" />
                 </td>
                 <td class="border-b border-r border-gray-200 p-0 text-right">
                   <!-- 分納設定済み (納期列あり) は発注数 = 各納期列の合計を読取表示。分納なしは単一入力。 -->
-                  <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="sheet-input h-8 text-right" />
+                  <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="sheet-input h-8 text-right" :class="lineErrors[idx]?.quantity ? 'ring-1 ring-inset ring-red-400' : ''" />
                   <span v-else class="block w-full px-2 text-right font-mono leading-8 text-gray-700" title="納期列の合計 (変更は「分納設定」から)">{{ lineQuantity(l).toLocaleString() }}</span>
                 </td>
                 <td class="border-b border-r border-gray-200 p-0 text-right">
@@ -666,15 +698,19 @@ const onSubmit = async () => {
                   <button type="button" class="text-xs text-red-600 hover:underline" @click="removeLine(idx)">削除</button>
                 </td>
               </tr>
-              <!-- 空状態 (初期表示)。明細は空から始まるため、追加導線を明示する。 -->
+              <!-- 空状態 (初期表示)。明細は空から始まるため、追加導線を明示する。
+                   登録押下で未入力 (明細 0 件) が検出された場合は赤字で警告する。 -->
               <tr v-if="lines.length === 0">
-                <td colspan="8" class="px-2 py-6 text-center text-gray-500">
+                <td colspan="8" class="px-2 py-6 text-center" :class="fieldErrors.lines ? 'text-red-600' : 'text-gray-500'">
                   明細がありません。「+ 明細追加」で SKU を追加してください。
                 </td>
               </tr>
             </tbody>
           </table>
           </div>
+          <p v-if="Object.keys(lineErrors).length > 0" class="mt-2 text-xs text-red-600">
+            未入力の明細があります（赤枠の SKU 未選択、または発注数が 0 の行）。SKU を選択し発注数を入力してください。
+          </p>
           <p v-if="deliveryMode" class="mt-2 text-xs text-gray-500">
             分納設定済み: 各 SKU の発注数は納期列の合計です。数量・納期の変更は「分納設定」から行います。「分納を解除」すると単一発注数の入力に戻ります (入力済みの合計は発注数に引き継がれます)。
           </p>
@@ -719,7 +755,7 @@ const onSubmit = async () => {
 
         <div class="flex justify-end gap-2">
           <NuxtLink to="/orders" class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm hover:bg-gray-50">キャンセル</NuxtLink>
-          <button type="submit" :disabled="!canSubmit" class="rounded-md bg-blue-600 px-6 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+          <button type="submit" :disabled="submitting" class="rounded-md bg-blue-600 px-6 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
             {{ submitting ? '保存中…' : `登録 (合計 ${totalSummary})` }}
           </button>
         </div>

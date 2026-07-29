@@ -32,6 +32,7 @@ public static class MasterEndpoints
         MapProductSeasons(app);
         MapProductGroups(app);
         MapTaxRates(app);
+        MapCustomsDutyRates(app);
         MapColors(app);
         MapMaterials(app);
         MapDeliveryDestinations(app);
@@ -48,6 +49,10 @@ public static class MasterEndpoints
     private record ProductSeasonWriteRequest(string Code, string Name, string ItemConversionCode, string? ConversionOrder);
     private record ProductGroupWriteRequest(string Code, string Name, decimal PlanningFee);
     private record TaxRateWriteRequest(string Code, string Name, decimal Rate);
+    private record CustomsDutyRateWriteRequest(
+        string Code, string Name, Guid CountryId,
+        Guid? UpperMaterialClassificationId, Guid? InsoleMaterialClassificationId, Guid? OutsoleMaterialClassificationId,
+        decimal DutyRate, decimal? SpecificDutyPerPair);
     private record ColorWriteRequest(string Code, string Name, string ItemConversionCode);
     private record MaterialWriteRequest(string Code, string Name, Guid MaterialClassificationId);
     private record DeliveryDestinationWriteRequest(
@@ -439,6 +444,43 @@ public static class MasterEndpoints
             var updated = await svc.UpdateAsync(id, e =>
             {
                 e.Code = req.Code; e.Name = req.Name; e.Rate = req.Rate;
+            }, auth.ActorId!.Value, ct);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
+        });
+    }
+
+    // 関税率マスタ。原産国（必須）× 素材分類 3 列（NULL=ワイルドカード）で関税率(%) と従量税(円/足)を保持する。
+    private static void MapCustomsDutyRates(IEndpointRouteBuilder app)
+    {
+        var group = MapBase<CustomsDutyRate>(app, "customs-duty-rates");
+        group.MapPost("/", async (HttpContext http, IAkebonoDbContext db,
+                                    MasterService<CustomsDutyRate> svc, CustomsDutyRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var entity = new CustomsDutyRate
+            {
+                Code = req.Code, Name = req.Name, CountryId = req.CountryId,
+                UpperMaterialClassificationId = req.UpperMaterialClassificationId,
+                InsoleMaterialClassificationId = req.InsoleMaterialClassificationId,
+                OutsoleMaterialClassificationId = req.OutsoleMaterialClassificationId,
+                DutyRate = req.DutyRate, SpecificDutyPerPair = req.SpecificDutyPerPair,
+            };
+            var created = await svc.CreateAsync(entity, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http, $"/api/maker/v1/masters/customs-duty-rates/{created.Id}", created);
+        });
+        group.MapPatch("/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                              MasterService<CustomsDutyRate> svc, Guid id, CustomsDutyRateWriteRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckMasterEditAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var updated = await svc.UpdateAsync(id, e =>
+            {
+                e.Code = req.Code; e.Name = req.Name; e.CountryId = req.CountryId;
+                e.UpperMaterialClassificationId = req.UpperMaterialClassificationId;
+                e.InsoleMaterialClassificationId = req.InsoleMaterialClassificationId;
+                e.OutsoleMaterialClassificationId = req.OutsoleMaterialClassificationId;
+                e.DutyRate = req.DutyRate; e.SpecificDutyPerPair = req.SpecificDutyPerPair;
             }, auth.ActorId!.Value, ct);
             return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
         });

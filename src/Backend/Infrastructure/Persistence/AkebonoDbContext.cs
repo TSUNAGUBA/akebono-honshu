@@ -35,6 +35,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
     public DbSet<Factory> Factories => Set<Factory>();
     // 税率マスタ (Part5)。
     public DbSet<TaxRate> TaxRates => Set<TaxRate>();
+    // 関税率マスタ。海外仕入時の輸入関税率（国×素材分類ごと）。
+    public DbSet<CustomsDutyRate> CustomsDutyRates => Set<CustomsDutyRate>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<ProductType> ProductTypes => Set<ProductType>();
     public DbSet<ProductSeason> ProductSeasons => Set<ProductSeason>();
@@ -206,6 +208,17 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
         ConfigureMaster<TaxRate>(modelBuilder, "tax_rates", b =>
         {
             b.Property(x => x.Rate).HasColumnName("rate").HasColumnType("numeric(5,2)");
+        });
+        // 関税率マスタ。原産国（必須）× 素材分類 3 列（NULL 許容＝ワイルドカード）で関税率(%) と従量税(円/足)を保持。
+        ConfigureMaster<CustomsDutyRate>(modelBuilder, "customs_duty_rates", b =>
+        {
+            b.Property(x => x.CountryId).HasColumnName("country_id");
+            b.Property(x => x.UpperMaterialClassificationId).HasColumnName("upper_material_classification_id");
+            b.Property(x => x.InsoleMaterialClassificationId).HasColumnName("insole_material_classification_id");
+            b.Property(x => x.OutsoleMaterialClassificationId).HasColumnName("outsole_material_classification_id");
+            b.Property(x => x.DutyRate).HasColumnName("duty_rate").HasColumnType("numeric(5,2)");
+            b.Property(x => x.SpecificDutyPerPair).HasColumnName("specific_duty_per_pair").HasColumnType("numeric(12,2)");
+            b.HasOne(x => x.Country).WithMany().HasForeignKey(x => x.CountryId);
         });
         ConfigureMaster<Color>(modelBuilder, "colors", b =>
         {
