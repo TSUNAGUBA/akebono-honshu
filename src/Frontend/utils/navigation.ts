@@ -260,7 +260,9 @@ export const NAV_CATEGORIES: NavCategory[] = [
   },
   {
     id: 'attendance',
-    label: '勤怠',
+    // ダッシュボード（ホーム）のカード名称。ページ遷移後のタブメニュー（タイムカード / 勤怠管理）は
+    // 下の section.links[].label が SoT のため変更しない（要件: タブメニュー名称は変更なし）。
+    label: 'バックオフィス',
     icon: 'clock',
     description: '打刻・勤怠集計・休暇',
     sections: [

@@ -24,12 +24,15 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   /** スプレッドシート風のセル入力 (枠なし)。表内の高密度入力向け。AutoComplete へ委譲。 */
   borderless?: boolean
+  /** バリデーションエラー状態。true で赤枠表示（AutoComplete へ委譲）。 */
+  error?: boolean
 }>(), {
   placeholder: '選択 / 入力して検索…',
   allowEmpty: false,
   emptyLabel: '（なし）',
   disabled: false,
   borderless: false,
+  error: false,
 })
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string | null): void }>()
@@ -63,6 +66,7 @@ const onUpdate = (v: string) => emit('update:modelValue', v === '' ? null : v)
     :empty-label="emptyLabel"
     :disabled="disabled"
     :borderless="borderless"
+    :error="error"
     @update:model-value="onUpdate"
   />
 </template>

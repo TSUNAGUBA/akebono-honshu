@@ -11,6 +11,8 @@ const quantity = computed(() => route.query.quantity ? Number(route.query.quanti
 
 const { prepareMaterialOrder, moCreate } = useProduction()
 const { list } = useMasters()
+// スナックバー通知（必須未入力の押下時アラート）。共通の通知基盤 (composables/useSnackbar)。
+const { showError } = useSnackbar()
 
 interface EditLine { materialId: string; materialName: string; requiredQuantity: number; unit: string; unitPrice: number | null }
 // supplierId は uuid 文字列。未選択 (推奨仕入先なし) は null で表し、!g.supplierId で判定する。
@@ -24,6 +26,10 @@ const errorMessage = ref('')
 const bomMissing = ref(false)
 const submittingIdx = ref<number | null>(null)
 
+// 必須項目バリデーション状態（要件: 作成ボタン押下時に未入力項目を赤枠＋メッセージで明示）。
+// 発注書候補（グループ）ごとに独立した作成ボタンを持つため、グループ index 単位でエラーを保持する。
+const groupErrors = ref<Record<number, { supplier?: boolean }>>({})
+
 const defaultDue = todayJstPlusDays(30) // 業務日付は JST 基準
 
 const reload = async () => {
@@ -36,7 +42,10 @@ const reload = async () => {
       quantity: quantity.value,
     })
     groups.value = req.value.groups.map(g => ({
-      supplierId: g.recommendedSupplierId ?? null,
+      // 必須項目（素材仕入先）はデフォルト未選択とする（要件: 共通の新規登録フォーム方針）。
+      // 推奨仕入先 (recommendedSupplierId) の自動選択は廃止し、推奨名は下のヒントで表示するに留め、
+      // 利用者が意図せず登録する事故を避ける。押下時の validateGroup で未選択を赤枠＋スナックバーで明示する。
+      supplierId: null,
       supplierName: g.recommendedSupplierName,
       dueDate: defaultDue,
       currency: 'JPY',
@@ -51,12 +60,29 @@ const reload = async () => {
 }
 onMounted(reload)
 
+// 必須項目バリデーション（グループ単位）。未入力項目に赤枠フラグを立て、未入力ラベルの一覧を返す。
+// 既存の個別ガード（素材仕入先未選択）を validateGroup に集約し、赤枠＋スナックバーの対象にする。
+const validateGroup = (gi: number): string[] => {
+  const g = groups.value[gi]
+  const e: { supplier?: boolean } = {}
+  const missing: string[] = []
+  if (!g.supplierId) { e.supplier = true; missing.push('素材仕入先') }
+  groupErrors.value = { ...groupErrors.value, [gi]: e }
+  return missing
+}
+
 const createGroup = async (gi: number) => {
   errorMessage.value = ''
+  const missing = validateGroup(gi)
+  if (missing.length > 0) {
+    const msg = `必須項目が未入力です（${missing.join(' / ')}）`
+    errorMessage.value = msg
+    showError(msg) // スナックバーでも警告（要件: 押下時アラート）
+    return
+  }
   const g = groups.value[gi]
-  // 未選択 (null) は弾く。以降は非 null 確定値 (supplierId) を使う。
-  const supplierId = g.supplierId
-  if (!supplierId) { errorMessage.value = '素材仕入先を選択してください'; return }
+  // validateGroup で未選択 (null) を弾いた後なので、以降は非 null 確定値 (supplierId) を使う。
+  const supplierId = g.supplierId as string
   submittingIdx.value = gi
   try {
     const res = await moCreate({
@@ -102,10 +128,12 @@ const createGroup = async (gi: number) => {
       <section v-for="(g, gi) in groups" :key="gi" class="mb-4 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
         <div class="mb-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-3">
           <label class="block text-sm">
-            <span class="text-gray-600">素材仕入先</span>
+            <span class="text-gray-600">素材仕入先 <span class="text-red-500">*</span></span>
             <div class="mt-1">
-              <MasterSelect :model-value="g.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => g.supplierId = v" />
+              <MasterSelect :model-value="g.supplierId" :items="suppliers" :error="groupErrors[gi]?.supplier" placeholder="仕入先を検索…" @update:model-value="(v) => g.supplierId = v" />
             </div>
+            <span v-if="groupErrors[gi]?.supplier" class="mt-1 block text-xs text-red-600">素材仕入先を選択してください</span>
+            <span v-else-if="g.supplierName" class="mt-1 block text-xs text-gray-500">推奨仕入先: {{ g.supplierName }}</span>
           </label>
           <label class="block text-sm"><span class="text-gray-600">納入希望日</span><input v-model="g.dueDate" type="date" class="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" /></label>
           <label class="block text-sm"><span class="text-gray-600">通貨</span>

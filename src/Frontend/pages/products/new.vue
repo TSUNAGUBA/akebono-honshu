@@ -9,6 +9,8 @@ const { list } = useMasters()
 // 部分一致でコピー元を選ぶ。詳細はバルク登録 (createComplete) と同じ既存 endpoint。
 const { createComplete, listFamiliesAll, getFamily, uploadImage } = useProducts()
 const { apiData } = useApi()
+// スナックバー通知（必須未入力の押下時アラート）。共通の通知基盤 (composables/useSnackbar)。
+const { showError } = useSnackbar()
 
 // マスタ参照データ
 const productTypes = ref<MasterItem[]>([])
@@ -34,6 +36,14 @@ const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+
+// 必須項目バリデーション状態（要件: 登録ボタン押下時に未入力項目を赤枠＋メッセージで明示）。
+// キーはフォーム項目名。true = 未入力エラー。onSubmit の validate() で毎回再構築する。
+const fieldErrors = ref<Record<string, boolean>>({})
+// 仕入単価行（複数行）の項目別エラー。行 index → { supplier?, unitPrice?, decidedAt? }。
+const priceRowErrors = ref<Record<number, { supplier?: boolean; unitPrice?: boolean; decidedAt?: boolean }>>({})
+// プレーン input の枠色（未入力なら赤）。MasterSelect は :error prop で赤枠にする。
+const errCls = (key: string): string => (fieldErrors.value[key] ? 'border-red-400' : 'border-gray-300')
 
 // フォーム
 const form = ref({
@@ -150,7 +160,7 @@ const setImageInput = (cat: number, el: HTMLInputElement | null) => { imageInput
 const imageError = ref('')
 const formatBytes = (b: number) => `${(b / 1024).toFixed(1)} KB`
 
-// 登録成功後に採番された family.id を保持する。二重採番防止 (canSubmit=false) と、
+// 登録成功後に採番された family.id を保持する。二重採番防止 (canPressSubmit=false) と、
 // 画像が一部失敗したときの再アップロード/詳細画面導線に使う (原則 2 状態保護)。
 const registeredFamilyId = ref<string | null>(null)
 // アップロード成功済み枚数を区分別に保持 (サーバ保存済み枚数)。合計は imageUploadedCount。
@@ -267,9 +277,8 @@ interface PriceRow {
 const makePriceRow = (): PriceRow => ({ supplierId: '', unitPrice: 0, decidedAt: today0 })
 const supplierPrices = ref<PriceRow[]>([makePriceRow()])
 const addPriceRow = () => {
-  const row = makePriceRow()
-  if (suppliers.value.length) row.supplierId = suppliers.value[0].id
-  supplierPrices.value.push(row)
+  // 仕入先はデフォルト未選択（要件: 必須項目は未選択）。押下時バリデーションで未選択を検出する。
+  supplierPrices.value.push(makePriceRow())
 }
 const removePriceRow = (idx: number) => { if (supplierPrices.value.length > 1) supplierPrices.value.splice(idx, 1) }
 
@@ -281,6 +290,85 @@ const primaryPriceRow = computed<PriceRow | null>(() => supplierPrices.value[0] 
 // 為替マスタ (§2f)。年月×通貨の対円レート + 税率(%)。onMounted で読み込む。
 interface ExchangeRateItem { yearMonth: string; currencyCode: string; rate: number; taxRate: number | null }
 const exchangeRates = ref<ExchangeRateItem[]>([])
+
+// 関税率マスタ。海外仕入時の輸入関税率。原産国（必須）× 素材分類 3 列（null=ワイルドカード）で解決する。
+// onMounted で読み込む。失敗しても本体は使える（関税は「未登録」表示にフォールバック、原則4 非ブロッキング）。
+interface CustomsDutyRateItem {
+  countryId: string
+  upperMaterialClassificationId: string | null
+  insoleMaterialClassificationId: string | null
+  outsoleMaterialClassificationId: string | null
+  dutyRate: number
+  specificDutyPerPair: number | null
+}
+const customsDutyRates = ref<CustomsDutyRateItem[]>([])
+
+// 素材 ID → 素材分類 ID を引く（materials は拡張列 materialClassificationId を動的保持）。未選択/未取得は null。
+const classificationOfMaterial = (materialId: string): string | null => {
+  if (!materialId) return null
+  const c = materials.value.find((m) => m.id === materialId)?.materialClassificationId
+  return typeof c === 'string' ? c : null
+}
+// 選択中の甲皮/中底/底 素材の分類（関税率の解決キー）。
+const selectedUpperCls = computed(() => classificationOfMaterial(form.value.upperMaterialId))
+const selectedInsoleCls = computed(() => classificationOfMaterial(form.value.insoleMaterialId))
+const selectedOutsoleCls = computed(() => classificationOfMaterial(form.value.outsoleMaterialId))
+
+// 仕入先の国 ID / 海外判定（supplier_type: 0=国内, 1=海外）。suppliers は拡張列 countryId/supplierType を保持。
+const countryIdOf = (supplierId: string): string | null => {
+  const c = supplierById(supplierId)?.countryId
+  return typeof c === 'string' ? c : null
+}
+const isOverseasSupplier = (supplierId: string): boolean => Number(supplierById(supplierId)?.supplierType) === 1
+
+// 国 + 選択素材分類から、最も具体的な関税率行を解決する。
+// マッチ条件: 行の国が一致し、非 null の素材分類列が全て選択素材の分類と一致（null 列はワイルドカード）。
+// 採用: 指定（非 null）列数が最多＝最も具体的な行。同点は従価税率が高い方を安全側に採る。
+const resolveCustomsDutyRow = (countryId: string): CustomsDutyRateItem | null => {
+  const upper = selectedUpperCls.value
+  const insole = selectedInsoleCls.value
+  const outsole = selectedOutsoleCls.value
+  const matching = customsDutyRates.value.filter((r) =>
+    r.countryId === countryId
+    && (r.upperMaterialClassificationId == null || r.upperMaterialClassificationId === upper)
+    && (r.insoleMaterialClassificationId == null || r.insoleMaterialClassificationId === insole)
+    && (r.outsoleMaterialClassificationId == null || r.outsoleMaterialClassificationId === outsole))
+  if (matching.length === 0) return null
+  const specificity = (x: CustomsDutyRateItem): number =>
+    (x.upperMaterialClassificationId != null ? 1 : 0)
+    + (x.insoleMaterialClassificationId != null ? 1 : 0)
+    + (x.outsoleMaterialClassificationId != null ? 1 : 0)
+  return matching.reduce((best, r) => {
+    const sr = specificity(r)
+    const sb = specificity(best)
+    if (sr !== sb) return sr > sb ? r : best
+    return Number(r.dutyRate) > Number(best.dutyRate) ? r : best
+  })
+}
+
+// 仕入単価行の適用関税率行（海外仕入のみ。国内 or 未解決は null）。
+const customsDutyRowOf = (row: PriceRow): CustomsDutyRateItem | null => {
+  if (row.supplierId === '' || !isOverseasSupplier(row.supplierId)) return null
+  const countryId = countryIdOf(row.supplierId)
+  if (!countryId) return null
+  return resolveCustomsDutyRow(countryId)
+}
+// 関税率(%)。海外仕入で関税率マスタに該当があれば従価税率、なければ null（未登録）。
+const customsRateOfRow = (row: PriceRow): number | null => {
+  const r = customsDutyRowOf(row)
+  return r ? Number(r.dutyRate) : null
+}
+// 関税額（円）= max(円換算仕入単価 × 従価税率%, 従量税×1足)。円換算不能なら null。
+// 革製履物等は「従価税額と従量税額の高い方」を採用する運用（日本の関税率表 第64類）に倣う。
+const customsDutyAmountOfRow = (row: PriceRow): number | null => {
+  const r = customsDutyRowOf(row)
+  if (r == null) return null
+  const yenP = yenUnitPrice(row.supplierId, row.unitPrice)
+  if (yenP == null) return null
+  const adValorem = yenP * (Number(r.dutyRate) || 0) / 100
+  const specific = r.specificDutyPerPair != null ? Number(r.specificDutyPerPair) : 0
+  return Math.round(Math.max(adValorem, specific) * 100) / 100
+}
 
 // 仕入先の適用通貨/ドレー代を参照するヘルパー (suppliers は MasterItem[]、拡張列を動的保持)。
 // 基本形は (supplierId, unitPrice) を受け取り、サイズ別単価の算出でも再利用する。
@@ -335,7 +423,6 @@ const purchaseMargin = (supplierId: string, unitPrice: number): number | null =>
 const currencyOfRow = (row: PriceRow) => currencyOf(row.supplierId)
 const drayageOfRow = (row: PriceRow) => drayageOf(row.supplierId)
 const rateOfRow = (row: PriceRow) => rateOf(row.supplierId)
-const taxRateOfRow = (row: PriceRow) => taxRateOf(row.supplierId)
 const yenUnitPriceOfRow = (row: PriceRow) => yenUnitPrice(row.supplierId, row.unitPrice)
 const purchaseCostOfRow = (row: PriceRow) => purchaseCost(row.supplierId, row.unitPrice)
 const purchaseMarginOfRow = (row: PriceRow) => purchaseMargin(row.supplierId, row.unitPrice)
@@ -474,7 +561,7 @@ onMounted(async () => {
   // 失敗してもフォームは使えるようにする (原則 4 非ブロッキング、await しない)。
   loadReferenceSources()
   try {
-    const [pt, ps, fac, sup, br, fn, pg, mt, co, sz, usrRes, exrRes] = await Promise.all([
+    const [pt, ps, fac, sup, br, fn, pg, mt, co, sz, usrRes, exrRes, cdrRes] = await Promise.all([
       list('product-types'),
       list('product-seasons'),
       list('factories'),
@@ -488,6 +575,8 @@ onMounted(async () => {
       apiData<UserOption[]>('/users'),
       // 為替マスタ (§2f)。失敗しても本体は使える (円換算は「レート未登録」表示にフォールバック)。
       apiData<ExchangeRateItem[]>('/masters/exchange-rates').catch(() => [] as ExchangeRateItem[]),
+      // 関税率マスタ。失敗しても本体は使える (関税は「未登録」表示にフォールバック、原則4)。
+      apiData<CustomsDutyRateItem[]>('/masters/customs-duty-rates').catch(() => [] as CustomsDutyRateItem[]),
     ])
     productTypes.value = pt
     productSeasons.value = ps
@@ -501,20 +590,11 @@ onMounted(async () => {
     sizes.value = sz
     users.value = usrRes
     exchangeRates.value = exrRes
+    customsDutyRates.value = cdrRes
 
-    // 初期値設定
-    if (pt.length) form.value.productTypeId = pt[0].id
-    if (ps.length) form.value.productSeasonId = ps[0].id
-    // 工場 (Part2) の初期値は工場マスタの先頭。仕入単価の仕入先は仕入先マスタの先頭。
-    if (fac.length) form.value.factorySupplierId = fac[0].id
-    if (sup.length) supplierPrices.value[0].supplierId = sup[0].id
-    if (br.length) form.value.brandId = br[0].id
-    if (pg.length) form.value.productGroupId = pg[0].id
-    if (mt.length) {
-      form.value.upperMaterialId = mt[0].id
-      form.value.insoleMaterialId = mt[0].id
-      form.value.outsoleMaterialId = mt[0].id
-    }
+    // 初期値設定: 必須項目はデフォルト未入力・未選択とする（要件: 共通の新規登録フォーム方針）。
+    // 以前は各マスタの先頭を自動選択していたが、利用者が意図せず登録する事故を避けるため空のままにし、
+    // 登録ボタン押下時のバリデーション（validate）で未入力を赤枠＋スナックバーで明示する。
   } catch (e) {
     errorMessage.value = 'マスタ情報の取得に失敗しました'
   } finally {
@@ -587,32 +667,67 @@ const buildPriceEntry = (supplierId: string, unitPrice: number, decidedAt: strin
   }
 }
 
-const canSubmit = computed(() =>
-  form.value.productName1.trim() !== '' &&
+// 登録ボタンの押下可否。必須未入力では無効化せず（押下でアラートを出すため）、
+// 送信中・登録成功後（二重採番防止、原則2）のみ無効化する。
+const canPressSubmit = computed(() => !submitting.value && registeredFamilyId.value == null)
+
+// 必須項目バリデーション。未入力項目に赤枠フラグを立て、未入力ラベルの一覧を返す。
+// 返り値が空 かつ priceRowIssue が null なら送信可能。
+const validate = (): string[] => {
+  const errs: Record<string, boolean> = {}
+  const missing: string[] = []
+  const req = (empty: boolean, key: string, label: string) => {
+    if (empty) { errs[key] = true; missing.push(label) }
+  }
+  req(form.value.productName1.trim() === '', 'productName1', '商品名')
   // 年式が確定していること (Part1: year モードで商品年度が未入力/不正だと null)。
-  plannedYearCode.value != null &&
-  expansion.value.colorIds.length > 0 &&
-  expansion.value.sizeIds.length > 0 &&
-  // 全ての仕入単価行が 仕入先選択済 かつ 単価 > 0 (§2d 複数行対応)
-  supplierPrices.value.length > 0 &&
-  supplierPrices.value.every((r) => r.supplierId !== '' && Number(r.unitPrice) > 0) &&
-  // 重複行・外貨レート未登録が無いこと (review #2/#4)
-  priceRowIssue.value == null &&
-  // 登録成功後は再送不可 (二重採番防止、原則 2)
-  registeredFamilyId.value == null &&
-  !submitting.value)
+  req(plannedYearCode.value == null, 'productYear', '商品年度')
+  req(form.value.productTypeId === '', 'productTypeId', '商品タイプ')
+  req(form.value.productSeasonId === '', 'productSeasonId', '商品季節')
+  req(form.value.factorySupplierId === '', 'factorySupplierId', '工場')
+  req(form.value.brandId === '', 'brandId', 'ブランド')
+  req(form.value.productGroupId === '', 'productGroupId', '商品群')
+  req(form.value.upperMaterialId === '', 'upperMaterialId', '甲皮素材')
+  req(form.value.insoleMaterialId === '', 'insoleMaterialId', '中底素材')
+  req(form.value.outsoleMaterialId === '', 'outsoleMaterialId', '底素材')
+  req(expansion.value.colorIds.length === 0, 'colors', '色')
+  req(expansion.value.sizeIds.length === 0, 'sizes', 'サイズ')
+  // 仕入単価行（複数）。各行の 仕入先 / 単価>0 / 決定日 を検査し、行別に赤枠フラグを立てる。
+  const rowErrs: Record<number, { supplier?: boolean; unitPrice?: boolean; decidedAt?: boolean }> = {}
+  let anyPriceMissing = false
+  supplierPrices.value.forEach((r, idx) => {
+    const e: { supplier?: boolean; unitPrice?: boolean; decidedAt?: boolean } = {}
+    if (r.supplierId === '') { e.supplier = true; anyPriceMissing = true }
+    if (!(Number(r.unitPrice) > 0)) { e.unitPrice = true; anyPriceMissing = true }
+    if (!r.decidedAt) { e.decidedAt = true; anyPriceMissing = true }
+    if (e.supplier || e.unitPrice || e.decidedAt) rowErrs[idx] = e
+  })
+  if (anyPriceMissing) missing.push('仕入単価')
+  fieldErrors.value = errs
+  priceRowErrors.value = rowErrs
+  return missing
+}
 
 const onSubmit = async () => {
   errorMessage.value = ''
   successMessage.value = ''
-  // createComplete 失敗で再送信する経路に備えた前回値クリア (成功後は canSubmit=false で再入しない)
+  // 送信中・登録成功後（二重採番防止、原則2）は何もしない。
+  if (submitting.value || registeredFamilyId.value != null) return
+  // createComplete 失敗で再送信する経路に備えた前回値クリア。
   imageUploadedByCat.value = { 0: 0, 1: 0 }
-  if (!canSubmit.value) {
-    // 仕入単価行の具体的な問題があればそれを優先表示 (review #2/#4)。年式未確定 (Part1) も個別表示。
-    errorMessage.value = priceRowIssue.value
-      ?? (plannedYearCode.value == null
-        ? '年式が未確定です。年式区分「年度から自動」の場合は商品年度を入力してください。'
-        : '必須項目を入力してください (商品名 / 色 / サイズ / 単価)')
+  const missing = validate()
+  const issue = priceRowIssue.value
+  if (missing.length > 0 || issue != null) {
+    // 仕入単価行の具体的な問題（重複・外貨レート未登録、review #2/#4）があれば優先表示。
+    let msg: string
+    if (issue != null) {
+      msg = issue
+    } else {
+      msg = `必須項目が未入力です（${missing.join(' / ')}）`
+      if (plannedYearCode.value == null) msg += '。年式区分「年度から自動」の場合は商品年度を入力してください。'
+    }
+    errorMessage.value = msg
+    showError(msg) // スナックバーでも警告（要件: 押下時アラート）
     return
   }
   submitting.value = true
@@ -629,7 +744,7 @@ const onSubmit = async () => {
     }
     const payload: CompleteFamilyPayload = {
       family: {
-        // 年式 (Part1) は商品年度 or 区分トグルから自動決定した値を送る。canSubmit で null を弾く。
+        // 年式 (Part1) は商品年度 or 区分トグルから自動決定した値を送る。validate で null を弾く。
         plannedYearCode: plannedYearCode.value ?? 'N',
         productTypeId: form.value.productTypeId,
         productSeasonId: form.value.productSeasonId,
@@ -675,7 +790,7 @@ const onSubmit = async () => {
         .map((c) => ({ childItemNumber: c.childItemNumber.trim(), quantity: Number(c.quantity) || 0 })),
     }
     const res = await createComplete(payload)
-    // 登録本体は成功。以後は二重採番防止のため canSubmit=false にする (原則 2)。
+    // 登録本体は成功。以後は二重採番防止のため canPressSubmit=false にする (原則 2)。
     registeredFamilyId.value = res.family.id
 
     // 画像アップロード (2 段階目): 採番済 familyId へ既存 P-06 endpoint で 1 枚ずつ送る。
@@ -784,8 +899,9 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品年度 <span v-if="yearMode === 'year'" class="text-red-500">*</span></span>
-              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
-              <span class="text-xs text-gray-500">
+              <input v-model.number="form.productYear" type="number" min="0" max="9999" step="1" placeholder="例: 2026" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('productYear')" />
+              <span v-if="fieldErrors.productYear" class="text-xs text-red-600">年式区分「年度から自動」では商品年度が必須です</span>
+              <span v-else class="text-xs text-gray-500">
                 {{ yearMode === 'year' ? '年式(1桁目)の決定に使用 (下1桁)' : '定番・統合でも年度分析用に入力できます (年式には影響しません)' }}
               </span>
             </label>
@@ -802,18 +918,21 @@ const onSubmit = async () => {
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品タイプ <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.productTypeId" :items="productTypes" placeholder="商品タイプを検索…" @update:model-value="(v) => form.productTypeId = v ?? ''" />
-              <span class="text-xs text-gray-500">2 桁目 (型式): <span class="font-mono font-semibold">{{ previewType }}</span></span>
+              <MasterSelect :model-value="form.productTypeId" :items="productTypes" :error="fieldErrors.productTypeId" placeholder="商品タイプを検索…" @update:model-value="(v) => form.productTypeId = v ?? ''" />
+              <span v-if="fieldErrors.productTypeId" class="text-xs text-red-600">商品タイプを選択してください</span>
+              <span v-else class="text-xs text-gray-500">2 桁目 (型式): <span class="font-mono font-semibold">{{ previewType }}</span></span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品季節 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.productSeasonId" :items="productSeasons" placeholder="商品季節を検索…" @update:model-value="(v) => form.productSeasonId = v ?? ''" />
-              <span class="text-xs text-gray-500">3 桁目 (季節): <span class="font-mono font-semibold">{{ previewSeason }}</span></span>
+              <MasterSelect :model-value="form.productSeasonId" :items="productSeasons" :error="fieldErrors.productSeasonId" placeholder="商品季節を検索…" @update:model-value="(v) => form.productSeasonId = v ?? ''" />
+              <span v-if="fieldErrors.productSeasonId" class="text-xs text-red-600">商品季節を選択してください</span>
+              <span v-else class="text-xs text-gray-500">3 桁目 (季節): <span class="font-mono font-semibold">{{ previewSeason }}</span></span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">工場 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.factorySupplierId" :items="factories" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
-              <span class="text-xs text-gray-500">7 桁目 (工場): <span class="font-mono font-semibold">{{ previewFactory }}</span></span>
+              <MasterSelect :model-value="form.factorySupplierId" :items="factories" :error="fieldErrors.factorySupplierId" placeholder="工場を検索…" @update:model-value="(v) => form.factorySupplierId = v ?? ''" />
+              <span v-if="fieldErrors.factorySupplierId" class="text-xs text-red-600">工場を選択してください</span>
+              <span v-else class="text-xs text-gray-500">7 桁目 (工場): <span class="font-mono font-semibold">{{ previewFactory }}</span></span>
             </label>
           </div>
 
@@ -906,13 +1025,15 @@ const onSubmit = async () => {
           <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品名 <span class="text-red-500">*</span></span>
-              <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+              <input v-model="form.productName1" type="text" maxlength="255" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('productName1')" />
+              <span v-if="fieldErrors.productName1" class="text-xs text-red-600">商品名を入力してください</span>
             </label>
           </div>
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">ブランド <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.brandId" :items="brands" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? ''" />
+              <MasterSelect :model-value="form.brandId" :items="brands" :error="fieldErrors.brandId" placeholder="ブランドを検索…" @update:model-value="(v) => form.brandId = v ?? ''" />
+              <span v-if="fieldErrors.brandId" class="text-xs text-red-600">ブランドを選択してください</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">機能</span>
@@ -920,21 +1041,25 @@ const onSubmit = async () => {
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">商品群 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.productGroupId" :items="productGroups" placeholder="商品群を検索…" @update:model-value="(v) => form.productGroupId = v ?? ''" />
+              <MasterSelect :model-value="form.productGroupId" :items="productGroups" :error="fieldErrors.productGroupId" placeholder="商品群を検索…" @update:model-value="(v) => form.productGroupId = v ?? ''" />
+              <span v-if="fieldErrors.productGroupId" class="text-xs text-red-600">商品群を選択してください</span>
             </label>
           </div>
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">甲皮素材 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.upperMaterialId" :items="materials" placeholder="甲皮素材を検索…" @update:model-value="(v) => form.upperMaterialId = v ?? ''" />
+              <MasterSelect :model-value="form.upperMaterialId" :items="materials" :error="fieldErrors.upperMaterialId" placeholder="甲皮素材を検索…" @update:model-value="(v) => form.upperMaterialId = v ?? ''" />
+              <span v-if="fieldErrors.upperMaterialId" class="text-xs text-red-600">甲皮素材を選択してください</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">中底素材 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.insoleMaterialId" :items="materials" placeholder="中底素材を検索…" @update:model-value="(v) => form.insoleMaterialId = v ?? ''" />
+              <MasterSelect :model-value="form.insoleMaterialId" :items="materials" :error="fieldErrors.insoleMaterialId" placeholder="中底素材を検索…" @update:model-value="(v) => form.insoleMaterialId = v ?? ''" />
+              <span v-if="fieldErrors.insoleMaterialId" class="text-xs text-red-600">中底素材を選択してください</span>
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">底素材 <span class="text-red-500">*</span></span>
-              <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? ''" />
+              <MasterSelect :model-value="form.outsoleMaterialId" :items="materials" :error="fieldErrors.outsoleMaterialId" placeholder="底素材を検索…" @update:model-value="(v) => form.outsoleMaterialId = v ?? ''" />
+              <span v-if="fieldErrors.outsoleMaterialId" class="text-xs text-red-600">底素材を選択してください</span>
             </label>
           </div>
 
@@ -1008,8 +1133,9 @@ const onSubmit = async () => {
           </h2>
           <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
             <div>
-              <div class="mb-2 text-sm font-medium">色 (複数選択)</div>
-              <div class="flex flex-wrap gap-2">
+              <div class="mb-2 text-sm font-medium">色 (複数選択) <span class="text-red-500">*</span></div>
+              <p v-if="fieldErrors.colors" class="mb-2 text-xs text-red-600">色を 1 つ以上選択してください</p>
+              <div class="flex flex-wrap gap-2" :class="fieldErrors.colors ? 'rounded-md p-1 ring-1 ring-red-400' : ''">
                 <button
                   v-for="c in colors"
                   :key="c.id"
@@ -1025,8 +1151,9 @@ const onSubmit = async () => {
               </div>
             </div>
             <div>
-              <div class="mb-2 text-sm font-medium">サイズ (複数選択)</div>
-              <div class="flex flex-wrap gap-2">
+              <div class="mb-2 text-sm font-medium">サイズ (複数選択) <span class="text-red-500">*</span></div>
+              <p v-if="fieldErrors.sizes" class="mb-2 text-xs text-red-600">サイズを 1 つ以上選択してください</p>
+              <div class="flex flex-wrap gap-2" :class="fieldErrors.sizes ? 'rounded-md p-1 ring-1 ring-red-400' : ''">
                 <button
                   v-for="s in sizes"
                   :key="s.id"
@@ -1050,12 +1177,12 @@ const onSubmit = async () => {
         <section class="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div class="mb-3 flex flex-col gap-2 border-b border-gray-100 pb-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="font-semibold">
-              ⑤ 仕入単価 <span class="ml-2 text-xs font-normal text-gray-500">(仕入先ごとの基準単価とサイズ別仕入単価。通貨・為替・税率・仕入原価・仕入利益率・ドレー代は自動計算)</span>
+              ⑤ 仕入単価 <span class="ml-2 text-xs font-normal text-gray-500">(仕入先ごとの基準単価とサイズ別仕入単価。通貨・為替・関税・仕入原価・仕入利益率・ドレー代は自動計算)</span>
             </h2>
             <button type="button" class="self-start rounded-md border border-gray-300 bg-white px-3 py-1 text-sm hover:bg-gray-50" @click="addPriceRow">+ 仕入先を追加</button>
           </div>
 
-          <!-- 各行: 入力 (仕入先/仕入単価/税率/仕入単価決定日) + 自動計算サマリ。モバイルは縦積み (原則8)。 -->
+          <!-- 各行: 入力 (仕入先/仕入単価/関税率(自動)/仕入単価決定日) + 自動計算サマリ。モバイルは縦積み (原則8)。 -->
           <div class="space-y-3">
             <div
               v-for="(row, idx) in supplierPrices"
@@ -1065,24 +1192,32 @@ const onSubmit = async () => {
               <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
                 <label class="flex flex-col gap-1">
                   <span class="text-sm font-medium">仕入先 <span class="text-red-500">*</span></span>
-                  <MasterSelect :model-value="row.supplierId" :items="suppliers" placeholder="仕入先を検索…" @update:model-value="(v) => row.supplierId = v ?? ''" />
+                  <MasterSelect :model-value="row.supplierId" :items="suppliers" :error="priceRowErrors[idx]?.supplier" placeholder="仕入先を検索…" @update:model-value="(v) => row.supplierId = v ?? ''" />
+                  <span v-if="priceRowErrors[idx]?.supplier" class="text-xs text-red-600">仕入先を選択してください</span>
                 </label>
                 <label class="flex flex-col gap-1">
                   <span class="text-sm font-medium">仕入単価 <span class="text-red-500">*</span> <span class="text-xs font-normal text-gray-400">({{ currencyOfRow(row) }})</span></span>
-                  <input v-model.number="row.unitPrice" type="number" min="0" step="0.01" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+                  <input v-model.number="row.unitPrice" type="number" min="0" step="0.01" class="rounded-md border px-2.5 py-1.5 text-sm" :class="priceRowErrors[idx]?.unitPrice ? 'border-red-400' : 'border-gray-300'" />
+                  <span v-if="priceRowErrors[idx]?.unitPrice" class="text-xs text-red-600">仕入単価（0 より大きい値）を入力してください</span>
                 </label>
-                <!-- 税率 (Part5)。手入力せず、仕入先の適用通貨 → 為替マスタ から自動反映 (読取専用)。
-                     JPY (国内) は為替マスタに行が無いため「対象外」(—) 表示。外貨で税率未登録なら「未登録」。 -->
+                <!-- 関税率。海外仕入（仕入先が海外）のとき、原産国 × 選択素材分類から関税率マスタで自動解決する。
+                     国内仕入は「対象外」(—)、海外だが関税率マスタ未登録なら「未登録」を表示する（読取専用）。
+                     ※ 以前の「税率」(為替マスタ由来) は関税率マスタ導入により非表示にした（payload には従来通りスナップショット保存）。 -->
                 <div class="flex flex-col gap-1">
-                  <span class="text-sm font-medium">税率 (%) <span class="text-xs font-normal text-gray-400">(自動)</span></span>
-                  <div class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-mono" :class="taxRateOfRow(row) == null ? 'text-gray-400' : 'text-gray-800'">
-                    {{ taxRateOfRow(row) != null ? `${taxRateOfRow(row)}%` : (currencyOfRow(row) === 'JPY' ? '—' : '未登録') }}
+                  <span class="text-sm font-medium">関税率 (%) <span class="text-xs font-normal text-gray-400">(自動)</span></span>
+                  <div
+                    class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-mono"
+                    :class="!isOverseasSupplier(row.supplierId) ? 'text-gray-400' : (customsRateOfRow(row) == null ? 'text-red-600' : 'text-gray-800')"
+                  >
+                    {{ row.supplierId === '' ? '—'
+                      : (!isOverseasSupplier(row.supplierId) ? '国内(対象外)'
+                        : (customsRateOfRow(row) != null ? `${customsRateOfRow(row)}%` : '未登録')) }}
                   </div>
                 </div>
                 <div class="flex items-end gap-2">
                   <label class="flex flex-1 flex-col gap-1">
                     <span class="text-sm font-medium">仕入単価決定日 <span class="text-red-500">*</span></span>
-                    <input v-model="row.decidedAt" type="date" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+                    <input v-model="row.decidedAt" type="date" class="rounded-md border px-2.5 py-1.5 text-sm" :class="priceRowErrors[idx]?.decidedAt ? 'border-red-400' : 'border-gray-300'" />
                   </label>
                   <button
                     type="button"
@@ -1093,14 +1228,20 @@ const onSubmit = async () => {
                 </div>
               </div>
 
-              <!-- 自動計算 (§2f/g/h/i/Part5): 適用通貨 / 適用レート / 税率 / 円換算 / 仕入原価 / 仕入利益率 / ドレー代 -->
+              <!-- 自動計算: 適用通貨 / 適用レート / 関税率 / 関税額 / 円換算 / 仕入原価 / 仕入利益率 / ドレー代
+                   関税額 = max(円換算仕入単価 × 従価税率%, 従量税×1足)。海外仕入のみ表示（国内は「—」）。 -->
               <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-gray-100 bg-white px-3 py-2 text-xs text-gray-600">
                 <span>適用通貨: <span class="font-mono font-semibold text-gray-800">{{ currencyOfRow(row) }}</span></span>
                 <span v-if="currencyOfRow(row) !== 'JPY'">
                   適用レート:
                   <span class="font-mono font-semibold" :class="rateOfRow(row) == null ? 'text-red-600' : 'text-gray-800'">{{ rateOfRow(row) != null ? rateOfRow(row) : '未登録' }}</span>
                 </span>
-                <span>税率: <span class="font-mono font-semibold text-gray-800">{{ taxRateOfRow(row) != null ? `${taxRateOfRow(row)}%` : '—' }}</span></span>
+                <span>関税率:
+                  <span class="font-mono font-semibold" :class="isOverseasSupplier(row.supplierId) && customsRateOfRow(row) == null ? 'text-red-600' : 'text-gray-800'">
+                    {{ !isOverseasSupplier(row.supplierId) ? '—' : (customsRateOfRow(row) != null ? `${customsRateOfRow(row)}%` : '未登録') }}
+                  </span>
+                </span>
+                <span>関税額: <span class="font-mono font-semibold text-gray-800">{{ yen(customsDutyAmountOfRow(row)) }}</span></span>
                 <span>円換算: <span class="font-mono font-semibold text-gray-800">{{ yen(yenUnitPriceOfRow(row)) }}</span></span>
                 <span>仕入原価: <span class="font-mono font-semibold text-gray-800">{{ yen(purchaseCostOfRow(row)) }}</span></span>
                 <span>仕入利益率: <span class="font-mono font-semibold text-gray-800">{{ purchaseMarginOfRow(row) != null ? `${purchaseMarginOfRow(row)}%` : '—' }}</span></span>
@@ -1132,10 +1273,12 @@ const onSubmit = async () => {
           </p>
 
           <p class="mt-2 text-xs text-gray-500">
-            通貨は仕入先マスタの「適用通貨」、ドレー代は仕入先マスタの「ドレー代」から自動反映します。為替レートと税率は
+            通貨は仕入先マスタの「適用通貨」、ドレー代は仕入先マスタの「ドレー代」から自動反映します。為替レートは
             <NuxtLink to="/masters/exchange-rates" class="text-blue-600 hover:underline">為替マスタ</NuxtLink>
-            で登録し、選択した仕入先の適用通貨 × 登録時点の年月で自動解決します。仕入原価 = 円換算仕入単価 + ブランド費 + ドレー代、仕入利益率 = 仕入原価 ÷ 納品価格。
-            見積単価・ロス費など原価明細は登録後の詳細画面で追加できます。
+            で登録し、選択した仕入先の適用通貨 × 登録時点の年月で自動解決します。関税率は
+            <NuxtLink to="/masters/customs-duty-rates" class="text-blue-600 hover:underline">関税率マスタ</NuxtLink>
+            で登録し、海外仕入（仕入先が海外）のとき原産国 × 選択素材分類（甲皮/中底/底）から自動解決します（関税額 = 円換算仕入単価 × 従価税率、従量税がある場合は高い方）。
+            仕入原価 = 円換算仕入単価 + ブランド費 + ドレー代、仕入利益率 = 仕入原価 ÷ 納品価格。見積単価・ロス費など原価明細は登録後の詳細画面で追加できます。
           </p>
         </section>
 
@@ -1245,7 +1388,7 @@ const onSubmit = async () => {
           </NuxtLink>
           <button
             type="submit"
-            :disabled="!canSubmit"
+            :disabled="!canPressSubmit"
             class="rounded-md bg-blue-600 px-6 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
           >
             {{ submitting ? '登録中…' : `登録 (SKU ${skuCount} 件 + 仕入単価 ${supplierPrices.length} 件${pendingImages.length ? ` + 画像 ${pendingImages.length} 枚` : ''})` }}

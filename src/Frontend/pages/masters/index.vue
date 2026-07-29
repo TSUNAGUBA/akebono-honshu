@@ -5,10 +5,11 @@ import { findMasterBySlug } from '~/utils/master-definitions'
 interface MasterCard { key: string; label: string; description?: string; to: string }
 interface Category { key: string; label: string; cards: MasterCard[] }
 
-// 汎用マスタ (master-definitions) を slug からカードに変換する。未定義 slug は null。
+// 汎用マスタ (master-definitions) を slug からカードに変換する。未定義 slug・非表示マスタは null。
 const cardOf = (slug: string): MasterCard | null => {
   const m = findMasterBySlug(slug)
-  return m ? { key: m.slug, label: m.label, description: m.description, to: `/masters/${m.slug}` } : null
+  if (!m || m.hidden) return null
+  return { key: m.slug, label: m.label, description: m.description, to: `/masters/${m.slug}` }
 }
 const cards = (slugs: string[]): MasterCard[] =>
   slugs.map(cardOf).filter((c): c is MasterCard => c !== null)
@@ -31,8 +32,9 @@ const categories: Category[] = [
   {
     key: 'price',
     label: '価格・税',
+    // tax-rates は非表示（cardOf が hidden を除外）。関税率マスタ (customs-duty-rates) を追加。
     cards: [
-      ...cards(['currencies', 'tax-rates']),
+      ...cards(['currencies', 'tax-rates', 'customs-duty-rates']),
       { key: 'exchange-rates', label: '為替マスタ', description: '年月×通貨ごとの対円レート。商品⑤の円換算に使用。', to: '/masters/exchange-rates' },
     ],
   },

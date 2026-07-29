@@ -296,6 +296,34 @@ CREATE TABLE IF NOT EXISTS tax_rates (
 CREATE INDEX IF NOT EXISTS idx_tax_rates_tenant ON tax_rates (tenant_id);
 
 -- ─────────────────────────────────────────────────
+-- §3.9c customs_duty_rates — 関税率マスタ。海外仕入（輸入）時の関税率(%)。
+--   原産国（必須）× 素材分類 3 列（NULL=ワイルドカード）で解決。従量税(円/足)は任意。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS customs_duty_rates (
+    id                                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                          UUID          NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                               VARCHAR(3)    NOT NULL,
+    name                               VARCHAR(255)  NOT NULL,
+    country_id                         UUID          NOT NULL REFERENCES countries(id),
+    upper_material_classification_id   UUID          NULL REFERENCES material_classifications(id),
+    insole_material_classification_id  UUID          NULL REFERENCES material_classifications(id),
+    outsole_material_classification_id UUID          NULL REFERENCES material_classifications(id),
+    duty_rate                          NUMERIC(5,2)  NOT NULL DEFAULT 0,
+    specific_duty_per_pair             NUMERIC(12,2) NULL,
+    deleted_at                         TIMESTAMPTZ   NULL,
+    created_at                         TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    created_by_user_id                 UUID          NOT NULL REFERENCES users(id),
+    updated_at                         TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_by_user_id                 UUID          NOT NULL REFERENCES users(id),
+    legacy_id                          VARCHAR(64)   NULL,
+    CONSTRAINT uq_customs_duty_rates_tenant_code UNIQUE (tenant_id, code),
+    CONSTRAINT chk_customs_duty_rate_nonneg CHECK (duty_rate >= 0),
+    CONSTRAINT chk_customs_specific_duty_nonneg CHECK (specific_duty_per_pair IS NULL OR specific_duty_per_pair >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_customs_duty_rates_tenant ON customs_duty_rates (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_customs_duty_rates_country ON customs_duty_rates (country_id);
+
+-- ─────────────────────────────────────────────────
 -- §3.10 colors — 色マスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS colors (
@@ -583,6 +611,35 @@ BEGIN
         ('010', '標準税率', 10.00, owner_id, owner_id),
         ('008', '軽減税率', 8.00,  owner_id, owner_id),
         ('000', '非課税',   0.00,  owner_id, owner_id)
+    ON CONFLICT (tenant_id, code) DO NOTHING;
+
+    -- customs_duty_rates (関税率マスタ)。海外仕入時の輸入関税率(%) の代表値（目安）。
+    --   ※ 実際の税率は 実行関税率表（税関 第64類 履物）・EPA/特恵の適用可否・関税割当の一次/二次税率で
+    --     変動する。ここでは「甲皮素材の分類（天然/合成）で税率が変わる」代表例をシードする。
+    --     天然素材の甲皮 = 革製履物相当（高率＋従量税、目安 27%/4,300円/足）、合成素材の甲皮 = ゴム/繊維甲相当
+    --     （低率、目安 6.7%）とし、素材分類が一致しない場合は国ごとの既定（ワイルドカード行）を適用する。
+    --     運用者は本マスタで各テナントの実態（原産国・素材・EPA）に合わせて登録・更新すること。
+    --   国内（日本）・未設定国はシードしない（＝関税対象外／未登録扱い）。
+    INSERT INTO customs_duty_rates
+        (code, name, country_id, upper_material_classification_id, duty_rate, specific_duty_per_pair, created_by_user_id, updated_by_user_id) VALUES
+        ('201', '中国・甲皮天然（革製履物 目安）',
+            (SELECT id FROM countries WHERE code='002'),
+            (SELECT id FROM material_classifications WHERE code='001'), 27.00, 4300.00, owner_id, owner_id),
+        ('202', '中国・甲皮合成（ゴム/繊維甲 目安）',
+            (SELECT id FROM countries WHERE code='002'),
+            (SELECT id FROM material_classifications WHERE code='002'), 6.70, NULL, owner_id, owner_id),
+        ('209', '中国・既定（その他履物 目安）',
+            (SELECT id FROM countries WHERE code='002'),
+            NULL, 8.00, NULL, owner_id, owner_id),
+        ('301', 'ベトナム・甲皮天然（EPA 目安）',
+            (SELECT id FROM countries WHERE code='003'),
+            (SELECT id FROM material_classifications WHERE code='001'), 21.00, 4300.00, owner_id, owner_id),
+        ('302', 'ベトナム・甲皮合成（EPA 目安）',
+            (SELECT id FROM countries WHERE code='003'),
+            (SELECT id FROM material_classifications WHERE code='002'), 0.00, NULL, owner_id, owner_id),
+        ('309', 'ベトナム・既定（EPA 目安）',
+            (SELECT id FROM countries WHERE code='003'),
+            NULL, 4.00, NULL, owner_id, owner_id)
     ON CONFLICT (tenant_id, code) DO NOTHING;
 
     -- colors

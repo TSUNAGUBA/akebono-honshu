@@ -3,6 +3,8 @@
 // code/name を持たない bespoke master のため、汎用 [master].vue ではなく専用実装 (仕入先とは別ページ)。
 const { canEditMaster } = useAuth()
 const { apiFetch, apiData } = useApi()
+// スナックバー通知（必須未入力の押下時アラート）。共通の通知基盤 (composables/useSnackbar)。
+const { showError } = useSnackbar()
 
 interface ExchangeRateItem {
   // 第二段階契約: エンティティ ID は uuid 文字列
@@ -29,6 +31,12 @@ const errorMessage = ref('')
 const successMessage = ref('')
 const submitting = ref(false)
 
+// 必須項目バリデーション状態（要件: 登録ボタン押下時に未入力項目を赤枠＋メッセージで明示）。
+// キーはフォーム項目名。true = 未入力エラー。onSubmit の validate() で毎回再構築する。
+const fieldErrors = ref<Record<string, boolean>>({})
+// プレーン input/select の枠色（未入力なら赤）。
+const errCls = (key: string): string => (fieldErrors.value[key] ? 'border-red-400' : 'border-gray-300')
+
 // 追加/編集フォーム。editingId=null は新規、非 null は該当 id の編集。
 const nowMonth = currentMonthJst() // 'YYYY-MM' (JST 基準。UTC 由来だと月初 09:00 まで前月になる)
 const editingId = ref<string | null>(null)
@@ -36,16 +44,18 @@ const form = ref({ yearMonth: nowMonth, currencyCode: '', rate: null as number |
 
 const resetForm = () => {
   editingId.value = null
-  form.value = { yearMonth: nowMonth, currencyCode: foreignCurrencies.value[0]?.code ?? '', rate: null, taxRate: null }
+  // 必須項目（通貨）はデフォルト未選択とする（要件: 先頭マスタを自動選択しない）。
+  // 押下時のバリデーション（validate）で未選択を赤枠＋スナックバーで明示する。
+  form.value = { yearMonth: nowMonth, currencyCode: '', rate: null, taxRate: null }
+  fieldErrors.value = {}
 }
 
 // 通貨マスタは対象通貨ドロップダウン用の補助データ。失敗しても本体は使える (原則4 非ブロッキング)。
 const loadCurrencies = async () => {
   try {
     currencies.value = await apiData<CurrencyItem[]>('/masters/currencies?includeDeleted=false')
-    if (form.value.currencyCode === '' && foreignCurrencies.value.length) {
-      form.value.currencyCode = foreignCurrencies.value[0].code
-    }
+    // 必須項目（通貨）は先頭マスタを自動選択しない（要件: 新規登録のデフォルトは未選択）。
+    // 未選択のまま登録ボタンを押した場合は validate() が赤枠＋スナックバーで警告する。
   } catch {
     currencies.value = []
   }
@@ -74,23 +84,32 @@ onMounted(() => { reload(); loadCurrencies() })
 const startEdit = (item: ExchangeRateItem) => {
   editingId.value = item.id
   form.value = { yearMonth: item.yearMonth, currencyCode: item.currencyCode, rate: item.rate, taxRate: item.taxRate }
+  fieldErrors.value = {}
   successMessage.value = ''
   errorMessage.value = ''
+}
+
+// 必須項目バリデーション。未入力項目に赤枠フラグを立て、未入力ラベルの一覧を返す。
+// 年月(YYYY-MM)・通貨(3文字選択)・レート(>0) を検査する。既存の imperative な必須チェックを集約し、
+// 該当 input を赤枠で明示する（従来はメッセージのみで枠色が付かなかった）。
+const validate = (): string[] => {
+  const errs: Record<string, boolean> = {}
+  const missing: string[] = []
+  if (!/^\d{4}-\d{2}$/.test(form.value.yearMonth.trim())) { errs.yearMonth = true; missing.push('年月') }
+  if (form.value.currencyCode.trim().length !== 3) { errs.currencyCode = true; missing.push('通貨') }
+  if (form.value.rate == null || form.value.rate <= 0) { errs.rate = true; missing.push('レート') }
+  fieldErrors.value = errs
+  return missing
 }
 
 const onSubmit = async () => {
   errorMessage.value = ''
   successMessage.value = ''
-  if (!/^\d{4}-\d{2}$/.test(form.value.yearMonth.trim())) {
-    errorMessage.value = '年月は YYYY-MM 形式で入力してください'
-    return
-  }
-  if (form.value.currencyCode.trim().length !== 3) {
-    errorMessage.value = '通貨を選択してください'
-    return
-  }
-  if (form.value.rate == null || form.value.rate <= 0) {
-    errorMessage.value = 'レートは正の数で入力してください'
+  const missing = validate()
+  if (missing.length > 0) {
+    const msg = `必須項目が未入力です（${missing.join(' / ')}）`
+    errorMessage.value = msg
+    showError(msg) // スナックバーでも警告（要件: 押下時アラート）
     return
   }
   // 税率(%) (Part5) は任意。v-model.number は空欄クリア時に '' を返す (null にならない) ため、
@@ -100,7 +119,9 @@ const onSubmit = async () => {
     ? null
     : Number(taxRaw)
   if (taxRate != null && (Number.isNaN(taxRate) || taxRate < 0)) {
-    errorMessage.value = '税率は 0 以上の数値で入力してください'
+    const msg = '税率は 0 以上の数値で入力してください'
+    errorMessage.value = msg
+    showError(msg)
     return
   }
   submitting.value = true
@@ -173,22 +194,25 @@ const onRestore = async (item: ExchangeRateItem) => {
       <div class="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium">年月 <span class="text-red-500">*</span></span>
-          <input v-model="form.yearMonth" type="month" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+          <input v-model="form.yearMonth" type="month" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('yearMonth')" />
+          <span v-if="fieldErrors.yearMonth" class="text-xs text-red-600">年月を YYYY-MM 形式で入力してください</span>
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium">通貨 <span class="text-red-500">*</span></span>
           <!-- 通貨マスタから選択 (自由入力を廃止し文字列一致の整合性を担保)。JPY は円のため対象外。 -->
-          <select v-model="form.currencyCode" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm">
+          <select v-model="form.currencyCode" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('currencyCode')">
             <option value="">（選択）</option>
             <option v-for="c in foreignCurrencies" :key="c.id" :value="c.code">{{ c.code }} — {{ c.name }}</option>
           </select>
+          <span v-if="fieldErrors.currencyCode" class="text-xs text-red-600">通貨を選択してください</span>
           <span v-if="foreignCurrencies.length === 0" class="text-xs text-amber-600">
             通貨マスタに外貨が未登録です。<NuxtLink to="/masters/currencies" class="text-blue-600 hover:underline">通貨マスタ</NuxtLink>で登録してください。
           </span>
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium">対円レート <span class="text-red-500">*</span></span>
-          <input v-model.number="form.rate" type="number" min="0" step="0.0001" placeholder="例: 150.0000" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+          <input v-model.number="form.rate" type="number" min="0" step="0.0001" placeholder="例: 150.0000" class="rounded-md border px-2.5 py-1.5 text-sm" :class="errCls('rate')" />
+          <span v-if="fieldErrors.rate" class="text-xs text-red-600">レートは正の数で入力してください</span>
         </label>
         <!-- 税率(%) (Part5)。任意。商品⑤仕入単価で通貨×年月から自動反映する。 -->
         <label class="flex flex-col gap-1">
