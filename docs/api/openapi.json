@@ -546,21 +546,20 @@
             "nullable": true,
             "type": "string"
           },
-          "name": {
-            "nullable": true,
-            "type": "string"
-          },
           "countryId": {
             "format": "uuid",
             "type": "string"
           },
-          "upperMaterialClassificationId": {
+          "dutyRate": {
+            "format": "double",
+            "type": "number"
+          },
+          "insoleMaterialClassificationId": {
             "format": "uuid",
             "nullable": true,
             "type": "string"
           },
-          "insoleMaterialClassificationId": {
-            "format": "uuid",
+          "name": {
             "nullable": true,
             "type": "string"
           },
@@ -569,14 +568,15 @@
             "nullable": true,
             "type": "string"
           },
-          "dutyRate": {
-            "format": "double",
-            "type": "number"
-          },
           "specificDutyPerPair": {
             "format": "double",
             "nullable": true,
             "type": "number"
+          },
+          "upperMaterialClassificationId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
           }
         },
         "type": "object"
@@ -4002,6 +4002,207 @@
         ]
       }
     },
+    "/api/maker/v1/masters/customs-duty-rates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "includeDeleted",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Akebono.Api"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomsDutyRateWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Akebono.Api"
+        ]
+      }
+    },
+    "/api/maker/v1/masters/customs-duty-rates/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Akebono.Api"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Akebono.Api"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomsDutyRateWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Akebono.Api"
+        ]
+      }
+    },
+    "/api/maker/v1/masters/customs-duty-rates/{id}/restore": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Akebono.Api"
+        ]
+      }
+    },
     "/api/maker/v1/masters/delivery-destinations": {
       "get": {
         "parameters": [
@@ -7186,207 +7387,6 @@
       }
     },
     "/api/maker/v1/masters/tax-rates/{id}/restore": {
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          {
-            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Akebono.Api"
-        ]
-      }
-    },
-    "/api/maker/v1/masters/customs-duty-rates": {
-      "get": {
-        "parameters": [
-          {
-            "in": "query",
-            "name": "includeDeleted",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Akebono.Api"
-        ]
-      },
-      "post": {
-        "parameters": [
-          {
-            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CustomsDutyRateWriteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Akebono.Api"
-        ]
-      }
-    },
-    "/api/maker/v1/masters/customs-duty-rates/{id}": {
-      "delete": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          {
-            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Akebono.Api"
-        ]
-      },
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          {
-            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Akebono.Api"
-        ]
-      },
-      "patch": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          {
-            "description": "認証テナントの UUID。欠如は 400 AKB-SYS-003、認証クレームとの不一致は 403 AKB-TENANT-002 (AKB-DOC-12 §10.2)。",
-            "in": "header",
-            "name": "X-Tenant-Id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CustomsDutyRateWriteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Akebono.Api"
-        ]
-      }
-    },
-    "/api/maker/v1/masters/customs-duty-rates/{id}/restore": {
       "post": {
         "parameters": [
           {
