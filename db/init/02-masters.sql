@@ -296,34 +296,6 @@ CREATE TABLE IF NOT EXISTS tax_rates (
 CREATE INDEX IF NOT EXISTS idx_tax_rates_tenant ON tax_rates (tenant_id);
 
 -- ─────────────────────────────────────────────────
--- §3.9c customs_duty_rates — 関税率マスタ。海外仕入（輸入）時の関税率(%)。
---   原産国（必須）× 素材分類 3 列（NULL=ワイルドカード）で解決。従量税(円/足)は任意。
--- ─────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS customs_duty_rates (
-    id                                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id                          UUID          NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
-    code                               VARCHAR(3)    NOT NULL,
-    name                               VARCHAR(255)  NOT NULL,
-    country_id                         UUID          NOT NULL REFERENCES countries(id),
-    upper_material_classification_id   UUID          NULL REFERENCES material_classifications(id),
-    insole_material_classification_id  UUID          NULL REFERENCES material_classifications(id),
-    outsole_material_classification_id UUID          NULL REFERENCES material_classifications(id),
-    duty_rate                          NUMERIC(5,2)  NOT NULL DEFAULT 0,
-    specific_duty_per_pair             NUMERIC(12,2) NULL,
-    deleted_at                         TIMESTAMPTZ   NULL,
-    created_at                         TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    created_by_user_id                 UUID          NOT NULL REFERENCES users(id),
-    updated_at                         TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    updated_by_user_id                 UUID          NOT NULL REFERENCES users(id),
-    legacy_id                          VARCHAR(64)   NULL,
-    CONSTRAINT uq_customs_duty_rates_tenant_code UNIQUE (tenant_id, code),
-    CONSTRAINT chk_customs_duty_rate_nonneg CHECK (duty_rate >= 0),
-    CONSTRAINT chk_customs_specific_duty_nonneg CHECK (specific_duty_per_pair IS NULL OR specific_duty_per_pair >= 0)
-);
-CREATE INDEX IF NOT EXISTS idx_customs_duty_rates_tenant ON customs_duty_rates (tenant_id);
-CREATE INDEX IF NOT EXISTS idx_customs_duty_rates_country ON customs_duty_rates (country_id);
-
--- ─────────────────────────────────────────────────
 -- §3.10 colors — 色マスタ
 -- ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS colors (
@@ -380,6 +352,35 @@ CREATE TABLE IF NOT EXISTS materials (
 );
 CREATE INDEX IF NOT EXISTS idx_materials_classification ON materials (material_classification_id);
 CREATE INDEX IF NOT EXISTS idx_materials_tenant ON materials (tenant_id);
+
+-- ─────────────────────────────────────────────────
+-- §3.11b customs_duty_rates — 関税率マスタ。海外仕入（輸入）時の関税率(%)。
+--   原産国（必須）× 素材分類 3 列（NULL=ワイルドカード）で解決。従量税(円/足)は任意。
+--   material_classifications を FK 参照するため、必ずその CREATE 後に置くこと（db/init は逐次実行）。
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS customs_duty_rates (
+    id                                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                          UUID          NOT NULL DEFAULT (NULLIF(current_setting('app.tenant_id', TRUE), ''))::uuid REFERENCES tenant(tenant_id),
+    code                               VARCHAR(3)    NOT NULL,
+    name                               VARCHAR(255)  NOT NULL,
+    country_id                         UUID          NOT NULL REFERENCES countries(id),
+    upper_material_classification_id   UUID          NULL REFERENCES material_classifications(id),
+    insole_material_classification_id  UUID          NULL REFERENCES material_classifications(id),
+    outsole_material_classification_id UUID          NULL REFERENCES material_classifications(id),
+    duty_rate                          NUMERIC(5,2)  NOT NULL DEFAULT 0,
+    specific_duty_per_pair             NUMERIC(12,2) NULL,
+    deleted_at                         TIMESTAMPTZ   NULL,
+    created_at                         TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    created_by_user_id                 UUID          NOT NULL REFERENCES users(id),
+    updated_at                         TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_by_user_id                 UUID          NOT NULL REFERENCES users(id),
+    legacy_id                          VARCHAR(64)   NULL,
+    CONSTRAINT uq_customs_duty_rates_tenant_code UNIQUE (tenant_id, code),
+    CONSTRAINT chk_customs_duty_rate_nonneg CHECK (duty_rate >= 0),
+    CONSTRAINT chk_customs_specific_duty_nonneg CHECK (specific_duty_per_pair IS NULL OR specific_duty_per_pair >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_customs_duty_rates_tenant ON customs_duty_rates (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_customs_duty_rates_country ON customs_duty_rates (country_id);
 
 -- ─────────────────────────────────────────────────
 -- §3.13 warehouses — 倉庫コードマスタ (拡張なし)

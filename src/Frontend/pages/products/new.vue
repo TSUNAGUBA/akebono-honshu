@@ -342,7 +342,13 @@ const resolveCustomsDutyRow = (countryId: string): CustomsDutyRateItem | null =>
     const sr = specificity(r)
     const sb = specificity(best)
     if (sr !== sb) return sr > sb ? r : best
-    return Number(r.dutyRate) > Number(best.dutyRate) ? r : best
+    const dr = Number(r.dutyRate)
+    const db = Number(best.dutyRate)
+    if (dr !== db) return dr > db ? r : best
+    // 従価税率も同点なら、安全側（従量税が高い方）を決定論的に採る。
+    const pr = r.specificDutyPerPair != null ? Number(r.specificDutyPerPair) : 0
+    const pb = best.specificDutyPerPair != null ? Number(best.specificDutyPerPair) : 0
+    return pr > pb ? r : best
   })
 }
 

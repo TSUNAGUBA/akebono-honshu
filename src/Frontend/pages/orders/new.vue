@@ -677,7 +677,7 @@ const onSubmit = async () => {
                 </td>
                 <td class="border-b border-r border-gray-200 p-0 text-right">
                   <!-- 分納設定済み (納期列あり) は発注数 = 各納期列の合計を読取表示。分納なしは単一入力。 -->
-                  <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="sheet-input h-8 text-right" :class="lineErrors[idx]?.quantity ? 'border border-red-400' : ''" />
+                  <input v-if="!deliveryMode" v-model.number="l.quantity" type="number" min="1" class="sheet-input h-8 text-right" :class="lineErrors[idx]?.quantity ? 'ring-1 ring-inset ring-red-400' : ''" />
                   <span v-else class="block w-full px-2 text-right font-mono leading-8 text-gray-700" title="納期列の合計 (変更は「分納設定」から)">{{ lineQuantity(l).toLocaleString() }}</span>
                 </td>
                 <td class="border-b border-r border-gray-200 p-0 text-right">
