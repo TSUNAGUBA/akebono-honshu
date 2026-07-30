@@ -17,6 +17,8 @@ interface UserItem {
   displayName: string
   isActive: boolean
   email: string | null
+  /** 役職 (Iteration 33)。承認経路の役職指定で参照する組織メタ情報 (全員へ返る)。 */
+  title: string | null
   isPlanningStaff: boolean
   isSalesStaff: boolean
   productLedgerPermission: number
@@ -85,6 +87,7 @@ const emptyForm = () => ({
   loginId: '',
   displayName: '',
   email: '',
+  title: '',
   isPlanningStaff: false,
   isSalesStaff: false,
   productLedgerPermission: 0,
@@ -155,6 +158,7 @@ const startEdit = (u: UserItem) => {
     loginId: u.loginId,
     displayName: u.displayName,
     email: u.email ?? '',
+    title: u.title ?? '',
     isPlanningStaff: u.isPlanningStaff,
     isSalesStaff: u.isSalesStaff,
     productLedgerPermission: u.productLedgerPermission,
@@ -232,6 +236,8 @@ const submit = async () => {
       displayName: form.value.displayName.trim(),
       // PATCH では null = 未指定 (保持) のため、クリアは空文字で送る (POST では空文字 = null 扱い)。
       email: form.value.email.trim(),
+      // 役職 (Iteration 33)。email と同じ規則: 空文字で送る (PATCH で "" = クリア / POST で "" = null)。
+      title: form.value.title.trim(),
       isPlanningStaff: form.value.isPlanningStaff,
       isSalesStaff: form.value.isSalesStaff,
       productLedgerPermission: Number(form.value.productLedgerPermission),
@@ -351,6 +357,10 @@ const remove = async (u: UserItem) => {
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium">メール</span>
             <input v-model="form.email" type="email" maxlength="255" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium">役職 <span class="text-xs font-normal text-gray-400">(任意・承認経路で使用)</span></span>
+            <input v-model="form.title" type="text" maxlength="64" placeholder="例: マネージャー / 取締役" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-sm" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium">ログイン連携 UID <span class="text-xs font-normal text-gray-400">(任意)</span></span>

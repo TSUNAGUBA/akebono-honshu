@@ -62,7 +62,7 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
                 u.PurchaseOrderInfoPermission, u.ProcessRecordPermission,
                 u.FirebaseUid != null,
                 u.AttendancePermission, u.PunchRequired, u.AttendanceRuleId,
-                u.HireDate, u.WeeklyDays, u.WeeklyHours))
+                u.HireDate, u.WeeklyDays, u.WeeklyHours, u.Title))
             .ToListAsync(ct);
 
         if (!await IsOwnerAsync(actorUserId, ct))
@@ -100,7 +100,7 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
                 u.PurchaseOrderInfoPermission, u.ProcessRecordPermission,
                 u.FirebaseUid != null,
                 u.AttendancePermission, u.PunchRequired, u.AttendanceRuleId,
-                u.HireDate, u.WeeklyDays, u.WeeklyHours))
+                u.HireDate, u.WeeklyDays, u.WeeklyHours, u.Title))
             .FirstOrDefaultAsync(ct);
 
     // 権限値の範囲チェック (Phase 5 §3.18 の 4 権限カテゴリ + 勤怠権限 = 5 件) + 必須項目・週所定の範囲。
@@ -112,6 +112,10 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
             throw DomainException.Validation("ログイン ID は必須です", "ログイン ID を入力して再送信してください");
         if (string.IsNullOrWhiteSpace(req.DisplayName))
             throw DomainException.Validation("表示名は必須です", "表示名を入力して再送信してください");
+        // 役職 (Iteration 33) は任意だが DB 列 VARCHAR(64) に合わせて長さを検証する
+        // (超過を UI だけに頼ると、直接 API 呼び出しで PostgreSQL 22001 → 500 になる。approverTitle と同じ 64)。
+        if (req.Title is { } title && title.Trim().Length > 64)
+            throw DomainException.Validation("役職は 64 文字以内で入力してください", "役職名を短くして再送信してください");
         if (req.ProductLedgerPermission is < 0 or > 3)
             throw DomainException.Validation("品番台帳権限は 0〜3 で指定してください", "権限を選び直して再送信してください");
         if (req.PurchaseOrderCreatePermission is < 0 or > 2)
@@ -172,6 +176,8 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
             HireDate = req.HireDate,
             WeeklyDays = req.WeeklyDays,
             WeeklyHours = req.WeeklyHours,
+            // 役職 (Iteration 33)
+            Title = string.IsNullOrWhiteSpace(req.Title) ? null : req.Title.Trim(),
             IsActive = req.IsActive,
             CreatedAt = now,
             CreatedByUserId = actorUserId,
@@ -224,7 +230,9 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
             req.ClearAttendanceRule ? null : (req.AttendanceRuleId ?? entity.AttendanceRuleId),
             req.ClearHireDate ? null : (req.HireDate ?? entity.HireDate),
             req.WeeklyDays ?? entity.WeeklyDays,
-            req.WeeklyHours ?? entity.WeeklyHours);
+            req.WeeklyHours ?? entity.WeeklyHours,
+            // 役職: null = 未指定 (保持) / 空文字 = クリア (Email と同じ規則。下で代入)。
+            req.Title ?? entity.Title);
 
         ValidatePermissions(merged);
         await EnsureAttendanceRuleExistsAsync(merged.AttendanceRuleId, ct);
@@ -260,6 +268,8 @@ public class UserQueryService(IAkebonoDbContext db, IAuditLogger audit)
         entity.HireDate = merged.HireDate;
         entity.WeeklyDays = merged.WeeklyDays;
         entity.WeeklyHours = merged.WeeklyHours;
+        // 役職 (Iteration 33)。空文字はクリア = null (Email と同じ)。
+        entity.Title = string.IsNullOrWhiteSpace(merged.Title) ? null : merged.Title.Trim();
         entity.IsActive = merged.IsActive;
         entity.UpdatedAt = SystemTime.UtcNow;
         entity.UpdatedByUserId = actorUserId;

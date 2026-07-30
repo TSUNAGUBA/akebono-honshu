@@ -7,8 +7,9 @@ namespace Akebono.Infrastructure.Persistence;
 
 /// <summary>
 /// 起動時スキーマ検査。<b>このコード版が要求する勤怠スキーマ</b>が DB に反映済みかを
-/// 起動時に 1 度だけ確認する。具体的には <c>users</c> の勤怠 6 列 (Iteration 30 で追加) と
-/// <c>attendance_fix_requests.target_punch_id</c> (Iteration 31 / C-2 で追加) の存在を検査する。
+/// 起動時に 1 度だけ確認する。具体的には <c>users</c> の勤怠 6 列 (Iteration 30) と <c>users.title</c>
+/// (Iteration 33) 、<c>attendance_fix_requests.target_punch_id</c> (Iteration 31) および
+/// <c>attendance_fix_requests.current_step / direct_request_id</c> (Iteration 33) の存在を検査する。
 ///
 /// <para>
 /// 背景: <c>User</c> エンティティは勤怠 6 列 (<c>attendance_permission</c> 等) を map する。
@@ -55,13 +56,13 @@ DECLARE missing text;
 BEGIN
   SELECT string_agg(label, ', ') INTO missing FROM (
     SELECT 'users.' || c AS label
-      FROM unnest(ARRAY['attendance_permission','punch_required','attendance_rule_id','hire_date','weekly_days','weekly_hours']) AS c
+      FROM unnest(ARRAY['attendance_permission','punch_required','attendance_rule_id','hire_date','weekly_days','weekly_hours','title']) AS c
      WHERE NOT EXISTS (
        SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'users' AND column_name = c)
     UNION ALL
     SELECT 'attendance_fix_requests.' || c AS label
-      FROM unnest(ARRAY['target_punch_id']) AS c
+      FROM unnest(ARRAY['target_punch_id','current_step','direct_request_id']) AS c
      WHERE NOT EXISTS (
        SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'attendance_fix_requests' AND column_name = c)
@@ -95,12 +96,13 @@ END $$;";
         {
             await db.Database.ExecuteSqlRawAsync(GuardSql, cancellationToken);
             logger.LogInformation(
-                "起動時スキーマ検査: users の勤怠列 (Iteration 30) と attendance_fix_requests.target_punch_id (Iteration 31) を確認しました");
+                "起動時スキーマ検査: users の勤怠列 (Iteration 30) / users.title (Iteration 33) / "
+                + "attendance_fix_requests.target_punch_id (Iteration 31) / current_step・direct_request_id (Iteration 33) を確認しました");
         }
         catch (Exception ex)
         {
             logger.LogCritical(ex,
-                "起動時スキーマ検査に失敗しました。勤怠マイグレーション (iter30-attendance.sql / iter31-fix-target-punch.sql) が未適用の可能性があります。" +
+                "起動時スキーマ検査に失敗しました。勤怠マイグレーション (iter30-attendance.sql / iter31-fix-target-punch.sql / iter33-attendance-approval-routing.sql) が未適用の可能性があります。" +
                 "未適用のまま起動するとログイン (/auth/sync) や打刻修正申請が column does not exist で失敗するため、アプリの起動を中断します。" +
                 "ACTION=migrate deploy/db/run-migrations.sh で適用してから再起動してください");
             throw;

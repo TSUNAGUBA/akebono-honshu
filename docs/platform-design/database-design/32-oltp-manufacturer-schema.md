@@ -463,15 +463,24 @@ COMMENT ON COLUMN exchange_rates.quote_currency_code IS '相手通貨コード�
   > **2026-07-27 更新（4 → 5、マッピング漏れ注意）:** 継承実装は Iteration 30 で 5 つ目の `users.attendance_permission`（勤怠、`0=なし / 1=更新可能 / 2=参照のみ`）と勤怠付随列（`punch_required` / `attendance_rule_id` / `hire_date` / `weekly_days` / `weekly_hours`）を追加済み。**品番台帳・発注書作成・勤怠は非単調エンコード**（「参照のみ」が「更新可能」より大きい値）のため、`role`/`permission` へ写す際に `>=` による序列化を行うと権限が緩む。なお勤怠の**管理系**（承認・付与・設定）は、**勤怠権限（1 or 2）と工程実績管理権限（オーナー）の AND** で判定する点もマッピング時に落とさないこと（**オーナー単独では不可**。2026-07-27 訂正 — 当初「勤怠権限ではなく工程実績管理権限に集約」と記載していたが、`CheckAttendanceAdminAsync` が参照権限を内包する形へ是正済み。旧記述のまま移送すると『勤怠権限 0 のオーナーが全員の労務情報を読める』穴が別リポジトリへ複製される）。
 - 移行: `users` 行を `app_user` へ移送（`employee_no`→ビジネスキー、`login_id`→Firebase Email 連携キー）。旧メーカー DB 内 `users` は移行後に廃止し、全 FK を `app_user(id)` へ張り替える。
 
-> **勤怠 6 テーブルは本ドキュメントの台帳（§4.1 / §3）に載せていない（2026-07-27）:**
+> **勤怠テーブル群は本ドキュメントの台帳（§4.1 / §3）に載せていない（2026-07-27・2026-07-30 追補）:**
 > Iteration 30 で継承実装に追加した勤怠 6 テーブル（`attendance_rules` / `punch_records` /
-> `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）は、
+> `attendance_fix_requests` / `leave_types` / `leave_grants` / `leave_requests`）、および
+> **Iteration 33 で追加した勤怠承認経路 4 テーブル**（`attendance_routes` / `attendance_route_steps` /
+> `direct_requests`（直行/直帰申請） / `attendance_request_steps`（申請時に凍結する経路スナップショット））は、
 > **akebono-honshu ローカルの拡張であり、プラットフォーム OLTP スキーマとしては未確定**である。
+> Iteration 33 では併せて `users.title`（役職。承認経路の approver_type=title が参照）と
+> `attendance_fix_requests.{current_step, direct_request_id}`（多段承認）を追加し、
+> `attendance_fix_requests.status` の CHECK を 0..2 → 0..3（in_review 追加）へ拡張している（すべて下位互換）。
 > 本ドキュメントは旧版（現行 SoT は akebono-scm-platform リポジトリ側 → `docs/platform-design/README.md`）であり、
 > **プラットフォームが勤怠を所有するか、Control Plane（37）側へ寄せるかは未決**のため、
 > ここで台帳へ登録すると未確定の所有関係を既定事実にしてしまう。
-> 継承実装側の正は `db/init/10-attendance.sql` と
-> `.ai-native/outputs/phase5/data-design.md §14`。**上の 5 権限カテゴリの記述だけが先に更新されている
+> 継承実装側の正は `db/init/10-attendance.sql` / `db/init/11-attendance-approval-routing.sql`（fresh-init 経路）と
+> `db/migration/iter30-attendance.sql` / `iter31-fix-target-punch.sql` / `iter33-attendance-approval-routing.sql`（既存 DB 経路。
+> init 経路と差分検証で等価に保つ）、`.ai-native/outputs/phase5/data-design.md §14`。
+> **承認経路の承認者は 役職（`users.title`）/ ロール（オーナー = 勤怠権限 1/2 かつ工程実績管理権限）/ 個人（`users.id`）から選ぶ。**
+> 経路未設定の区分はオーナー 1 名の単段承認へフォールバックする（従来挙動の保存 = 下位互換）。
+> **上の 5 権限カテゴリの記述だけが先に更新されている
 > のはこの理由による**（権限マッピングは移行時に必ず必要になるため先行して記録した）。
 
 ---

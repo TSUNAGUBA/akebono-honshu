@@ -72,6 +72,12 @@ public interface IAkebonoDbContext
     DbSet<LeaveGrant> LeaveGrants { get; }
     DbSet<LeaveRequest> LeaveRequests { get; }
 
+    // 勤怠承認経路 (Iteration 33、db/init/11-attendance-approval-routing.sql)
+    DbSet<AttendanceRoute> AttendanceRoutes { get; }
+    DbSet<AttendanceRouteStep> AttendanceRouteSteps { get; }
+    DbSet<DirectRequest> DirectRequests { get; }
+    DbSet<AttendanceRequestStep> AttendanceRequestSteps { get; }
+
     /// <summary>ジェネリック DbSet 取得 (MasterService&lt;TEntity&gt; 用)。DbContext.Set&lt;T&gt;() の暗黙実装。</summary>
     DbSet<T> Set<T>() where T : class;
 

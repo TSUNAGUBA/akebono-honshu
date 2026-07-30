@@ -84,6 +84,12 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
     public DbSet<LeaveGrant> LeaveGrants => Set<LeaveGrant>();
     public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
 
+    // 勤怠承認経路 (Iteration 33、db/init/11-attendance-approval-routing.sql)
+    public DbSet<AttendanceRoute> AttendanceRoutes => Set<AttendanceRoute>();
+    public DbSet<AttendanceRouteStep> AttendanceRouteSteps => Set<AttendanceRouteStep>();
+    public DbSet<DirectRequest> DirectRequests => Set<DirectRequest>();
+    public DbSet<AttendanceRequestStep> AttendanceRequestSteps => Set<AttendanceRequestStep>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // tenant — テナントレジストリ投影 (SoT = akebono-backoffice。アプリからは読取専用)
@@ -111,6 +117,8 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.LoginId).HasColumnName("login_id").IsRequired().HasMaxLength(64);
             b.Property(x => x.DisplayName).HasColumnName("display_name").IsRequired().HasMaxLength(255);
             b.Property(x => x.Email).HasColumnName("email").HasMaxLength(255);
+            // 役職 (Iteration 33)。承認経路の approver_type=title が参照。NULL 許容の末尾追加。
+            b.Property(x => x.Title).HasColumnName("title").HasMaxLength(64);
             b.Property(x => x.IsPlanningStaff).HasColumnName("is_planning_staff");
             b.Property(x => x.IsSalesStaff).HasColumnName("is_sales_staff");
             b.Property(x => x.ProductLedgerPermission).HasColumnName("product_ledger_permission");
@@ -813,6 +821,9 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.Reason).HasColumnName("reason").IsRequired().HasMaxLength(512);
             b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
             b.Property(x => x.DecidedByUserId).HasColumnName("decided_by_user_id");
+            // 多段承認 (Iteration 33)。末尾追加 + DEFAULT で下位互換。
+            b.Property(x => x.CurrentStep).HasColumnName("current_step");
+            b.Property(x => x.DirectRequestId).HasColumnName("direct_request_id");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             b.HasIndex(x => new { x.TenantId, x.Status });
@@ -871,6 +882,94 @@ public class AkebonoDbContext(DbContextOptions<AkebonoDbContext> options, ITenan
             b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             b.HasIndex(x => new { x.TenantId, x.UserId, x.Date });
             b.HasIndex(x => new { x.TenantId, x.Status });
+        });
+
+        // ─────────────────────────────────────────────
+        // 勤怠承認経路 (Iteration 33、db/init/11-attendance-approval-routing.sql)
+        // ─────────────────────────────────────────────
+        modelBuilder.Entity<AttendanceRoute>(b =>
+        {
+            b.ToTable("attendance_routes", t =>
+                t.HasCheckConstraint("chk_atr_category", "category BETWEEN 0 AND 1"));
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.Category).HasColumnName("category").HasConversion<short>();
+            b.Property(x => x.IsActive).HasColumnName("is_active");
+            b.Property(x => x.DeletedAt).HasColumnName("deleted_at");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.HasIndex(x => new { x.TenantId, x.Category });
+        });
+
+        modelBuilder.Entity<AttendanceRouteStep>(b =>
+        {
+            b.ToTable("attendance_route_steps", t =>
+            {
+                t.HasCheckConstraint("chk_ars_step_order", "step_order >= 1");
+                t.HasCheckConstraint("chk_ars_approver_type", "approver_type BETWEEN 0 AND 2");
+                t.HasCheckConstraint("chk_ars_approver_role", "approver_role IS NULL OR approver_role = 0");
+                t.HasCheckConstraint("chk_ars_mode", "mode BETWEEN 0 AND 2");
+            });
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.RouteId).HasColumnName("route_id");
+            b.Property(x => x.StepOrder).HasColumnName("step_order");
+            b.Property(x => x.ApproverType).HasColumnName("approver_type").HasConversion<short>();
+            b.Property(x => x.ApproverRole).HasColumnName("approver_role").HasConversion<short>();
+            b.Property(x => x.ApproverTitle).HasColumnName("approver_title").HasMaxLength(64);
+            b.Property(x => x.ApproverUserId).HasColumnName("approver_user_id");
+            b.Property(x => x.Mode).HasColumnName("mode").HasConversion<short>();
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.HasIndex(x => new { x.RouteId, x.StepOrder }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.RouteId });
+        });
+
+        modelBuilder.Entity<DirectRequest>(b =>
+        {
+            b.ToTable("direct_requests", t =>
+            {
+                t.HasCheckConstraint("chk_dr_type", "type BETWEEN 0 AND 2");
+                t.HasCheckConstraint("chk_dr_status", "status BETWEEN 0 AND 4");
+                t.HasCheckConstraint("chk_dr_current_step", "current_step >= 1");
+            });
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.UserId).HasColumnName("user_id");
+            b.Property(x => x.Date).HasColumnName("date");
+            b.Property(x => x.Type).HasColumnName("type").HasConversion<short>();
+            b.Property(x => x.Reason).HasColumnName("reason").IsRequired().HasMaxLength(512);
+            b.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
+            b.Property(x => x.CurrentStep).HasColumnName("current_step");
+            b.Property(x => x.DecidedByUserId).HasColumnName("decided_by_user_id");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            b.HasIndex(x => new { x.TenantId, x.UserId, x.Date });
+            b.HasIndex(x => new { x.TenantId, x.Status });
+        });
+
+        modelBuilder.Entity<AttendanceRequestStep>(b =>
+        {
+            b.ToTable("attendance_request_steps", t =>
+            {
+                t.HasCheckConstraint("chk_aqs_request_kind", "request_kind BETWEEN 0 AND 1");
+                t.HasCheckConstraint("chk_aqs_step_order", "step_order >= 1");
+                t.HasCheckConstraint("chk_aqs_approver_type", "approver_type BETWEEN 0 AND 2");
+                t.HasCheckConstraint("chk_aqs_approver_role", "approver_role IS NULL OR approver_role = 0");
+                t.HasCheckConstraint("chk_aqs_mode", "mode BETWEEN 0 AND 2");
+            });
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id");
+            b.Property(x => x.RequestKind).HasColumnName("request_kind").HasConversion<short>();
+            b.Property(x => x.RequestId).HasColumnName("request_id");
+            b.Property(x => x.StepOrder).HasColumnName("step_order");
+            b.Property(x => x.ApproverType).HasColumnName("approver_type").HasConversion<short>();
+            b.Property(x => x.ApproverRole).HasColumnName("approver_role").HasConversion<short>();
+            b.Property(x => x.ApproverTitle).HasColumnName("approver_title").HasMaxLength(64);
+            b.Property(x => x.ApproverUserId).HasColumnName("approver_user_id");
+            b.Property(x => x.Mode).HasColumnName("mode").HasConversion<short>();
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.HasIndex(x => new { x.RequestKind, x.RequestId, x.StepOrder }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.RequestKind, x.RequestId });
         });
 
         // ─────────────────────────────────────────────

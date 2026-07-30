@@ -11,6 +11,13 @@ public class User : ITenantScoped
     public string LoginId { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string? Email { get; set; }
+
+    /// <summary>
+    /// 役職 (Iteration 33)。勤怠承認経路の承認者指定 (approver_type=title) が参照する。
+    /// NULL 許容の末尾追加で下位互換 (CLAUDE.md 原則7)。既存ユーザは NULL (役職未設定)。
+    /// </summary>
+    public string? Title { get; set; }
+
     public bool IsPlanningStaff { get; set; }
     public bool IsSalesStaff { get; set; }
     public short ProductLedgerPermission { get; set; }

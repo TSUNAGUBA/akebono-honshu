@@ -23,6 +23,18 @@
 > 勤怠 6 テーブルは `users` への列追加（勤怠列 6 本）を伴う。DDL の SoT は `db/init/10-attendance.sql`。
 > 生産管理・販売管理等の拡張モジュールの集計は `*-production.md` 側で別管理（本表の対象外）。
 
+> **2026-07-30 集計更新（Iteration 33: 勤怠承認経路の移植・akebono-office 由来）:**
+>
+> | 集計 | 更新前 | 更新後 | 内訳 |
+> |---|---|---|---|
+> | テーブル数 | 32 | **36** | + **勤怠承認経路 4**（`attendance_routes` / `attendance_route_steps` / `direct_requests` / `attendance_request_steps`。`data-design.md §14`）|
+> | 画面数 | 29 | **29** | 変更なし（新 UI は `/attendance` の既存タブ内パネル: 設定タブの承認経路管理・申請タブの直行/直帰パネル。新規ページ無し）|
+> | 勤怠 API | 27 | **35** | + 直行/直帰 3（#9a〜#9c）+ 承認経路 5（#15〜#19）。`api-design.md §2.7`。打刻修正申請 #9 は多段承認へ拡張 |
+>
+> 併せて `users.title`（役職。承認経路の承認者を役職で指定）と `attendance_fix_requests.{current_step, direct_request_id}` を追加、
+> `status` の CHECK を 0..2 → 0..3 へ拡張（すべて下位互換）。DDL の SoT は `db/init/11-attendance-approval-routing.sql`
+> （既存 DB は `db/migration/iter33-attendance-approval-routing.sql`。両者は正規化 diff で DDL 一致 = 差分検証済み）。
+
 ## Phase 状態
 
 - **現在ステータス:** COMPLETED (全レビュー観点 36件すべてクローズ、Phase 5 確定)

@@ -15,7 +15,10 @@
  * **本ファイルが勤怠画面の表示ユーティリティの SoT**。/attendance と /attendance/timecard は
  * ここから auto-import して使う（ページ側でローカル再実装しない。配色の乖離を生むため・原則3）。
  */
-import type { Buckets, LeaveUnit, PunchKind, PunchState, RequestStatus } from '~/composables/useAttendance'
+import type {
+  ApprovalMode, ApproverRole, ApproverStepDto, ApproverType, AttendanceRouteCategory,
+  Buckets, DirectRequestStatus, DirectType, LeaveUnit, PunchKind, PunchState, RequestStatus,
+} from '~/composables/useAttendance'
 
 // ============================================
 // 時間（分）の表示
@@ -180,6 +183,7 @@ export const PUNCH_STATE_CLASSES: Record<PunchState, string> = {
 /** 申請ステータスのラベル（打刻修正申請・休暇申請で共通）。 */
 export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
   pending: '承認待ち',
+  inReview: '承認中',
   approved: '承認済み',
   rejected: '却下',
 }
@@ -190,6 +194,7 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
  */
 export const REQUEST_STATUS_CLASSES: Record<RequestStatus, string> = {
   pending: 'bg-amber-100 text-amber-700',
+  inReview: 'bg-blue-100 text-blue-700',
   approved: 'bg-green-100 text-green-700',
   rejected: 'bg-gray-100 text-gray-500',
 }
@@ -198,6 +203,64 @@ export const REQUEST_STATUS_CLASSES: Record<RequestStatus, string> = {
 export const LEAVE_UNIT_LABELS: Record<LeaveUnit, string> = {
   full: '全日',
   half: '半日',
+}
+
+// ============================================
+// 勤怠承認経路（Iteration 33）
+// ============================================
+
+/** 直行/直帰の種別ラベル。 */
+export const DIRECT_TYPE_LABELS: Record<DirectType, string> = {
+  chokkou: '直行',
+  chokki: '直帰',
+  both: '直行直帰',
+}
+
+/** 直行/直帰申請のステータスラベル（申請共通 + 取下げ）。 */
+export const DIRECT_STATUS_LABELS: Record<DirectRequestStatus, string> = {
+  ...REQUEST_STATUS_LABELS,
+  withdrawn: '取下げ',
+}
+
+/** 直行/直帰申請のステータスバッジ配色。 */
+export const DIRECT_STATUS_CLASSES: Record<DirectRequestStatus, string> = {
+  ...REQUEST_STATUS_CLASSES,
+  withdrawn: 'bg-gray-100 text-gray-500',
+}
+
+/** 承認経路の区分ラベル。 */
+export const ROUTE_CATEGORY_LABELS: Record<AttendanceRouteCategory, string> = {
+  direct: '直行/直帰申請',
+  fix: '打刻修正申請',
+}
+
+/** 承認者の指定方法ラベル（役職 / ロール / 個人）。 */
+export const APPROVER_TYPE_LABELS: Record<ApproverType, string> = {
+  title: '役職',
+  role: 'ロール',
+  member: '個人',
+}
+
+/** 承認経路のロールラベル（honshu の権限ロール）。 */
+export const APPROVER_ROLE_LABELS: Record<ApproverRole, string> = {
+  owner: 'オーナー（勤怠管理者）',
+}
+
+/** 承認方式ラベル（office 踏襲。現状は serial 単承認者として扱う）。 */
+export const APPROVAL_MODE_LABELS: Record<ApprovalMode, string> = {
+  serial: '直列',
+  all: '全員承認',
+  majority: '過半数',
+}
+
+/**
+ * 承認ステップの承認者を短く表す（役職名 / ロール名 / 個人名）。
+ * 役職・ロールは値未設定のとき種別名へフォールバック。個人はサーバ解決名、無ければ「個人指定」。
+ */
+export const approverTargetLabel = (step: ApproverStepDto): string => {
+  if (step.approverType === 'title') return step.approverTitle ?? '役職'
+  if (step.approverType === 'role') return step.approverRole ? APPROVER_ROLE_LABELS[step.approverRole] : 'ロール'
+  return step.approverUserName ?? '個人指定'
 }
 
 // ============================================

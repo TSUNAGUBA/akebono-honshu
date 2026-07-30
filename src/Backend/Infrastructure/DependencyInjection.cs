@@ -108,6 +108,8 @@ public static class DependencyInjection
         services.AddScoped<AttendanceService>();
         services.AddScoped<AttendanceRuleService>();
         services.AddScoped<LeaveService>();
+        // 勤怠承認経路 (Iteration 33)
+        services.AddScoped<AttendanceRouteService>();
 
         // MIG-3 既存 CSV 取込 (Iteration 4 Hardening)
         services.AddScoped<LegacyImportService>();

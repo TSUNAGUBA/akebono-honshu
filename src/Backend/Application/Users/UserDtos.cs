@@ -32,7 +32,10 @@ public record UserListItem(
     Guid? AttendanceRuleId = null,
     DateOnly? HireDate = null,
     decimal? WeeklyDays = null,
-    decimal? WeeklyHours = null);
+    decimal? WeeklyHours = null,
+    // 役職 (Iteration 33)。承認経路の approver_type=title が参照する組織メタ情報。
+    // 労務個人情報ではないため WithoutLaborInfo で秘匿せず全員へ返す (末尾追加 = 下位互換)。
+    string? Title = null);
 
 // 利用者マスタ (Part5) の作成ペイロード。権限 (閲覧/操作) を含む。
 // FirebaseUid は任意 (ログイン連携のプロビジョニング用。未指定なら未連携)。
@@ -57,7 +60,9 @@ public record UserWriteRequest(
     Guid? AttendanceRuleId = null,
     DateOnly? HireDate = null,
     decimal WeeklyDays = 5m,
-    decimal WeeklyHours = 40m);
+    decimal WeeklyHours = 40m,
+    // 役職 (Iteration 33)。任意。末尾追加で既存クライアントが送らなくても壊れない。
+    string? Title = null);
 
 /// <summary>
 /// 利用者マスタの**部分更新 (PATCH)** ペイロード。
@@ -96,4 +101,6 @@ public record UserPatchRequest(
     decimal? WeeklyHours = null,
     // 明示クリア用フラグ (末尾追加)。true のとき値の指定より優先して null にする。
     bool ClearAttendanceRule = false,
-    bool ClearHireDate = false);
+    bool ClearHireDate = false,
+    // 役職 (Iteration 33)。null = 未指定 (保持) / 空文字 = クリア / 値 = 設定 (Email と同じ規則)。
+    string? Title = null);
