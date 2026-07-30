@@ -43,6 +43,19 @@ public class AttendanceFixRequest : ITenantScoped
     /// <summary>承認/却下したオーナー (users.id)。未処理なら NULL。</summary>
     public Guid? DecidedByUserId { get; set; }
 
+    /// <summary>
+    /// 経路承認の現在ステップ (1..n / Iteration 33)。経路未設定時は 1 (管理者単段フォールバック)。
+    /// 凍結した経路は <see cref="AttendanceRequestStep"/> (request_kind=Fix) に持つ。
+    /// </summary>
+    public int CurrentStep { get; set; } = 1;
+
+    /// <summary>
+    /// 直行/直帰申請 (<see cref="DirectRequest"/>) との紐付け (Iteration 33)。
+    /// 直行/直帰起因の打刻修正のみ設定。NULL = 通常の修正。
+    /// 設定時は「その日の直行/直帰が承認済みで種別が一致する」ことを作成時に検証する (AKO-ATT-005)。
+    /// </summary>
+    public Guid? DirectRequestId { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

@@ -2,6 +2,7 @@ using System.Globalization;
 using Akebono.Application.Common;
 using Akebono.Domain.Attendance;
 using Akebono.Domain.Common;
+using Akebono.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Akebono.Application.Attendance;
@@ -37,8 +38,16 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     /// </summary>
     public const int TimecardMaxUsers = 200;
 
-    /// <summary>修正理由 (attendance_fix_requests.reason VARCHAR(512)) の最大長。</summary>
+    /// <summary>修正理由 (attendance_fix_requests.reason VARCHAR(512)) の最大長。直行/直帰申請の理由も同じ列長。</summary>
     private const int ReasonMaxLength = 512;
+
+    /// <summary>
+    /// assigned scope で承認者を解決するためにメモリ走査する actionable 申請の上限件数。
+    /// 承認者解決はスナップショット依存で SQL 述語化できないため、非有界だとメモリ・レイテンシが
+    /// 運用年数に比例する。承認待ちの実件数は通常これを大きく下回るが、超過時は hasMore=true で示す
+    /// (足りない場合はオーナーが scope=all の一覧で拾える)。
+    /// </summary>
+    private const int MaxAssignedScan = 300;
 
     /// <summary>
     /// 修正申請の requestedAt に許可する書式。**タイムゾーン必須**
@@ -342,9 +351,33 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             targetPunchId = parsedTarget;
         }
 
+        // 直行/直帰起因の打刻修正か (AKO-ATT-005)。DirectRequestId 指定時のみ検証する
+        // (通常の打刻修正 = DirectRequestId 未指定 は本ゲートを通らない)。
+        // 条件: 本人の直行/直帰申請が「承認済み」かつ「対象日が一致」かつ「打刻種別が種別に合致」。
+        Guid? directRequestId = null;
+        var rawDirect = (req.DirectRequestId ?? string.Empty).Trim();
+        if (rawDirect.Length > 0)
+        {
+            if (!Guid.TryParse(rawDirect, out var parsedDirect))
+                throw DomainException.Validation("直行/直帰申請の指定が不正です",
+                    "画面を開き直して申請し直してください");
+            var dr = await db.DirectRequests.AsNoTracking()
+                .FirstOrDefaultAsync(d => d.Id == parsedDirect && d.UserId == actorId, ct);
+            if (dr is null || dr.Status != DirectRequestStatus.Approved || dr.Date != date
+                || !AttendanceRouteResolver.DirectKinds(dr.Type).Contains(kind))
+                throw new DomainException(AkbErrorCodes.SysUniqueViolation, 409,
+                    "この日は直行/直帰が承認されていないため、打刻修正を申請できません",
+                    "直行/直帰申請が承認されてから、承認された種別 (出勤/退勤) の打刻修正を申請してください");
+            directRequestId = parsedDirect;
+        }
+
+        // 打刻修正の経路 (category=fix) を凍結する。有効な経路が無ければ空 = 管理者単段フォールバック。
+        var specs = await ResolveFrozenStepsAsync(AttendanceRequestCategory.Fix, ct);
+
         var now = SystemTime.UtcNow;
         var entity = new AttendanceFixRequest
         {
+            Id = Guid.NewGuid(),   // スナップショット子行から参照するため採番を先に確定させる
             UserId = actorId,
             Date = date,
             Kind = kind,
@@ -352,16 +385,19 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
             // JST オフセット付きで受け取り、格納は UTC に統一する。
             RequestedAt = requestedAt.UtcDateTime,
             Reason = reason,
-            Status = FixRequestStatus.Pending,
+            Status = specs.Count > 0 ? FixRequestStatus.InReview : FixRequestStatus.Pending,
+            CurrentStep = 1,
+            DirectRequestId = directRequestId,
             CreatedAt = now,
             UpdatedAt = now,
         };
         db.AttendanceFixRequests.Add(entity);
+        FreezeSnapshot(AttendanceRequestCategory.Fix, entity.Id, specs, now);
         await db.SaveChangesAsync(ct);
 
         await audit.LogAsync(actorId, "AttendanceFixRequest.Create",
             entityType: "AttendanceFixRequest", entityId: entity.Id,
-            note: $"date={date:yyyy-MM-dd}, kind={kind}", cancellationToken: ct);
+            note: $"date={date:yyyy-MM-dd}, kind={kind}, steps={specs.Count}", cancellationToken: ct);
 
         return new IdResultDto(entity.Id);
     }
@@ -369,17 +405,25 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
     // ── #8 打刻修正申請の一覧 ────────────────────────────────────────────
 
     /// <summary>
-    /// 打刻修正申請の一覧 (createdAt 降順)。all=false は本人の申請のみ。
-    /// all=true (scope=all) は勤怠参照権限 AND オーナーのみ許可 (エンドポイント側で権限確認済み)。
+    /// 打刻修正申請の一覧 (createdAt 降順)。scope により対象が変わる:
+    ///   - self (既定): 本人の申請のみ
+    ///   - all:         全件 (勤怠参照権限 AND オーナーのみ。エンドポイント側で権限確認済み)
+    ///   - assigned:    現在ステップの承認者が自分の actionable (承認待ち/承認中) な申請
+    ///                  (経路により委任された非オーナー承認者が自分の承認待ちを見るための scope。
+    ///                   honshu には office の通知が無いため、一覧で代替する)
     ///
-    /// **キーセットページング必須** (AKB-DOC-12 §7.1、PurchaseOrderService.ListAsync と同じ規約)。
-    /// status 未指定の scope=all は運用年数に比例して全履歴を返すため、非有界のままでは必ず
-    /// タイムアウトする。返却は page.Limit 件で打ち切り、続きの有無は meta.page.hasMore で示す。
+    /// self / all は **キーセットページング** (AKB-DOC-12 §7.1)。assigned は承認者解決が
+    /// スナップショット依存で SQL 述語化できないため、上限付きで取得しメモリで絞り込む
+    /// (actionable 件数は運用上小さいため有界。<see cref="MaxAssignedScan"/> で頭打ち)。
     /// </summary>
     public async Task<PagedResult<FixRequestDto>> ListFixRequestsAsync(
-        Guid actorId, string? status, bool all, PageRequest page, CancellationToken ct = default)
+        Guid actorId, string? status, string? scope, PageRequest page, CancellationToken ct = default)
     {
         var filter = ParseStatus(status);
+        if (string.Equals(scope, "assigned", StringComparison.OrdinalIgnoreCase))
+            return await ListAssignedFixRequestsAsync(actorId, filter, ct);
+
+        var all = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
         var query = db.AttendanceFixRequests.AsNoTracking();
         if (!all) query = query.Where(r => r.UserId == actorId);
         if (filter is { } s) query = query.Where(r => r.Status == s);
@@ -398,39 +442,83 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         if (hasMore) rows.RemoveAt(page.Limit);
         if (rows.Count == 0) return new PagedResult<FixRequestDto>([], false, null, null);
 
-        // 申請者名 / 決裁者名は scalar FK (ナビ無し) のため users を 1 クエリで解決する。
-        // 無効化・削除済ユーザでも表示は維持したいので DeletedAt では絞らない (監査表示の性質)。
-        var userIds = rows.Select(r => r.UserId)
-            .Concat(rows.Where(r => r.DecidedByUserId != null).Select(r => r.DecidedByUserId!.Value))
-            .Distinct().ToList();
-        var names = await db.Users
-            .AsNoTracking()
-            .Where(u => userIds.Contains(u.Id))
-            .Select(u => new { u.Id, u.DisplayName })
-            .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
-
-        var items = rows.Select(r =>
-        {
-            names.TryGetValue(r.UserId, out var userName);
-            string? decidedByName = null;
-            if (r.DecidedByUserId is { } decidedBy && names.TryGetValue(decidedBy, out var d))
-                decidedByName = d;
-            return new FixRequestDto(
-                r.Id, r.UserId, userName ?? string.Empty, r.Date, r.Kind, r.RequestedAt, r.Reason,
-                r.Status, r.DecidedByUserId, decidedByName, r.CreatedAt);
-        }).ToList();
-
+        var items = await BuildFixDtosAsync(rows, ct);
         var last = rows[^1];
         return new PagedResult<FixRequestDto>(
             items, hasMore, hasMore ? last.CreatedAt : null, hasMore ? last.Id : null);
     }
 
-    // ── #9 打刻修正申請の承認 / 却下 ─────────────────────────────────────
+    /// <summary>
+    /// assigned scope: actionable (Pending/InReview) な打刻修正申請のうち、現在ステップの承認者が
+    /// 自分の行を返す。承認者解決はスナップショット依存でメモリ評価するため、走査対象を
+    /// <see cref="MaxAssignedScan"/> 件で頭打ちにする (超過は hasMore=true で示す)。
+    /// </summary>
+    private async Task<PagedResult<FixRequestDto>> ListAssignedFixRequestsAsync(
+        Guid actorId, FixRequestStatus? filter, CancellationToken ct)
+    {
+        var query = db.AttendanceFixRequests.AsNoTracking()
+            .Where(r => r.Status == FixRequestStatus.Pending || r.Status == FixRequestStatus.InReview);
+        // status 絞り込みは actionable の範囲でのみ有効 (approved/rejected は assigned に出さない)。
+        if (filter is FixRequestStatus.Pending or FixRequestStatus.InReview)
+            query = query.Where(r => r.Status == filter);
+
+        var scanned = await query.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
+            .Take(MaxAssignedScan + 1).ToListAsync(ct);
+        var truncated = scanned.Count > MaxAssignedScan;
+        if (truncated) scanned.RemoveAt(MaxAssignedScan);
+        if (scanned.Count == 0) return new PagedResult<FixRequestDto>([], false, null, null);
+
+        var candidates = await LoadCandidatesAsync(ct);
+        var snaps = await LoadSnapshotsAsync(
+            AttendanceRequestCategory.Fix, scanned.Select(r => r.Id).ToList(), ct);
+        var mine = scanned.Where(r =>
+            CurrentApproverId(snaps.GetValueOrDefault(r.Id, []), r.CurrentStep, candidates) == actorId).ToList();
+
+        var items = await BuildFixDtosAsync(mine, ct);
+        return new PagedResult<FixRequestDto>(items, truncated, null, null);
+    }
 
     /// <summary>
-    /// 打刻修正申請の承認 / 却下 (勤怠参照権限 AND オーナー)。
-    /// トランザクション内で対象行を FOR UPDATE ロックし、Status != Pending を再確認して
-    /// 二重承認を防ぐ。承認時は fix レコードを追記する (**元打刻は削除しない**)。
+    /// 打刻修正申請の行 → DTO。申請者名 / 決裁者名 / 経路スナップショット (member 承認者の氏名含む) を
+    /// まとめて解決する。無効化・削除済ユーザでも表示は維持する (監査表示の性質のため DeletedAt で絞らない)。
+    /// </summary>
+    private async Task<List<FixRequestDto>> BuildFixDtosAsync(
+        IReadOnlyList<AttendanceFixRequest> rows, CancellationToken ct)
+    {
+        if (rows.Count == 0) return [];
+        var snaps = await LoadSnapshotsAsync(
+            AttendanceRequestCategory.Fix, rows.Select(r => r.Id).ToList(), ct);
+        var names = await ResolveNamesAsync(
+            rows.Select(r => r.UserId)
+                .Concat(rows.Where(r => r.DecidedByUserId != null).Select(r => r.DecidedByUserId!.Value))
+                .Concat(snaps.Values.SelectMany(sp => sp)
+                    .Where(s => s.ApproverUserId != null).Select(s => s.ApproverUserId!.Value)),
+            ct);
+
+        return rows.Select(r =>
+        {
+            names.TryGetValue(r.UserId, out var userName);
+            string? decidedByName = null;
+            if (r.DecidedByUserId is { } decidedBy && names.TryGetValue(decidedBy, out var d))
+                decidedByName = d;
+            var snapshot = snaps.GetValueOrDefault(r.Id, [])
+                .Select(sp => AttendanceApproval.ToStepDto(sp, names)).ToList();
+            return new FixRequestDto(
+                r.Id, r.UserId, userName ?? string.Empty, r.Date, r.Kind, r.RequestedAt, r.Reason,
+                r.Status, r.DecidedByUserId, decidedByName, r.CreatedAt,
+                r.CurrentStep, snapshot, r.DirectRequestId);
+        }).ToList();
+    }
+
+    // ── #9 打刻修正申請の承認 / 却下 (多段承認) ──────────────────────────
+
+    /// <summary>
+    /// 打刻修正申請の承認 / 却下。承認可否は経路スナップショット + <see cref="CanDecide"/> で判定する
+    /// (オーナーは常に可 = office の admin override。経路未設定 = 空スナップショットはオーナーのみ =
+    /// 従来の単段承認を維持)。トランザクション内で対象行を FOR UPDATE ロックし、
+    /// Status が actionable (Pending/InReview) でなければ 409。
+    /// 承認が **最終ステップ** に達したときのみ fix レコードを追記する (**元打刻は削除しない**)。
+    /// 途中ステップの承認は current_step を進め InReview のままにする。
     /// </summary>
     public async Task<IdResultDto> DecideFixRequestAsync(
         Guid actorId, Guid id, FixDecisionRequest req, CancellationToken ct = default)
@@ -438,6 +526,7 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         var approved = ParseDecision(req.Action);
 
         Guid decidedId;
+        string auditAction;
         string auditNote;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
@@ -450,14 +539,40 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
 
             var fix = await db.AttendanceFixRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
                 ?? throw DomainException.Concealed("指定されたリソースが見つかりません");
-            if (fix.Status != FixRequestStatus.Pending)
+            if (fix.Status != FixRequestStatus.Pending && fix.Status != FixRequestStatus.InReview)
                 throw new DomainException(AkbErrorCodes.SysUniqueViolation, 409,
                     "この申請は処理済みです",
                     "一覧を再読込して最新の状態を確認してください");
 
+            var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == actorId, ct)
+                ?? throw DomainException.Concealed("指定されたリソースが見つかりません");
+            var snapshot = await LoadSnapshotAsync(AttendanceRequestCategory.Fix, fix.Id, ct);
+            var candidates = await LoadCandidatesAsync(ct);
+            if (!CanDecide(actor, snapshot, fix.CurrentStep, candidates))
+                throw new DomainException(AkbErrorCodes.AuthInsufficientPermission, 403,
+                    "この申請を承認/却下する権限がありません",
+                    "現在のステップの承認者ではありません。承認者を確認してください");
+
             var now = SystemTime.UtcNow;
-            if (approved)
+            bool finalized;
+            if (!approved)
             {
+                fix.Status = FixRequestStatus.Rejected;
+                fix.DecidedByUserId = actorId;
+                finalized = true;
+                auditAction = "AttendanceFixRequest.Reject";
+            }
+            else if (fix.CurrentStep < Math.Max(1, snapshot.Count))
+            {
+                // 途中ステップの承認: 次ステップへ進めて承認中のまま (打刻は書かない)。
+                fix.CurrentStep += 1;
+                fix.Status = FixRequestStatus.InReview;
+                finalized = false;
+                auditAction = "AttendanceFixRequest.Advance";
+            }
+            else
+            {
+                // 最終承認: fix レコードを追記する (元打刻は削除しない)。
                 var rows = await LoadPunchesAsync(fix.UserId, fix.Date, fix.Date.AddDays(1), ct);
                 var effective = AttendanceCalc.EffectivePunches(rows);
                 // 置換対象 (C-2)。対象打刻が指定されていればそれを、無ければ同種の先頭 1 件を採る。
@@ -479,17 +594,19 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
                     ApprovedByUserId = actorId,
                     CreatedAt = now,
                 });
+                fix.Status = FixRequestStatus.Approved;
+                fix.DecidedByUserId = actorId;
+                finalized = true;
+                auditAction = "AttendanceFixRequest.Approve";
             }
-
-            fix.Status = approved ? FixRequestStatus.Approved : FixRequestStatus.Rejected;
-            fix.DecidedByUserId = actorId;
             fix.UpdatedAt = now;
 
             await db.SaveChangesAsync(ct);
 
             // 監査ログの材料は commit 前に確定させ、CommitAsync を try の最後の文にする (原則4)。
             decidedId = fix.Id;
-            auditNote = $"user={fix.UserId}, date={fix.Date:yyyy-MM-dd}, kind={fix.Kind}";
+            auditNote = $"user={fix.UserId}, date={fix.Date:yyyy-MM-dd}, kind={fix.Kind}, "
+                + $"step={fix.CurrentStep}/{Math.Max(1, snapshot.Count)}, finalized={finalized}";
 
             await tx.CommitAsync(ct);
         }
@@ -500,12 +617,339 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         }
 
         // 監査ログは確定済みトランザクションの外で記録する (記録失敗で主フローを止めない。原則4)。
-        await audit.LogAsync(actorId,
-            approved ? "AttendanceFixRequest.Approve" : "AttendanceFixRequest.Reject",
+        await audit.LogAsync(actorId, auditAction,
             entityType: "AttendanceFixRequest", entityId: decidedId,
             note: auditNote, cancellationToken: ct);
 
         return new IdResultDto(decidedId);
+    }
+
+    // ── #A 直行/直帰申請 (Iteration 33) ─────────────────────────────────
+
+    /// <summary>
+    /// 直行/直帰申請の作成 (対象は常に本人)。理由は必須。区分 (direct) の経路を凍結し、
+    /// 経路があれば InReview / 無ければ Pending (管理者単段フォールバック) で作成する。
+    /// </summary>
+    public async Task<IdResultDto> CreateDirectRequestAsync(
+        Guid actorId, DirectRequestCreateRequest req, CancellationToken ct = default)
+    {
+        var date = ParseDate(req.Date, null, "date");
+        var type = ParseDirectType(req.Type);
+        var reason = (req.Reason ?? string.Empty).Trim();
+        if (reason.Length == 0)
+            throw DomainException.Validation("申請理由を入力してください（客観的記録の担保）",
+                "直行/直帰の理由を入力してください");
+        if (reason.Length > ReasonMaxLength)
+            throw DomainException.Validation($"申請理由は {ReasonMaxLength} 文字以内で入力してください",
+                "申請理由を短くして再送信してください");
+
+        var specs = await ResolveFrozenStepsAsync(AttendanceRequestCategory.Direct, ct);
+
+        var now = SystemTime.UtcNow;
+        var entity = new DirectRequest
+        {
+            Id = Guid.NewGuid(),   // スナップショット子行から参照するため採番を先に確定させる
+            UserId = actorId,
+            Date = date,
+            Type = type,
+            Reason = reason,
+            Status = specs.Count > 0 ? DirectRequestStatus.InReview : DirectRequestStatus.Pending,
+            CurrentStep = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.DirectRequests.Add(entity);
+        FreezeSnapshot(AttendanceRequestCategory.Direct, entity.Id, specs, now);
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync(actorId, "DirectRequest.Create",
+            entityType: "DirectRequest", entityId: entity.Id,
+            note: $"date={date:yyyy-MM-dd}, type={type}, steps={specs.Count}", cancellationToken: ct);
+
+        return new IdResultDto(entity.Id);
+    }
+
+    /// <summary>
+    /// 直行/直帰申請の一覧 (createdAt 降順)。scope は self (本人) / all (全件・オーナー) /
+    /// assigned (自分が現在ステップの承認者の actionable な申請)。self / all はキーセットページング。
+    /// </summary>
+    public async Task<PagedResult<DirectRequestDto>> ListDirectRequestsAsync(
+        Guid actorId, string? status, string? scope, PageRequest page, CancellationToken ct = default)
+    {
+        var filter = ParseDirectStatus(status);
+        if (string.Equals(scope, "assigned", StringComparison.OrdinalIgnoreCase))
+            return await ListAssignedDirectRequestsAsync(actorId, filter, ct);
+
+        var all = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
+        var query = db.DirectRequests.AsNoTracking();
+        if (!all) query = query.Where(r => r.UserId == actorId);
+        if (filter is { } s) query = query.Where(r => r.Status == s);
+
+        if (page.AfterCreatedAt is { } afterCreatedAt && page.AfterId is { } afterId)
+            query = query.Where(r => r.CreatedAt < afterCreatedAt
+                || (r.CreatedAt == afterCreatedAt && r.Id.CompareTo(afterId) < 0));
+
+        var rows = await query.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
+            .Take(page.Limit + 1).ToListAsync(ct);
+        var hasMore = rows.Count > page.Limit;
+        if (hasMore) rows.RemoveAt(page.Limit);
+        if (rows.Count == 0) return new PagedResult<DirectRequestDto>([], false, null, null);
+
+        var items = await BuildDirectDtosAsync(rows, ct);
+        var last = rows[^1];
+        return new PagedResult<DirectRequestDto>(
+            items, hasMore, hasMore ? last.CreatedAt : null, hasMore ? last.Id : null);
+    }
+
+    /// <summary>
+    /// 直行/直帰申請の承認 / 却下 / 取下げ (多段承認)。承認可否は <see cref="CanDecide"/>。
+    /// 取下げ (withdrawn) は申請者本人のみ。トランザクション内で FOR UPDATE ロックし、
+    /// Status が actionable (Pending/InReview) でなければ 409。
+    /// </summary>
+    public async Task<IdResultDto> DecideDirectRequestAsync(
+        Guid actorId, Guid id, DirectDecisionRequest req, CancellationToken ct = default)
+    {
+        var action = ParseDirectAction(req.Action);
+
+        Guid decidedId;
+        string auditAction;
+        string auditNote;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM direct_requests WHERE id = {0} FOR UPDATE", new object[] { id }, ct);
+
+            var dr = await db.DirectRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
+                ?? throw DomainException.Concealed("指定されたリソースが見つかりません");
+            if (dr.Status != DirectRequestStatus.Pending && dr.Status != DirectRequestStatus.InReview)
+                throw new DomainException(AkbErrorCodes.SysUniqueViolation, 409,
+                    "この申請は処理済みです",
+                    "一覧を再読込して最新の状態を確認してください");
+
+            var now = SystemTime.UtcNow;
+            if (action == DirectDecision.Withdrawn)
+            {
+                // 取下げは申請者本人のみ。
+                if (dr.UserId != actorId)
+                    throw new DomainException(AkbErrorCodes.AuthInsufficientPermission, 403,
+                        "取り下げは申請者本人のみ行えます",
+                        "自分の申請のみ取り下げられます");
+                dr.Status = DirectRequestStatus.Withdrawn;
+                auditAction = "DirectRequest.Withdraw";
+            }
+            else
+            {
+                var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == actorId, ct)
+                    ?? throw DomainException.Concealed("指定されたリソースが見つかりません");
+                var snapshot = await LoadSnapshotAsync(AttendanceRequestCategory.Direct, dr.Id, ct);
+                var candidates = await LoadCandidatesAsync(ct);
+                if (!CanDecide(actor, snapshot, dr.CurrentStep, candidates))
+                    throw new DomainException(AkbErrorCodes.AuthInsufficientPermission, 403,
+                        "この申請を承認/却下する権限がありません",
+                        "現在のステップの承認者ではありません。承認者を確認してください");
+
+                if (action == DirectDecision.Rejected)
+                {
+                    dr.Status = DirectRequestStatus.Rejected;
+                    dr.DecidedByUserId = actorId;
+                    auditAction = "DirectRequest.Reject";
+                }
+                else if (dr.CurrentStep < Math.Max(1, snapshot.Count))
+                {
+                    dr.CurrentStep += 1;
+                    dr.Status = DirectRequestStatus.InReview;
+                    auditAction = "DirectRequest.Advance";
+                }
+                else
+                {
+                    dr.Status = DirectRequestStatus.Approved;
+                    dr.DecidedByUserId = actorId;
+                    auditAction = "DirectRequest.Approve";
+                }
+            }
+            dr.UpdatedAt = now;
+
+            await db.SaveChangesAsync(ct);
+
+            decidedId = dr.Id;
+            auditNote = $"user={dr.UserId}, date={dr.Date:yyyy-MM-dd}, type={dr.Type}, "
+                + $"step={dr.CurrentStep}, status={dr.Status}";
+
+            await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+
+        await audit.LogAsync(actorId, auditAction,
+            entityType: "DirectRequest", entityId: decidedId,
+            note: auditNote, cancellationToken: ct);
+
+        return new IdResultDto(decidedId);
+    }
+
+    /// <summary>assigned scope の直行/直帰版 (<see cref="ListAssignedFixRequestsAsync"/> と同型)。</summary>
+    private async Task<PagedResult<DirectRequestDto>> ListAssignedDirectRequestsAsync(
+        Guid actorId, DirectRequestStatus? filter, CancellationToken ct)
+    {
+        var query = db.DirectRequests.AsNoTracking()
+            .Where(r => r.Status == DirectRequestStatus.Pending || r.Status == DirectRequestStatus.InReview);
+        if (filter is DirectRequestStatus.Pending or DirectRequestStatus.InReview)
+            query = query.Where(r => r.Status == filter);
+
+        var scanned = await query.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
+            .Take(MaxAssignedScan + 1).ToListAsync(ct);
+        var truncated = scanned.Count > MaxAssignedScan;
+        if (truncated) scanned.RemoveAt(MaxAssignedScan);
+        if (scanned.Count == 0) return new PagedResult<DirectRequestDto>([], false, null, null);
+
+        var candidates = await LoadCandidatesAsync(ct);
+        var snaps = await LoadSnapshotsAsync(
+            AttendanceRequestCategory.Direct, scanned.Select(r => r.Id).ToList(), ct);
+        var mine = scanned.Where(r =>
+            CurrentApproverId(snaps.GetValueOrDefault(r.Id, []), r.CurrentStep, candidates) == actorId).ToList();
+
+        var items = await BuildDirectDtosAsync(mine, ct);
+        return new PagedResult<DirectRequestDto>(items, truncated, null, null);
+    }
+
+    /// <summary>直行/直帰申請の行 → DTO (申請者名・決裁者名・経路スナップショットを解決)。</summary>
+    private async Task<List<DirectRequestDto>> BuildDirectDtosAsync(
+        IReadOnlyList<DirectRequest> rows, CancellationToken ct)
+    {
+        if (rows.Count == 0) return [];
+        var snaps = await LoadSnapshotsAsync(
+            AttendanceRequestCategory.Direct, rows.Select(r => r.Id).ToList(), ct);
+        var names = await ResolveNamesAsync(
+            rows.Select(r => r.UserId)
+                .Concat(rows.Where(r => r.DecidedByUserId != null).Select(r => r.DecidedByUserId!.Value))
+                .Concat(snaps.Values.SelectMany(sp => sp)
+                    .Where(s => s.ApproverUserId != null).Select(s => s.ApproverUserId!.Value)),
+            ct);
+
+        return rows.Select(r =>
+        {
+            names.TryGetValue(r.UserId, out var userName);
+            string? decidedByName = null;
+            if (r.DecidedByUserId is { } decidedBy && names.TryGetValue(decidedBy, out var d))
+                decidedByName = d;
+            var snapshot = snaps.GetValueOrDefault(r.Id, [])
+                .Select(sp => AttendanceApproval.ToStepDto(sp, names)).ToList();
+            return new DirectRequestDto(
+                r.Id, r.UserId, userName ?? string.Empty, r.Date, r.Type, r.Reason,
+                r.Status, r.CurrentStep, snapshot, r.DecidedByUserId, decidedByName, r.CreatedAt);
+        }).ToList();
+    }
+
+    // ── #B 承認経路の共有ヘルパー (Iteration 33) ─────────────────────────
+
+    /// <summary>
+    /// 区分に対する有効経路を解決し、採用経路のステップ (order 昇順) を返す。無ければ空
+    /// (= 管理者単段フォールバック)。呼び出し側は結果を申請へ凍結する。
+    /// </summary>
+    private async Task<IReadOnlyList<ApproverStepSpec>> ResolveFrozenStepsAsync(
+        AttendanceRequestCategory category, CancellationToken ct)
+    {
+        var routeIds = await db.AttendanceRoutes.AsNoTracking()
+            .Where(r => r.DeletedAt == null && r.IsActive && r.Category == category)
+            .Select(r => r.Id).ToListAsync(ct);
+        if (routeIds.Count == 0) return [];
+
+        var steps = await db.AttendanceRouteSteps.AsNoTracking()
+            .Where(s => routeIds.Contains(s.RouteId)).ToListAsync(ct);
+        var candidates = routeIds
+            .Select(rid => new RouteCandidate(
+                rid,
+                steps.Where(s => s.RouteId == rid).Select(AttendanceApproval.SpecOf).ToList()))
+            .ToList();
+        return AttendanceRouteResolver.Resolve(candidates);
+    }
+
+    /// <summary>解決したステップを申請の凍結スナップショット (attendance_request_steps) として登録する。</summary>
+    private void FreezeSnapshot(
+        AttendanceRequestCategory kind, Guid requestId, IReadOnlyList<ApproverStepSpec> specs, DateTime now)
+    {
+        foreach (var s in specs)
+            db.AttendanceRequestSteps.Add(new AttendanceRequestStep
+            {
+                RequestKind = kind,
+                RequestId = requestId,
+                StepOrder = s.Order,
+                ApproverType = s.ApproverType,
+                ApproverRole = s.ApproverRole,
+                ApproverTitle = s.ApproverTitle,
+                ApproverUserId = s.ApproverUserId,
+                Mode = s.Mode,
+                CreatedAt = now,
+            });
+    }
+
+    /// <summary>1 申請の凍結スナップショット (order 昇順) を取得する。</summary>
+    private async Task<IReadOnlyList<ApproverStepSpec>> LoadSnapshotAsync(
+        AttendanceRequestCategory kind, Guid requestId, CancellationToken ct)
+    {
+        var steps = await db.AttendanceRequestSteps.AsNoTracking()
+            .Where(s => s.RequestKind == kind && s.RequestId == requestId)
+            .ToListAsync(ct);
+        return steps.Select(AttendanceApproval.SpecOf).OrderBy(s => s.Order).ToList();
+    }
+
+    /// <summary>複数申請の凍結スナップショットを一括取得する (id → order 昇順のステップ列)。</summary>
+    private async Task<Dictionary<Guid, IReadOnlyList<ApproverStepSpec>>> LoadSnapshotsAsync(
+        AttendanceRequestCategory kind, IReadOnlyList<Guid> requestIds, CancellationToken ct)
+    {
+        if (requestIds.Count == 0) return new Dictionary<Guid, IReadOnlyList<ApproverStepSpec>>();
+        var steps = await db.AttendanceRequestSteps.AsNoTracking()
+            .Where(s => s.RequestKind == kind && requestIds.Contains(s.RequestId))
+            .ToListAsync(ct);
+        return steps.GroupBy(s => s.RequestId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<ApproverStepSpec>)g.Select(AttendanceApproval.SpecOf)
+                    .OrderBy(x => x.Order).ToList());
+    }
+
+    /// <summary>承認者候補 (在籍ユーザ全件を射影)。ApproverResolver 側で active フィルタと整列を行う。</summary>
+    private async Task<List<ApproverCandidate>> LoadCandidatesAsync(CancellationToken ct)
+        => (await db.Users.AsNoTracking().ToListAsync(ct))
+            .Select(AttendanceApproval.ToCandidate).ToList();
+
+    /// <summary>現在ステップ (1-based) の承認者 id。空スナップショット・範囲外は null。</summary>
+    private static Guid? CurrentApproverId(
+        IReadOnlyList<ApproverStepSpec> snapshot, int currentStep, IReadOnlyList<ApproverCandidate> candidates)
+    {
+        if (snapshot.Count == 0) return null;
+        var ordered = snapshot.OrderBy(s => s.Order).ToList();
+        if (currentStep < 1 || currentStep > ordered.Count) return null;
+        return ApproverResolver.Pick(candidates, ordered[currentStep - 1])?.Id;
+    }
+
+    /// <summary>
+    /// 承認可否。オーナーは常に可 (office の admin override)。経路未設定 (空スナップショット) は
+    /// オーナーのみ (= 従来の単段承認を維持)。それ以外は現在ステップの承認者本人のみ。
+    /// </summary>
+    private static bool CanDecide(
+        User actor, IReadOnlyList<ApproverStepSpec> snapshot, int currentStep,
+        IReadOnlyList<ApproverCandidate> candidates)
+    {
+        if (AttendanceApproval.IsOwner(actor)) return true;
+        if (snapshot.Count == 0) return false;
+        return CurrentApproverId(snapshot, currentStep, candidates) == actor.Id;
+    }
+
+    /// <summary>id 集合 → 氏名辞書 (無効化・削除済ユーザでも表示維持のため DeletedAt で絞らない)。</summary>
+    private async Task<Dictionary<Guid, string>> ResolveNamesAsync(
+        IEnumerable<Guid> ids, CancellationToken ct)
+    {
+        var idList = ids.Distinct().ToList();
+        if (idList.Count == 0) return new Dictionary<Guid, string>();
+        return await db.Users.AsNoTracking()
+            .Where(u => idList.Contains(u.Id))
+            .Select(u => new { u.Id, u.DisplayName })
+            .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
     }
 
     // ── 内部ヘルパー ─────────────────────────────────────────────────────
@@ -589,10 +1033,54 @@ public class AttendanceService(IAkebonoDbContext db, IAuditLogger audit)
         return value.Trim().ToLowerInvariant() switch
         {
             "pending" => FixRequestStatus.Pending,
+            "inreview" => FixRequestStatus.InReview,
             "approved" => FixRequestStatus.Approved,
             "rejected" => FixRequestStatus.Rejected,
             _ => throw DomainException.Validation(
-                "status は pending / approved / rejected のいずれかを指定してください",
+                "status は pending / inReview / approved / rejected のいずれかを指定してください",
+                "絞り込みの状態を選び直して再検索してください"),
+        };
+    }
+
+    // ── 直行/直帰申請 (Iteration 33) の入力解析 ─────────────────────────
+
+    /// <summary>直行/直帰の承認判断。</summary>
+    private enum DirectDecision { Approved, Rejected, Withdrawn }
+
+    private static DirectType ParseDirectType(string? value)
+        => (value ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "chokkou" => DirectType.Chokkou,
+            "chokki" => DirectType.Chokki,
+            "both" => DirectType.Both,
+            _ => throw DomainException.Validation(
+                "種別は chokkou / chokki / both のいずれかを指定してください",
+                "直行 / 直帰 / 直行直帰 を選び直してください"),
+        };
+
+    private static DirectDecision ParseDirectAction(string? value)
+        => (value ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "approved" => DirectDecision.Approved,
+            "rejected" => DirectDecision.Rejected,
+            "withdrawn" => DirectDecision.Withdrawn,
+            _ => throw DomainException.Validation(
+                "action は approved / rejected / withdrawn を指定してください",
+                "承認 / 却下 / 取下げ のボタンから操作し直してください"),
+        };
+
+    private static DirectRequestStatus? ParseDirectStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "pending" => DirectRequestStatus.Pending,
+            "inreview" => DirectRequestStatus.InReview,
+            "approved" => DirectRequestStatus.Approved,
+            "rejected" => DirectRequestStatus.Rejected,
+            "withdrawn" => DirectRequestStatus.Withdrawn,
+            _ => throw DomainException.Validation(
+                "status は pending / inReview / approved / rejected / withdrawn のいずれかを指定してください",
                 "絞り込みの状態を選び直して再検索してください"),
         };
     }

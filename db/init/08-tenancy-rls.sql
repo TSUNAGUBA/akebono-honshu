@@ -70,9 +70,11 @@ GRANT EXECUTE ON FUNCTION ensure_audit_log_partitions(int) TO akebono_app;
 -- ─────────────────────────────────────────────────
 -- 2. RLS 配線 (テナントスコープ業務テーブル 47 本)
 --    (02: 21 / 03: 5 / 04: 4 / 05: 5 / 07: 12。07 は VIEW を除く 12 テーブル)
---    ※ 下の「2b」の勤怠 6 本を含めると、本ファイルが配線し得るのは計 53 本。
---    ※ 勤怠 6 テーブル (10-attendance.sql) は本ファイルより後に作成されるため、
---      下の「2b」で存在チェック付きに分離している。
+--    ※ 下の「2b」の勤怠 6 本と「2c」の勤怠承認経路 4 本 (Iteration 33) を含めると、
+--      本ファイルが配線し得るのは計 57 本。
+--    ※ 勤怠 6 テーブル (10-attendance.sql) / 勤怠承認経路 4 テーブル
+--      (11-attendance-approval-routing.sql) は本ファイルより後に作成されるため、
+--      下の「2b」「2c」で存在チェック付きに分離している。
 --
 -- 適用除外 (理由は各テーブルの定義コメント参照):
 --   - tenant      : テナントレジストリ投影 (横断参照。読取専用 GRANT で保護)
@@ -163,6 +165,36 @@ BEGIN
        AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'akebono_app') THEN
         REVOKE UPDATE, DELETE ON punch_records FROM akebono_app;
     END IF;
+END $$;
+
+-- ─────────────────────────────────────────────────
+-- 2c. RLS 配線 (勤怠承認経路 4 テーブル / Iteration 33)
+--
+-- 2b と同じ理由: これらを作る 11-attendance-approval-routing.sql は本ファイル (08) より **後** に
+-- 実行される。初回 init 時点では未作成のため全件スキップされ、11 側が自ら RLS を配線する。
+-- 本ファイルを既存 DB へ再実行した場合はここで再配線される (どちらの経路でも最終状態は同じ = 冪等)。
+-- すべて設定系・申請系のため punch_records のような UPDATE/DELETE 剥奪は行わない。
+-- ─────────────────────────────────────────────────
+DO $$
+DECLARE
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'attendance_routes', 'attendance_route_steps', 'direct_requests', 'attendance_request_steps'
+    ]
+    LOOP
+        -- 未作成 (初回 init のこの時点) ならスキップ。11-attendance-approval-routing.sql 側が配線する。
+        CONTINUE WHEN to_regclass('public.' || t) IS NULL;
+
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
+        EXECUTE format(
+            'CREATE POLICY tenant_isolation ON %I '
+            'USING (tenant_id = (NULLIF(current_setting(''app.tenant_id'', TRUE), ''''))::uuid) '
+            'WITH CHECK (tenant_id = (NULLIF(current_setting(''app.tenant_id'', TRUE), ''''))::uuid)',
+            t);
+    END LOOP;
 END $$;
 
 -- 注意 (運用):

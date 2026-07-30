@@ -107,7 +107,8 @@ public static class AttendanceEndpoints
                                               string? status, string? scope, int? limit, string? cursor,
                                               CancellationToken ct) =>
         {
-            // scope=all は管理操作。CheckAttendanceAdminAsync が参照権限 (1 or 2) を内包する。
+            // scope=all は管理操作 (全件参照)。CheckAttendanceAdminAsync が参照権限 (1 or 2) を内包する。
+            // scope=self (既定) / assigned (自分が承認者の actionable) は参照権限のみで可。
             var all = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
             var auth = all
                 ? await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct)
@@ -115,18 +116,63 @@ public static class AttendanceEndpoints
             if (auth.ErrorResult is not null) return auth.ErrorResult;
 
             var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
-            var result = await svc.ListFixRequestsAsync(auth.ActorId!.Value, status, all, page, ct);
+            var result = await svc.ListFixRequestsAsync(auth.ActorId!.Value, status, scope, page, ct);
             return ApiEnvelope.OkPaged(http, result, page.Limit);
         });
 
-        // #9 修正申請の承認 / 却下 (勤怠参照権限 AND オーナー)。承認は fix レコード追記 (元打刻は削除しない)。
+        // #9 修正申請の承認 / 却下 (多段承認)。
+        // 権限は参照権限まで (承認可否は経路スナップショット + CanDecide で service が判定する:
+        //   オーナーは常に可 / 経路未設定はオーナーのみ / 経路ありは現在ステップの承認者本人)。
+        // これにより経路で委任された非オーナー承認者も承認でき、経路未設定時は従来どおりオーナー単段になる。
+        // 承認が最終ステップに達したときのみ fix レコードを追記する (元打刻は削除しない)。
         group.MapPost("/fix-requests/{id:guid}/decision", async (HttpContext http, IAkebonoDbContext db,
                                                                   AttendanceService svc, Guid id,
                                                                   FixDecisionRequest req, CancellationToken ct) =>
         {
-            var auth = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
+            var auth = await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;
             var result = await svc.DecideFixRequestAsync(auth.ActorId!.Value, id, req, ct);
+            return ApiEnvelope.Ok(http, result);
+        });
+
+        // ── §5.2b 直行/直帰申請 (Iteration 33) ───────────────────────────
+
+        // #9a 直行/直帰の申請 (対象は常に本人、理由必須)
+        group.MapPost("/direct-requests", async (HttpContext http, IAkebonoDbContext db,
+                                                  AttendanceService svc, DirectRequestCreateRequest req,
+                                                  CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckAttendanceWriteAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var created = await svc.CreateDirectRequestAsync(auth.ActorId!.Value, req, ct);
+            return ApiEnvelope.Created(http,
+                $"/api/maker/v1/attendance/direct-requests/{created.Id}", created);
+        });
+
+        // #9b 直行/直帰申請の一覧 (scope=self / all(オーナー) / assigned)。キーセットページング。
+        group.MapGet("/direct-requests", async (HttpContext http, IAkebonoDbContext db, AttendanceService svc,
+                                                 string? status, string? scope, int? limit, string? cursor,
+                                                 CancellationToken ct) =>
+        {
+            var all = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase);
+            var auth = all
+                ? await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct)
+                : await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+
+            var page = PageCursor.Read(limit ?? PageRequest.MaxLimit, cursor);
+            var result = await svc.ListDirectRequestsAsync(auth.ActorId!.Value, status, scope, page, ct);
+            return ApiEnvelope.OkPaged(http, result, page.Limit);
+        });
+
+        // #9c 直行/直帰申請の承認 / 却下 / 取下げ (多段承認)。取下げは申請者本人のみ (service で判定)。
+        group.MapPost("/direct-requests/{id:guid}/actions", async (HttpContext http, IAkebonoDbContext db,
+                                                                    AttendanceService svc, Guid id,
+                                                                    DirectDecisionRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var result = await svc.DecideDirectRequestAsync(auth.ActorId!.Value, id, req, ct);
             return ApiEnvelope.Ok(http, result);
         });
 
@@ -176,6 +222,63 @@ public static class AttendanceEndpoints
         // #14 論理削除の取消 (勤怠参照権限 AND オーナー)
         group.MapPost("/rules/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
                                                           AttendanceRuleService svc, Guid id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.RestoreAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
+        });
+
+        // ── §5.5 勤怠承認経路 (Iteration 33) ─────────────────────────────
+        // 参照は勤怠権限 (1 or 2)、書込は勤怠参照権限 AND オーナー (#10〜#14 の勤怠ルールと同権限)。
+
+        // #15 経路一覧 (勤怠 1 or 2)
+        group.MapGet("/approval-routes", async (HttpContext http, IAkebonoDbContext db,
+                                                 AttendanceRouteService svc, bool? includeInactive,
+                                                 CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckAttendanceReadAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var routes = await svc.ListAsync(includeInactive ?? false, ct);
+            return ApiEnvelope.Ok(http, routes);
+        });
+
+        // #16 経路の新規作成 (勤怠参照権限 AND オーナー)
+        group.MapPost("/approval-routes", async (HttpContext http, IAkebonoDbContext db,
+                                                  AttendanceRouteService svc, AttendanceRouteWriteRequest req,
+                                                  CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var created = await svc.CreateAsync(req, auth.ActorId!.Value, ct);
+            return ApiEnvelope.Created(http,
+                $"/api/maker/v1/attendance/approval-routes/{created.Id}", created);
+        });
+
+        // #17 経路の部分更新 (勤怠参照権限 AND オーナー)。Steps 指定時はステップを全置換。
+        group.MapPatch("/approval-routes/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                                            AttendanceRouteService svc, Guid id,
+                                                            AttendanceRoutePatchRequest req, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var updated = await svc.UpdateAsync(id, req, auth.ActorId!.Value, ct);
+            return updated is null ? AuthEndpoints.NotFoundError(http) : ApiEnvelope.Ok(http, updated);
+        });
+
+        // #18 経路の論理削除 (勤怠参照権限 AND オーナー)
+        group.MapDelete("/approval-routes/{id:guid}", async (HttpContext http, IAkebonoDbContext db,
+                                                             AttendanceRouteService svc, Guid id, CancellationToken ct) =>
+        {
+            var auth = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
+            if (auth.ErrorResult is not null) return auth.ErrorResult;
+            var ok = await svc.SoftDeleteAsync(id, auth.ActorId!.Value, ct);
+            return ok ? Results.NoContent() : AuthEndpoints.NotFoundError(http);
+        });
+
+        // #19 経路の論理削除の取消 (勤怠参照権限 AND オーナー)
+        group.MapPost("/approval-routes/{id:guid}/restore", async (HttpContext http, IAkebonoDbContext db,
+                                                                   AttendanceRouteService svc, Guid id, CancellationToken ct) =>
         {
             var auth = await AuthEndpoints.CheckAttendanceAdminAsync(http, db, ct);
             if (auth.ErrorResult is not null) return auth.ErrorResult;

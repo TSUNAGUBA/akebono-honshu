@@ -41,10 +41,17 @@ export type PunchKind = 'in' | 'out' | 'breakStart' | 'breakEnd'
 export type PunchSource = 'web' | 'mobile' | 'fix'
 export type PunchState = 'before' | 'working' | 'breaking' | 'done'
 
-/** 申請（打刻修正・休暇）のステータス。 */
-export type RequestStatus = 'pending' | 'approved' | 'rejected'
+/**
+ * 申請（打刻修正・休暇）のステータス。'inReview'（承認中）は勤怠承認経路の多段承認で使う
+ * （打刻修正・直行/直帰。休暇は従来どおり pending/approved/rejected のみ）。
+ */
+export type RequestStatus = 'pending' | 'inReview' | 'approved' | 'rejected'
+/** 直行/直帰申請のステータス（RequestStatus + 取下げ）。 */
+export type DirectRequestStatus = RequestStatus | 'withdrawn'
 /** 承認/却下アクション（§5.2 #9 / §5.4 #23）。 */
 export type DecisionAction = 'approved' | 'rejected'
+/** 直行/直帰申請のアクション（承認/却下/取下げ）。取下げは申請者本人のみ。 */
+export type DirectDecisionAction = 'approved' | 'rejected' | 'withdrawn'
 /**
  * 本ファイルのコメントで「**オーナー**」と書いたものは、すべて
  * `isAttendanceAdmin` = **勤怠参照権限（1 or 2）AND `processRecordPermission >= 1`** を指す。
@@ -52,8 +59,12 @@ export type DecisionAction = 'approved' | 'rejected'
  * （`attendancePermission = 0` は勤怠機能の利用を明示的に禁じた状態で、管理操作も 403 になる）。
  */
 
-/** 申請一覧のスコープ。'all'（全員）は勤怠参照権限 AND オーナー。 */
-export type RequestScope = 'self' | 'all'
+/**
+ * 申請一覧のスコープ。'all'（全員）は勤怠参照権限 AND オーナー。
+ * 'assigned' は「自分が現在ステップの承認者になっている actionable な申請」（経路で委任された
+ * 非オーナー承認者が自分の承認待ちを見るためのスコープ。参照権限で可）。
+ */
+export type RequestScope = 'self' | 'all' | 'assigned'
 
 export interface PunchDto {
   id: string
@@ -145,6 +156,12 @@ export interface FixRequestDto {
   decidedByUserId: string | null
   decidedByUserName: string | null
   createdAt: string
+  /** 経路承認の現在ステップ（1..n / 承認経路。経路未設定時は 1）。 */
+  currentStep: number
+  /** 申請時に凍結した経路（空 / null = 経路未設定 = 従来の管理者単段承認）。 */
+  routeSnapshot: ApproverStepDto[] | null
+  /** 直行/直帰起因の打刻修正のみ設定（null = 通常の修正）。 */
+  directRequestId: string | null
 }
 
 export interface FixRequestInput {
@@ -163,6 +180,89 @@ export interface FixRequestInput {
    * 省略時はサーバが「同種の先頭 1 件」を対象にする（単一打刻の日・旧導線の下位互換）。
    */
   targetPunchId?: string
+  /**
+   * 直行/直帰申請 id。直行/直帰が承認された日の打刻修正のみ指定する（AKO-ATT-005）。
+   * サーバは「本人の承認済み直行/直帰・対象日一致・打刻種別が種別に合致」を検証する。
+   */
+  directRequestId?: string
+}
+
+// ---- 勤怠承認経路（Iteration 33）----
+
+/** 承認者の指定方法。役職 / ロール / 個人（office の PermissionRule.subjectKind と同じ 3 種）。 */
+export type ApproverType = 'title' | 'role' | 'member'
+/** 承認経路のロール（honshu の権限ロール。現状はオーナー = 勤怠管理者のみ）。 */
+export type ApproverRole = 'owner'
+/** 承認方式（office 踏襲で保持。現状は serial 単承認者として扱う）。 */
+export type ApprovalMode = 'serial' | 'all' | 'majority'
+/** 勤怠承認経路の区分。 */
+export type AttendanceRouteCategory = 'direct' | 'fix'
+/** 直行/直帰の種別。 */
+export type DirectType = 'chokkou' | 'chokki' | 'both'
+
+/** 承認ステップ（経路定義・凍結スナップショット共通のレスポンス）。 */
+export interface ApproverStepDto {
+  order: number
+  approverType: ApproverType
+  approverRole: ApproverRole | null
+  approverTitle: string | null
+  approverUserId: string | null
+  /** approverType='member' のとき解決した氏名（無効化ユーザ等は null）。 */
+  approverUserName: string | null
+  mode: ApprovalMode
+}
+
+/** 承認ステップの書込入力（enum は文字列。個人は approverUserId、役職は approverTitle、ロールは approverRole）。 */
+export interface ApproverStepInput {
+  order: number
+  approverType: ApproverType
+  approverRole?: ApproverRole | null
+  approverTitle?: string | null
+  approverUserId?: string | null
+  mode?: ApprovalMode
+}
+
+export interface AttendanceRouteDto {
+  id: string
+  category: AttendanceRouteCategory
+  isActive: boolean
+  steps: ApproverStepDto[]
+  deletedAt: string | null
+}
+
+export interface AttendanceRouteWriteInput {
+  category: AttendanceRouteCategory
+  steps: ApproverStepInput[]
+  isActive?: boolean
+}
+
+/** PATCH は部分更新。steps 指定時はステップを全置換する。 */
+export interface AttendanceRoutePatchInput {
+  steps?: ApproverStepInput[]
+  isActive?: boolean
+}
+
+/** 直行/直帰申請。 */
+export interface DirectRequestDto {
+  id: string
+  userId: string
+  userName: string
+  date: string
+  type: DirectType
+  reason: string
+  status: DirectRequestStatus
+  currentStep: number
+  routeSnapshot: ApproverStepDto[] | null
+  decidedByUserId: string | null
+  decidedByUserName: string | null
+  createdAt: string
+}
+
+export interface DirectRequestInput {
+  /** 業務日付（YYYY-MM-DD）。 */
+  date: string
+  type: DirectType
+  reason: string
 }
 
 // ---- 勤怠ルール（§5.3）----
@@ -815,6 +915,64 @@ export const useAttendance = () => {
   }
 
   // ------------------------------------------
+  // 直行/直帰申請（Iteration 33）
+  // ------------------------------------------
+
+  /**
+   * `GET /attendance/direct-requests`。scope は self（本人）/ all（全件・オーナー）/
+   * assigned（自分が現在ステップの承認者の actionable な申請）。一覧は非キャッシュ（申請一覧と同方針）。
+   */
+  const loadDirectRequests = async (
+    scope: RequestScope = 'self',
+    status?: DirectRequestStatus,
+  ): Promise<PagedItems<DirectRequestDto>> =>
+    await apiPaged<DirectRequestDto>(`/attendance/direct-requests${qs({ status, scope })}`)
+
+  /** `POST /attendance/direct-requests`（対象は常に本人）。 */
+  const requestDirect = async (input: DirectRequestInput): Promise<{ id: string }> =>
+    await apiData<{ id: string }>('/attendance/direct-requests', { method: 'POST', body: input })
+
+  /**
+   * `POST /attendance/direct-requests/{id}/actions`。承認/却下は経路の承認者（またはオーナー）、
+   * 取下げ（withdrawn）は申請者本人のみ（サーバが判定）。直行/直帰の承認は打刻・集計を変えない
+   * （承認済みの日に打刻修正を申請できるようになるだけ）ため、集計系キャッシュは破棄しない。
+   */
+  const decideDirect = async (id: string, action: DirectDecisionAction): Promise<{ id: string }> =>
+    await apiData<{ id: string }>(`/attendance/direct-requests/${id}/actions`, {
+      method: 'POST',
+      body: { action },
+    })
+
+  // ------------------------------------------
+  // 勤怠承認経路（設定タブ）
+  // ------------------------------------------
+
+  /** `GET /attendance/approval-routes`。設定タブは編集のたびに読み直すためキャッシュしない。 */
+  const attendanceRoutes = async (includeInactive = false): Promise<AttendanceRouteDto[]> =>
+    await apiData<AttendanceRouteDto[]>(`/attendance/approval-routes${qs({ includeInactive })}`)
+
+  /** `POST /attendance/approval-routes`（勤怠参照権限 AND オーナー）。 */
+  const createAttendanceRoute = async (input: AttendanceRouteWriteInput): Promise<AttendanceRouteDto> =>
+    await apiData<AttendanceRouteDto>('/attendance/approval-routes', { method: 'POST', body: input })
+
+  /** `PATCH /attendance/approval-routes/{id}`（部分更新。steps 指定時はステップ全置換）。 */
+  const updateAttendanceRoute = async (
+    id: string,
+    patch: AttendanceRoutePatchInput,
+  ): Promise<AttendanceRouteDto> =>
+    await apiData<AttendanceRouteDto>(`/attendance/approval-routes/${id}`, { method: 'PATCH', body: patch })
+
+  /** `DELETE /attendance/approval-routes/{id}`（論理削除・204）。 */
+  const deleteAttendanceRoute = async (id: string): Promise<void> => {
+    await apiFetch<void>(`/attendance/approval-routes/${id}`, { method: 'DELETE' })
+  }
+
+  /** `POST /attendance/approval-routes/{id}/restore`（204）。誤削除からの復帰導線。 */
+  const restoreAttendanceRoute = async (id: string): Promise<void> => {
+    await apiFetch<void>(`/attendance/approval-routes/${id}/restore`, { method: 'POST' })
+  }
+
+  // ------------------------------------------
   // 休暇
   // ------------------------------------------
 
@@ -940,6 +1098,16 @@ export const useAttendance = () => {
     updateAttendanceRule,
     deleteAttendanceRule,
     restoreAttendanceRule,
+    // 直行/直帰申請
+    loadDirectRequests,
+    requestDirect,
+    decideDirect,
+    // 勤怠承認経路
+    attendanceRoutes,
+    createAttendanceRoute,
+    updateAttendanceRoute,
+    deleteAttendanceRoute,
+    restoreAttendanceRoute,
     // 休暇
     leaveSummary,
     leaveTypes,

@@ -89,6 +89,8 @@ interface MemberOption {
   displayName: string
   loginId: string
   isActive: boolean
+  /** 役職 (Iteration 33)。承認経路の役職指定の入力候補に使う。 */
+  title?: string | null
 }
 
 // 以下のレスポンス型は API 契約 (§5.2 / §5.4) に対応する本画面ローカル定義。
@@ -106,6 +108,10 @@ interface FixRequest {
   decidedByUserId: string | null
   decidedByUserName: string | null
   createdAt: string
+  // 多段承認 (Iteration 33)。承認経路の進捗表示に使う。routeSnapshot 空/null = 経路未設定 (単段)。
+  currentStep: number
+  routeSnapshot: { order: number }[] | null
+  directRequestId: string | null
 }
 
 interface LeaveTypeItem {
@@ -701,24 +707,38 @@ const loadRequests = async () => {
     myFixes.value = []
     myLeaves.value = []
   }
-  if (isOwner.value) {
-    try {
-      const [pf, pl] = await Promise.all([
+  // 承認待ち: オーナーは全件の actionable (承認待ち + 承認中) を取得する。経路で承認者に委任された
+  // 非オーナーも、自分が現在ステップの承認者になっている申請 (assigned) を取得する
+  // (勤怠承認経路 / Iteration 33。honshu には office の通知が無いため一覧で代替する)。
+  // 休暇は経路を持たない単段承認のためオーナーのみ (pending)。
+  try {
+    if (isOwner.value) {
+      // 打刻修正は経路により pending / inReview の 2 状態が actionable。両方を取得して結合する
+      // (status は単一指定のためサーバ側で 2 回引く。scope=all は status 無指定だと全履歴を返すため使わない)。
+      const [pfPending, pfReview, pl] = await Promise.all([
         loadFixRequests('all', 'pending'),
+        loadFixRequests('all', 'inReview'),
         leaveRequests('all', 'pending'),
       ])
-      pendingFixes.value = pf.items
+      pendingFixes.value = [...pfPending.items, ...pfReview.items]
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
       pendingLeaves.value = pl.items
-      if (pf.page.hasMore || pl.page.hasMore) pendingNotice.value = TRUNCATED_NOTICE
-    } catch (e) {
-      // 承認待ちの取得失敗は「自分の申請」の表示を止めない (原則4)。
-      // そのため専用の ref に入れる (requestsError を使うと自分の申請まで巻き添えで消える)。
-      console.error('[attendance] 承認待ち一覧の取得に失敗しました', e)
-      pendingError.value = getApiErrorMessage(e, '承認待ち一覧の取得に失敗しました')
-      // 件数バッジ (タブバー・見出し) が古い件数を出し続けないよう状態を捨てる。
-      pendingFixes.value = []
+      if (pfPending.page.hasMore || pfReview.page.hasMore || pl.page.hasMore) pendingNotice.value = TRUNCATED_NOTICE
+    } else {
+      // 非オーナーの承認者: 自分宛 (assigned) の actionable のみ。休暇は対象外 (経路なし)。
+      const pf = await loadFixRequests('assigned')
+      pendingFixes.value = pf.items
       pendingLeaves.value = []
+      if (pf.page.hasMore) pendingNotice.value = TRUNCATED_NOTICE
     }
+  } catch (e) {
+    // 承認待ちの取得失敗は「自分の申請」の表示を止めない (原則4)。
+    // そのため専用の ref に入れる (requestsError を使うと自分の申請まで巻き添えで消える)。
+    console.error('[attendance] 承認待ち一覧の取得に失敗しました', e)
+    pendingError.value = getApiErrorMessage(e, '承認待ち一覧の取得に失敗しました')
+    // 件数バッジ (タブバー・見出し) が古い件数を出し続けないよう状態を捨てる。
+    pendingFixes.value = []
+    pendingLeaves.value = []
   }
   requestsLoading.value = false
 }
@@ -996,6 +1016,8 @@ const fixForm = ref({
   targetPunchId: null as string | null,
   targetKind: null as PunchKind | null,
   targetLabel: '',
+  // 直行/直帰起因の打刻修正のみ設定 (AKO-ATT-005)。null = 通常の修正。
+  directRequestId: null as string | null,
 })
 
 const openFixModal = (punch?: PunchDto) => {
@@ -1014,6 +1036,27 @@ const openFixModal = (punch?: PunchDto) => {
     targetPunchId: punch?.id ?? null,
     targetKind: punch?.kind ?? null,
     targetLabel: punch ? `${kindLabel(punch.kind)} ${fmtJstHm(punch.at)}` : '',
+    directRequestId: null,
+  }
+  fixModalOpen.value = true
+}
+
+/**
+ * 承認済みの直行/直帰から打刻修正モーダルを開く (AKO-ATT-005)。対象日と directRequestId を引き継ぐ。
+ * 種別 (出勤/退勤) はモーダルで選ぶ (サーバが「直行/直帰の種別に合致する打刻種別か」を検証する)。
+ */
+const openFixFromDirect = (payload: { date: string; directRequestId: string }) => {
+  formError.value = ''
+  successMessage.value = ''
+  fixForm.value = {
+    date: payload.date,
+    kind: 'in',
+    time: '09:00',
+    reason: '',
+    targetPunchId: null,
+    targetKind: null,
+    targetLabel: '',
+    directRequestId: payload.directRequestId,
   }
   fixModalOpen.value = true
 }
@@ -1037,8 +1080,9 @@ const submitFix = async () => {
   // 種別を変えたら対象打刻は無意味 (サーバは target.Kind != kind を 422 にする) なので落とし、
   // サーバの「同種先頭フォールバック」に委ねる。
   const targetPunchId = f.targetPunchId && f.kind === f.targetKind ? f.targetPunchId : undefined
+  const directRequestId = f.directRequestId ?? undefined
   const ok = await runWrite(async () => {
-    await requestFix({ date: f.date, kind: f.kind, requestedAt, reason: f.reason.trim(), targetPunchId })
+    await requestFix({ date: f.date, kind: f.kind, requestedAt, reason: f.reason.trim(), targetPunchId, directRequestId })
     successMessage.value = '打刻修正を申請しました。承認されると打刻に反映されます。'
     invalidate()
     await loadDaily()
@@ -1953,8 +1997,9 @@ const currentDefaultRuleName = computed(() =>
         <div v-if="requestsLoading" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">読み込み中…</div>
 
         <template v-else>
-          <!-- 承認待ち (オーナーのみ)。描画条件は承認待ち専用の pendingError を見る -->
-          <section v-if="isOwner" class="mb-3 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
+          <!-- 承認待ち。オーナーは全件、経路で委任された承認者は自分宛の申請が見える (Iteration 33)。
+               描画条件は承認待ち専用の pendingError を見る。 -->
+          <section v-if="isOwner || pendingFixes.length > 0" class="mb-3 rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
             <h2 class="mb-2 flex items-center gap-2 border-b border-gray-100 pb-1.5 font-semibold">
               承認待ち
               <span v-if="!pendingError && pendingCount > 0" class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{{ pendingCount }} 件</span>
@@ -1983,6 +2028,10 @@ const currentDefaultRuleName = computed(() =>
                       <span class="font-mono text-sm text-gray-600">{{ bizDateKey(r.date) }}</span>
                       <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{{ kindLabel(r.kind) }}</span>
                       <span class="font-mono text-sm font-semibold text-gray-800">→ {{ fmtJstHm(r.requestedAt) }}</span>
+                      <!-- 多段承認 (経路あり) のとき、現在ステップと状態を示す (Iteration 33) -->
+                      <span v-if="r.routeSnapshot && r.routeSnapshot.length > 0" class="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
+                        ステップ {{ r.currentStep }}/{{ r.routeSnapshot.length }}
+                      </span>
                     </div>
                     <p class="mt-1 text-sm text-gray-600">理由: {{ r.reason }}</p>
                     <div class="mt-1.5 flex flex-wrap items-center gap-2">
@@ -2178,6 +2227,14 @@ const currentDefaultRuleName = computed(() =>
             </ul>
           </template>
         </section>
+
+        <!-- 直行/直帰申請 (Iteration 33)。承認された日は打刻修正を申請できる (AKO-ATT-005)。 -->
+        <DirectRequestPanel
+          :is-owner="isOwner"
+          :can-write="canWriteAttendance"
+          :my-user-id="myUserId"
+          @request-fix="openFixFromDirect"
+        />
       </template>
 
       <!-- ======================================================== -->
@@ -2369,6 +2426,9 @@ const currentDefaultRuleName = computed(() =>
             </ul>
           </template>
         </section>
+
+        <!-- 勤怠承認経路 (Iteration 33)。区分ごとに承認者を 役職/ロール/個人 で設定する。 -->
+        <AttendanceApprovalRoutes :members="members" :is-owner="isOwner" />
       </template>
     </template>
 

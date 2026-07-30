@@ -1015,11 +1015,20 @@ S3 アップロード完了後、メタデータを DB に登録。
 
 > **移植元:** **akebono-office** の勤怠管理・タイムカード機能。打刻・勤怠集計（労基法 32/34/37 条）・
 > 36 協定アラート（労基法 36 条）・打刻修正申請・休暇（労基法 39 条）を honshu へ移植した。
-> **実装 SoT:** `src/Backend/Presentation/Endpoints/AttendanceEndpoints.cs`（#1〜#14）/
+> **実装 SoT:** `src/Backend/Presentation/Endpoints/AttendanceEndpoints.cs`（#1〜#19 ＋ 直行/直帰 #9a〜#9c）/
 > `AttendanceLeaveEndpoints.cs`（#15〜#27）/ `src/Backend/Application/Attendance/`（`AttendanceDtos.cs` /
-> `LeaveDtos.cs` / `AttendanceService.cs` / `AttendanceRuleService.cs` / `LeaveService.cs`）/
-> `src/Backend/Domain/Attendance/`（`AttendanceCalc.cs` / `LeaveCalc.cs`）。
+> `ApprovalRoutingDtos.cs` / `LeaveDtos.cs` / `AttendanceService.cs` / `AttendanceRuleService.cs` /
+> `AttendanceRouteService.cs` / `AttendanceApproval.cs` / `LeaveService.cs`）/
+> `src/Backend/Domain/Attendance/`（`AttendanceCalc.cs` / `LeaveCalc.cs` / `ApproverResolver.cs` / `AttendanceRouteResolver.cs`）。
 > テーブル定義は `data-design.md §14`、画面は `screen-design.md §3.14 / §3.15` を参照。
+>
+> **Iteration 33（2026-07-30、akebono-office からの移植）:** 勤怠管理に **承認経路**（`attendance-routes` の CRUD #15〜#19）と
+> **直行/直帰申請**（#9a〜#9c）を追加し、打刻修正申請（#9）を経路による **多段承認** へ拡張した。承認経路の各ステップの
+> 承認者は **役職（`users.title`）/ ロール（オーナー = 勤怠管理者）/ 個人（`users.id`）** から選ぶ（office の稟議・勤怠共通の
+> `PermissionRule.subjectKind` と同じ 3 種。honshu は稟議を持たないため勤怠のみ）。経路未設定の区分はオーナー 1 名の
+> 単段承認へフォールバック（従来挙動の保存 = 下位互換）。承認可否は `AttendanceService.CanDecide`（オーナー override /
+> 経路未設定はオーナーのみ / 経路ありは現在ステップの承認者本人）が判定するため、#9 の権限は
+> `CheckAttendanceReadAsync`（1 or 2）へ緩め、非オーナーの委任承認者は `scope=assigned` の一覧で自分の承認待ちを取得する。
 
 #### 2.7.0 共通規約（本節の前提）
 

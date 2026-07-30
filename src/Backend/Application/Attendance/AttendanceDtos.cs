@@ -75,11 +75,17 @@ public record PunchStateDto(PunchState State, IReadOnlyList<PunchDto> Punches);
 /// <summary>
 /// 打刻修正申請の作成リクエスト。RequestedAt は JST オフセット付き
 /// ("YYYY-MM-DDTHH:mm:00+09:00") で受け取り、サーバで UTC 化して保存する。
+/// DirectRequestId は直行/直帰起因の打刻修正のみ指定 (末尾追加・下位互換)。指定時は
+/// 「その日の直行/直帰が承認済みで種別が一致する」ことを検証する (AKO-ATT-005)。
 /// </summary>
 public record FixRequestCreateRequest(
-    string Date, string Kind, string RequestedAt, string Reason, string? TargetPunchId = null);
+    string Date, string Kind, string RequestedAt, string Reason,
+    string? TargetPunchId = null, string? DirectRequestId = null);
 
-/// <summary>打刻修正申請。</summary>
+/// <summary>
+/// 打刻修正申請。CurrentStep / RouteSnapshot / DirectRequestId は多段承認 (Iteration 33) の
+/// 末尾追加フィールド (下位互換)。RouteSnapshot は申請時に凍結した経路 (空 = 管理者単段)。
+/// </summary>
 public record FixRequestDto(
     Guid Id,
     Guid UserId,
@@ -91,7 +97,10 @@ public record FixRequestDto(
     FixRequestStatus Status,
     Guid? DecidedByUserId,
     string? DecidedByUserName,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    int CurrentStep = 1,
+    IReadOnlyList<ApproverStepDto>? RouteSnapshot = null,
+    Guid? DirectRequestId = null);
 
 /// <summary>承認/却下リクエスト。Action は "approved" / "rejected"。</summary>
 public record FixDecisionRequest(string Action);

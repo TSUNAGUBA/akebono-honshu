@@ -217,6 +217,20 @@ Backend (`src/Backend/Application/Migration/LegacyImportService.cs`) は
 > `iter30` と同様に `run-migrations.sh` が自動適用します（本ファイル固有の追加操作はありません）。未適用のまま
 > コードを起動すると打刻修正申請だけが `column does not exist` で失敗しますが、起動時スキーマガードが検知して起動を中断します。
 
+> **後続のスキーマ系マイグレーション `iter33-attendance-approval-routing.sql`（2026-07-30 / Iteration 33・akebono-office からの移植）:**
+> 勤怠管理に**承認経路**（`attendance_routes` / `attendance_route_steps`）と**直行/直帰申請**（`direct_requests`）、
+> および申請時に凍結する経路スナップショット（`attendance_request_steps`）を追加し、打刻修正申請を経路による
+> **多段承認**へ拡張します（`attendance_fix_requests` に `current_step` / `direct_request_id` を追加、`status` の
+> CHECK を 0..2 → 0..3 へ拡張）。併せて `users.title`（役職。承認経路の承認者を役職で指定するため）を追加します。
+> すべて追加列・制約緩和のみで**下位互換**（経路未設定の区分はオーナー 1 名の単段承認へフォールバック = 従来挙動）。
+> `db/init/11-attendance-approval-routing.sql` に同内容を反映済み（fresh-init 経路。init 経路と migration 経路を
+> 差分検証で等価に保つ）。RLS / `updated_at` トリガ / `akebono_app` への GRANT は本ファイル自身が配線します
+> （`08-tenancy-rls.sql` より後に実行されるため）。`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` /
+> `pg_constraint` ガードで冪等。未適用のままコードを起動すると `users.title` を map する経路（ログイン `/auth/sync`）と
+> 承認経路機能が `column does not exist` で失敗しますが、起動時スキーマガードが検知して起動を中断します。
+> `iter33` は `find | sort` の辞書順で `iter30`〜`iter32` の直後（`iter4-*` より前）に並び、依存元の `iter30`（勤怠 6 テーブル）
+> より後に適用されます。
+
 ### 適用手順（推奨: 自動）
 
 GitHub Actions **「DB Init / Migrate (RDS)」を `action=migrate`** で実行します。

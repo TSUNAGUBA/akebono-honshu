@@ -666,8 +666,18 @@ pnpm dev
 | # | メソッド | パス | 概要 | 認証 | 権限 |
 |---|---|---|---|---|---|
 | 7 | POST | `/api/maker/v1/attendance/fix-requests` | 修正申請 (対象は常に本人、理由必須) | Bearer | `attendance_permission == 1` |
-| 8 | GET | `/api/maker/v1/attendance/fix-requests` | 申請一覧 (`?status&scope&limit&cursor`) | Bearer | 1 or 2 / `scope=all` は 1 or 2 **かつオーナー** |
-| 9 | POST | `/api/maker/v1/attendance/fix-requests/{id}/decision` | 承認 / 却下 (元打刻は削除せず修正打刻を追記) | Bearer | 1 or 2 **かつオーナー** |
+| 8 | GET | `/api/maker/v1/attendance/fix-requests` | 申請一覧 (`?status&scope&limit&cursor`。`scope=assigned` は自分が現在ステップの承認者の actionable な申請) | Bearer | 1 or 2 / `scope=all` は 1 or 2 **かつオーナー** |
+| 9 | POST | `/api/maker/v1/attendance/fix-requests/{id}/decision` | 承認 / 却下 (経路による多段承認。最終ステップ承認時のみ元打刻を削除せず修正打刻を追記) | Bearer | 1 or 2。**承認可否は経路スナップショット + `CanDecide` で判定** (オーナーは常に可 / 経路未設定はオーナーのみ = 従来どおり / 経路ありは現在ステップの承認者本人) |
+
+**直行/直帰申請 (#9a〜#9c、Iteration 33)**
+
+承認された日は、その種別 (直行=出勤 / 直帰=退勤 / 直行直帰=両方) の打刻修正を申請できる (AKO-ATT-005 ゲート)。
+
+| # | メソッド | パス | 概要 | 認証 | 権限 |
+|---|---|---|---|---|---|
+| 9a | POST | `/api/maker/v1/attendance/direct-requests` | 直行/直帰の申請 (対象は常に本人、理由必須) | Bearer | `attendance_permission == 1` |
+| 9b | GET | `/api/maker/v1/attendance/direct-requests` | 申請一覧 (`?status&scope&limit&cursor`。`scope=assigned` は自分宛の actionable) | Bearer | 1 or 2 / `scope=all` は 1 or 2 **かつオーナー** |
+| 9c | POST | `/api/maker/v1/attendance/direct-requests/{id}/actions` | 承認 / 却下 / 取下げ (多段承認。取下げは申請者本人のみ) | Bearer | 1 or 2。承認可否は #9 と同じ `CanDecide` 判定 |
 
 **勤怠ルール = 勤務体系マスタ (#10〜#14)**
 
@@ -678,6 +688,18 @@ pnpm dev
 | 12 | PATCH | `/api/maker/v1/attendance/rules/{id}` | 部分更新 (null のフィールドは現在値を保持。ただし `flexEnabled=false` を受けるとコアタイムは指定値に関わらず null になる) | Bearer | 1 or 2 **かつオーナー** |
 | 13 | DELETE | `/api/maker/v1/attendance/rules/{id}` | 論理削除 | Bearer | 1 or 2 **かつオーナー** |
 | 14 | POST | `/api/maker/v1/attendance/rules/{id}/restore` | 論理削除の取消 (同名の有効なルールがあると 409) | Bearer | 1 or 2 **かつオーナー** |
+
+**勤怠承認経路 (#15〜#19、Iteration 33) — `AttendanceEndpoints.cs`**
+
+区分 (`direct` 直行/直帰 / `fix` 打刻修正) ごとに承認経路を設定する。各ステップの承認者は 役職 (`users.title`) / ロール (オーナー = 勤怠管理者) / 個人 (`users.id`) から選ぶ。経路未設定の区分はオーナー 1 名の単段承認へフォールバック (従来挙動の保存)。
+
+| # | メソッド | パス | 概要 | 認証 | 権限 |
+|---|---|---|---|---|---|
+| 15 | GET | `/api/maker/v1/attendance/approval-routes` | 経路一覧 (`?includeInactive`) | Bearer | 1 or 2 |
+| 16 | POST | `/api/maker/v1/attendance/approval-routes` | 経路の新規作成 (ステップ 1 件以上、order 重複不可) | Bearer | 1 or 2 **かつオーナー** |
+| 17 | PATCH | `/api/maker/v1/attendance/approval-routes/{id}` | 部分更新 (`steps` 指定時はステップ全置換) | Bearer | 1 or 2 **かつオーナー** |
+| 18 | DELETE | `/api/maker/v1/attendance/approval-routes/{id}` | 論理削除 | Bearer | 1 or 2 **かつオーナー** |
+| 19 | POST | `/api/maker/v1/attendance/approval-routes/{id}/restore` | 論理削除の取消 | Bearer | 1 or 2 **かつオーナー** |
 
 **休暇 (#15〜#27) — `src/Backend/Presentation/Endpoints/AttendanceLeaveEndpoints.cs`**
 
