@@ -45,6 +45,8 @@ const loadSelf = async () => {
     myRequests.value = (await loadDirectRequests('self')).items
   } catch (e) {
     selfError.value = getApiErrorMessage(e, '直行/直帰申請の取得に失敗しました')
+    // 取得失敗時は一覧を捨てる（見出し件数が古い値を出し続けないように。index.vue と同じ扱い・原則4）。
+    myRequests.value = []
   }
 }
 
@@ -67,6 +69,8 @@ const loadQueue = async () => {
     }
   } catch (e) {
     queueError.value = getApiErrorMessage(e, '承認待ちの取得に失敗しました')
+    // 取得失敗時は一覧を捨てる（見出し件数の古い値を残さない・原則4）。
+    queue.value = []
   }
 }
 
